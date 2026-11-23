@@ -37,6 +37,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
     private readonly TimeSpan _queueWait;
     private readonly TimeSpan _writeLimit;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _anonymousGates = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _paused = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _anonymousPaused = new();
     private readonly SemaphoreSlim _inMemory = new(PlaybackLimits.PhotoImagesInMemory, PlaybackLimits.PhotoImagesInMemory);
@@ -208,7 +209,8 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
         return null;
     }
 
-    // Takes the places of a read. An anonymous one waits for its own first, where it keeps none from signed-in users.
+    // Takes the places of a read. An anonymous one waits for its own first, in all and of the server, where it keeps none from
+    // signed-in users.
     private async Task<bool> TryEnterAsync(Guid serverId, bool anonymous, HeldPlaces image, HeldPlaces call, CancellationToken cancellationToken)
     {
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -218,10 +220,10 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
             if (anonymous)
             {
                 await image.EnterAsync(_anonymous, wait.Token).ConfigureAwait(false);
+                await call.EnterAsync(GateOf(_anonymousGates, serverId, PlaybackLimits.AnonymousPhotoImagesPerServer), wait.Token).ConfigureAwait(false);
             }
 
-            var gate = _gates.GetOrAdd(serverId, _ => new SemaphoreSlim(PlaybackLimits.PhotoImagesPerServer, PlaybackLimits.PhotoImagesPerServer));
-            await call.EnterAsync(gate, wait.Token).ConfigureAwait(false);
+            await call.EnterAsync(GateOf(_gates, serverId, PlaybackLimits.PhotoImagesPerServer), wait.Token).ConfigureAwait(false);
             if (IsPaused(_paused, serverId) || (anonymous && IsPaused(_anonymousPaused, serverId)))
             {
                 return false;
@@ -235,6 +237,9 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
             return false;
         }
     }
+
+    private static SemaphoreSlim GateOf(ConcurrentDictionary<Guid, SemaphoreSlim> gates, Guid serverId, int places)
+        => gates.GetOrAdd(serverId, _ => new SemaphoreSlim(places, places));
 
     private bool IsPaused(ConcurrentDictionary<Guid, DateTimeOffset> paused, Guid serverId)
         => paused.TryGetValue(serverId, out var until) && _clock.GetUtcNow() < until;

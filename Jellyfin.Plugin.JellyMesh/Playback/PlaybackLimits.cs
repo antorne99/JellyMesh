@@ -66,6 +66,12 @@ public static class PlaybackLimits
     public const int PhotoImagesForUsers = PhotoImagesPerServer;
 
     /// <summary>
+    /// The most of <see cref="PhotoImagesPerServer"/> that anonymous reads take, so that they never keep signed-in users from a
+    /// server (row 540).
+    /// </summary>
+    public const int AnonymousPhotoImagesPerServer = 6;
+
+    /// <summary>
     /// The longest the read of a photo image waits for all its places, among <see cref="PhotoImagesPerServer"/> and
     /// <see cref="PhotoImagesInMemory"/>.
     /// </summary>

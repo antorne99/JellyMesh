@@ -396,10 +396,17 @@ public class PhotoImageFilterTests
         Assert.True(await RunAsync(Filter(), context));
     }
 
-    // The reads are anonymous, so they only take places of their own, and one over them waits.
-    [Fact]
-    public async Task Reads_over_the_limit_wait_and_then_are_missing()
+    // The reads only take places of their own, and one over them waits. Anonymous ones leave some to users (row 540).
+    [Theory]
+    [InlineData(true, PlaybackLimits.PhotoImagesPerServer)]
+    [InlineData(false, PlaybackLimits.AnonymousPhotoImagesPerServer)]
+    public async Task Reads_over_the_limit_wait_and_then_are_missing(bool signedIn, int places)
     {
+        if (signedIn)
+        {
+            SignedIn(sees: true);
+        }
+
         var release = new TaskCompletionSource();
         _answer = async _ =>
         {
@@ -407,13 +414,13 @@ public class PhotoImageFilterTests
             return Image(_jpeg);
         };
         var filter = Filter(TimeSpan.FromMilliseconds(50));
-        var running = Enumerable.Range(0, PlaybackLimits.PhotoImagesPerServer).Select(_ => Request()).ToList();
+        var running = Enumerable.Range(0, places).Select(_ => Request()).ToList();
         var tasks = running.Select(request => RunAsync(filter, request)).ToList();
         var over = Request();
 
         await RunAsync(filter, over).WaitAsync(TimeSpan.FromSeconds(30));
         AssertMissing(over);
-        Assert.Equal(PlaybackLimits.PhotoImagesPerServer, _asked.Count);
+        Assert.Equal(places, _asked.Count);
 
         // A read that gave up waiting keeps no place.
         await Task.WhenAll(Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => RunAsync(filter, Request()))).WaitAsync(TimeSpan.FromSeconds(30));
@@ -469,6 +476,32 @@ public class PhotoImageFilterTests
         await gone.CancelAsync();
         await Task.WhenAll(slow.Concat(waits)).WaitAsync(TimeSpan.FromSeconds(30));
         Assert.All(waiting, AssertServed);
+    }
+
+    // Row 540: anonymous reads that wait for a slow server leave signed-in users some of its places.
+    [Fact]
+    public async Task Anonymous_reads_of_a_slow_server_leave_places_to_signed_in_users()
+    {
+        var release = new TaskCompletionSource();
+        var filter = Filter();
+        _answer = async _ =>
+        {
+            await release.Task;
+            return Image(_jpeg);
+        };
+        var anonymous = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => Request()).ToList();
+        var reads = anonymous.Select(request => RunAsync(filter, request)).ToList();
+        Assert.Equal(PlaybackLimits.AnonymousPhotoImagesPerServer, _asked.Count);
+
+        SignedIn(sees: true);
+        var waiting = Enumerable.Range(0, PlaybackLimits.PhotoImagesPerServer - PlaybackLimits.AnonymousPhotoImagesPerServer).Select(_ => Request()).ToList();
+        var started = waiting.Select(request => RunAsync(filter, request)).ToList();
+        Assert.Equal(PlaybackLimits.PhotoImagesPerServer, _asked.Count);
+        Assert.All(reads, read => Assert.False(read.IsCompleted));
+
+        release.SetResult();
+        await Task.WhenAll(reads.Concat(started)).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(anonymous.Concat(waiting), AssertServed);
     }
 
     // Nothing is kept from signed-in users, and an anonymous read that finds no place keeps none.
