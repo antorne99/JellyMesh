@@ -248,4 +248,22 @@ public class TrackDedupTests
         Assert.Empty(Pairs([Saved("1", seconds: null)], Track("a", "a1")));
         Assert.Empty(Pairs([Saved("1", recording: "rec-1"), Saved("2", recording: "rec-1")]));
     }
+
+    // An audiobook in one file needs no number, on both sides; the parts of a longer one do (row 535).
+    [Theory]
+    [InlineData(true, true, null, 1, true)]
+    [InlineData(true, true, 4, null, true)]
+    [InlineData(true, true, null, null, true)]
+    [InlineData(true, false, null, 1, false)]
+    [InlineData(false, true, null, null, false)]
+    [InlineData(true, false, 1, 1, true)]
+    [InlineData(false, false, null, null, false)]
+    public void TheNumberIsNotComparedBetweenTheOnlyFilesOfTwoBooks(bool savedOnly, bool currentOnly, int? savedNumber, int? currentNumber, bool isSame)
+    {
+        var saved = Saved("1") with { IsOnlyFile = savedOnly, TrackNumber = savedNumber };
+        var current = Track("a", "a1", number: currentNumber) with { IsOnlyFile = currentOnly };
+
+        Assert.Equal(isSame ? ["1>a:a1"] : [], Pairs([saved], current));
+        Assert.Empty(Pairs([saved], current with { Title = "Other" }, current with { RunTimeTicks = 190 * Second }, current with { Album = "Else" }));
+    }
 }

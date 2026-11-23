@@ -68,11 +68,14 @@ public static class TrackDedup
     private static (Components Sets, string?[] Positions) Group(List<TrackItem> items)
     {
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
-        var positions = items.Select(item => PositionOf(item, names)).ToArray();
+        var positions = items.Select(item => PositionOf(item, item.TrackNumber, names)).ToArray();
         var sets = new Components(items);
         JoinBy(items, sets, track => track.RecordingId);
         JoinBy(items, sets, track => track.TrackId);
         JoinByPosition(items, positions, sets);
+
+        // The only files of two audiobooks need no number (row 535).
+        JoinByPosition(items, items.Select(item => item.IsOnlyFile ? PositionOf(item, 0, names) : null).ToArray(), sets);
         return (sets, positions);
     }
 
@@ -124,13 +127,13 @@ public static class TrackDedup
     }
 
     // The normalized album artists, album, disc, number and title, or null when one is missing or there is no duration.
-    private static string? PositionOf(TrackItem track, Dictionary<string, string> names)
+    private static string? PositionOf(TrackItem track, int? trackNumber, Dictionary<string, string> names)
     {
         var artists = track.AlbumArtists.Any(name => !string.IsNullOrWhiteSpace(name)) ? track.AlbumArtists : track.Artists;
         var artist = string.Join('\t', artists.Select(name => Normalized(name, names)).Where(name => name.Length > 0));
         var album = Normalized(track.Album, names);
         var title = TitleNormalizer.Normalize(track.Title, null);
-        if (artist.Length == 0 || album.Length == 0 || title.Length == 0 || track.TrackNumber is not { } number || track.RunTimeTicks is null)
+        if (artist.Length == 0 || album.Length == 0 || title.Length == 0 || trackNumber is not { } number || track.RunTimeTicks is null)
         {
             return null;
         }
