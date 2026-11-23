@@ -64,6 +64,9 @@ public sealed record KeptTitle
     /// <summary>Gets the path of a track, audiobook file, book or home video below its type folder, with <c>/</c>.</summary>
     public string? Place { get; init; }
 
+    /// <summary>Gets a value indicating whether an audiobook file was the only one of its book.</summary>
+    public bool IsOnlyFile { get; init; }
+
     /// <summary>Gets the season of an episode, or the disc of a track or audiobook file.</summary>
     public int? SeasonNumber { get; init; }
 

@@ -94,23 +94,31 @@ public static class CatalogItemMapper
         var serverId = catalog.ServerId.ToString("N");
         return catalog.Items
             .Where(item => item.Kind == IndexedItemKind.Audio)
-            .Select(item => new TrackItem
-            {
-                ServerId = serverId,
-                ItemId = item.ItemId,
-                Title = item.Name,
-                AlbumArtists = item.AlbumArtists ?? [],
-                Artists = item.Artists ?? [],
-                Album = item.Album,
-                DiscNumber = item.ParentIndexNumber,
-                TrackNumber = item.IndexNumber,
-                RunTimeTicks = item.RunTimeTicks,
-                RecordingId = RecordingIdOf(item.ProviderIds),
-                TrackId = TrackIdOf(item.ProviderIds),
-                Versions = item.Versions.Select(version => new MediaVersion(version.MediaSourceId, AudioQualityOf(version))).ToList()
-            })
+            .Select(item => ToTrackItem(serverId, item))
             .ToList();
     }
+
+    /// <summary>
+    /// Gets a track or an audiobook file as the dedup of music reads it.
+    /// </summary>
+    /// <param name="serverId">The plugin's ID for the server.</param>
+    /// <param name="item">The entry.</param>
+    /// <returns>The track.</returns>
+    internal static TrackItem ToTrackItem(string serverId, IndexedItem item) => new()
+    {
+        ServerId = serverId,
+        ItemId = item.ItemId,
+        Title = item.Name,
+        AlbumArtists = item.AlbumArtists ?? [],
+        Artists = item.Artists ?? [],
+        Album = item.Album,
+        DiscNumber = item.ParentIndexNumber,
+        TrackNumber = item.IndexNumber,
+        RunTimeTicks = item.RunTimeTicks,
+        RecordingId = RecordingIdOf(item.ProviderIds),
+        TrackId = TrackIdOf(item.ProviderIds),
+        Versions = item.Versions.Select(version => new MediaVersion(version.MediaSourceId, AudioQualityOf(version))).ToList()
+    };
 
     /// <summary>
     /// Gets the quality of a track version from its default audio stream, else its first, with the container bitrate when

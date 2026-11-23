@@ -129,6 +129,7 @@ public sealed class KeptWatchStateStoreTests : IDisposable
             SeriesName = "Saga",
             ProviderIds = new Dictionary<string, string> { ["MusicBrainzRecording"] = "rec-1", ["ISBN"] = "978" },
             Place = "Band/Album/01 - Song.strm",
+            IsOnlyFile = kind == KeptTitleKind.AudioBook,
             SeasonNumber = 2,
             EpisodeNumber = 3,
             SavedUtc = _saved,

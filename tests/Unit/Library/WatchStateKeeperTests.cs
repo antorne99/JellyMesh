@@ -304,22 +304,31 @@ public sealed class WatchStateKeeperTests : IDisposable
     }
 
     // A remote title of a type with a kept kind of its own, by the name, year and number all of them share.
-    private void AddRemote(StubKind kind, string? recording = null)
+    private void AddRemote(StubKind kind, string? id = null)
     {
         var (library, type, item) = kind switch
         {
             StubKind.Track => (new RemoteLibrary(TestLibraries.Music, "Dischi", "music"), RemoteItemType.Audio, Sound("t1") with
             {
-                ProviderIds = recording is null ? null : new Dictionary<string, string?> { ["MusicBrainzRecording"] = recording }
+                ProviderIds = id is null ? null : new Dictionary<string, string?> { ["MusicBrainzRecording"] = id }
             }),
             StubKind.AudioBook => (new RemoteLibrary(TestLibraries.Books, "Libri", "books"), RemoteItemType.AudioBook, Sound("p1")),
-            StubKind.Book => (new RemoteLibrary(TestLibraries.Books, "Libri", "books"), RemoteItemType.Book, new RemoteItem { Id = "b1", Name = "Song", ProductionYear = 2019, Path = "/books/Song/Song.epub" }),
+            StubKind.Book => (new RemoteLibrary(TestLibraries.Books, "Libri", "books"), RemoteItemType.Book, new RemoteItem
+            {
+                Id = "b1",
+                Name = "Song",
+                ProductionYear = 2019,
+                SeriesName = "Saga",
+                Path = "/books/Song/Song.epub",
+                ProviderIds = id is null ? null : new Dictionary<string, string?> { ["ISBN"] = id }
+            }),
             StubKind.HomeVideo => (new RemoteLibrary(TestLibraries.HomeVideos, "Casa", "homevideos"), RemoteItemType.Video, new RemoteItem
             {
                 Id = "v1",
                 Name = "Song",
                 ProductionYear = 2019,
                 ParentId = TestLibraries.HomeVideos,
+                RunTimeTicks = 180 * TimeSpan.TicksPerSecond,
                 MediaSources = [TestItems.Source("v1", 1080, 5_000_000)]
             }),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
@@ -502,26 +511,103 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
 
-    // How to know these again is not decided, so their rows wait for it, up to 90 days.
+    // Row 535: an audiobook as a track, a book by its ID or its data, a home video by its data.
     [Theory]
     [InlineData(StubKind.AudioBook)]
     [InlineData(StubKind.Book)]
     [InlineData(StubKind.HomeVideo)]
-    public async Task AnAudioBookABookAndAHomeVideoAreKeptAndNotYetPutBack(StubKind kind)
+    public async Task AnAudioBookABookAndAHomeVideoGetTheirStateBack(StubKind kind)
     {
         AddRemote(kind);
         var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
-        Watch(_anna, ItemOf(a, kind));
+        var b = ItemOf(await AddAndMaterializeAsync("B", LibraryOf(kind)), kind);
+        var old = ItemOf(a, kind);
+        Watch(_anna, old);
+        await RemoveAsync(a);
+        Assert.True(Row(_anna, b).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(StubKind.AudioBook)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.HomeVideo)]
+    public async Task AnAudioBookABookAndAHomeVideoThatAreNotTheSameGetNothing(StubKind kind)
+    {
+        AddRemote(kind);
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
+        var b = ItemOf(await AddAndMaterializeAsync("B", LibraryOf(kind)), kind);
+        var old = ItemOf(a, kind);
+        old.Name = "Another";
+        Watch(_anna, old);
+
         await RemoveAsync(a);
 
-        var fresh = ItemOf(await AddAndMaterializeAsync("A", LibraryOf(kind)), kind);
-        await _keeper.RestoreAsync(CancellationToken.None);
-
-        Assert.False(Row(_anna, fresh).Played);
+        Assert.False(Row(_anna, b).Played);
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
-        _fixture.Sync.Clock.Now = _fixture.Sync.Clock.Now.AddDays(91);
-        await _keeper.RestoreAsync(CancellationToken.None);
-        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ABookWithTheSameIdGetsTheStateWhateverItsTitle()
+    {
+        AddRemote(StubKind.Book, "978");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Books);
+        var b = ItemOf(await AddAndMaterializeAsync("B", TestLibraries.Books), StubKind.Book);
+        var old = ItemOf(a, StubKind.Book);
+        old.Name = "Another";
+        old.ProviderIds = new Dictionary<string, string> { ["ISBN"] = "978", ["JellyMesh"] = "one" };
+        Watch(_anna, old);
+
+        await RemoveAsync(a);
+
+        Assert.True(Row(_anna, b).Played);
+    }
+
+    // The only file of a book needs no number; a file of a longer book does.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task AnAudioBookWithNoNumberGetsItsStateBackOnlyWhenItIsOneFile(bool isLonger, bool isRestored)
+    {
+        AddRemote(StubKind.AudioBook);
+        if (isLonger)
+        {
+            _fixture.Sync.Client.Add(TestLibraries.Books, RemoteItemType.AudioBook, Sound("p2") with { Name = "Second", IndexNumber = 4 });
+        }
+
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Books);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Books);
+        BaseItem First(RemoteServerInfo server)
+        {
+            var item = new AudioBook { Id = Guid.NewGuid(), Name = "Song", Artists = ["Singer"], AlbumArtists = ["Singer"], Album = "Album", ParentIndexNumber = 2, RunTimeTicks = 181 * TimeSpan.TicksPerSecond };
+            item.Path = FederatedPaths.Resolve(_fixture.Root, _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Sources[0].ItemId == "p1").RelativePath);
+            Add(item);
+            return item;
+        }
+
+        var other = First(b);
+        Watch(_anna, First(a));
+        await RemoveAsync(a);
+
+        Assert.Equal(isRestored, Row(_anna, other).Played);
+    }
+
+    // An audiobook and a track with the same data are not one another.
+    [Theory]
+    [InlineData(StubKind.Track, StubKind.AudioBook)]
+    [InlineData(StubKind.AudioBook, StubKind.Track)]
+    public async Task ATrackAndAnAudioBookNeverShareTheirState(StubKind kept, StubKind other)
+    {
+        AddRemote(kept);
+        AddRemote(other);
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kept));
+        var b = ItemOf(await AddAndMaterializeAsync("B", LibraryOf(other)), other);
+        Watch(_anna, ItemOf(a, kept));
+
+        await RemoveAsync(a);
+
+        Assert.False(Row(_anna, b).Played);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
 
     [Theory]

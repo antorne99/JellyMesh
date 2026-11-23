@@ -33,9 +33,9 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
     private const string InsertTitle = """
         INSERT INTO kept_titles (old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres,
             studios, people, season_number, episode_number, episode_number_end, saved_utc, artists, album_artists, album, series_name,
-            provider_ids, place)
+            provider_ids, place, is_only_file)
         VALUES ($old, $kind, $title, $year, $tmdb, $imdb, $tvdb, $original, $runtime, $overview, $genres, $studios, $people, $season,
-            $episode, $episodeEnd, $saved, $artists, $albumArtists, $album, $seriesName, $providerIds, $place)
+            $episode, $episodeEnd, $saved, $artists, $albumArtists, $album, $seriesName, $providerIds, $place, $onlyFile)
         RETURNING id;
         """;
 
@@ -47,7 +47,8 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
 
     private const string SelectTitles = """
         SELECT id, old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres, studios, people,
-            season_number, episode_number, episode_number_end, saved_utc, artists, album_artists, album, series_name, provider_ids, place
+            season_number, episode_number, episode_number_end, saved_utc, artists, album_artists, album, series_name, provider_ids, place,
+            is_only_file
         FROM kept_titles ORDER BY id;
         """;
 
@@ -371,7 +372,8 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
             ("$album", title.Album),
             ("$seriesName", title.SeriesName),
             ("$providerIds", JsonSerializer.Serialize(title.ProviderIds)),
-            ("$place", title.Place));
+            ("$place", title.Place),
+            ("$onlyFile", title.IsOnlyFile));
         return (long)command.ExecuteScalar()!;
     }
 
@@ -424,6 +426,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
             SeriesName = StoreSql.TextOrNull(reader, 21),
             ProviderIds = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(22)) ?? [],
             Place = StoreSql.TextOrNull(reader, 23),
+            IsOnlyFile = reader.GetInt64(24) != 0,
             Users = users.GetValueOrDefault(id) ?? []
         };
     }

@@ -175,6 +175,7 @@ public static class SmallStateSchema
             ALTER TABLE kept_titles ADD COLUMN series_name TEXT;
             ALTER TABLE kept_titles ADD COLUMN provider_ids TEXT NOT NULL DEFAULT '{}';
             ALTER TABLE kept_titles ADD COLUMN place TEXT;
+            ALTER TABLE kept_titles ADD COLUMN is_only_file INTEGER NOT NULL DEFAULT 0;
             """;
         command.ExecuteNonQuery();
     }
