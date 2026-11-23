@@ -35,6 +35,7 @@ public static class PlaybackServices
         services.AddSingleton<PlaybackVersions>();
         services.AddSingleton<PlaybackInfoFilter>();
         services.AddSingleton<StockRouteGuardFilter>();
+        services.AddSingleton<PhotoImageFilter>();
         services.AddSingleton<StubSegments>();
         services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();
         services.AddSingleton<SegmentOffer>();
@@ -47,6 +48,7 @@ public static class PlaybackServices
         {
             options.Filters.AddService<PlaybackInfoFilter>();
             options.Filters.AddService<StockRouteGuardFilter>();
+            options.Filters.AddService<PhotoImageFilter>();
             options.Filters.AddService<SegmentRouteFilter>();
         });
     }

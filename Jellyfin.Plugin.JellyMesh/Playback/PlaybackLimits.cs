@@ -49,6 +49,17 @@ public static class PlaybackLimits
     public const int Reconnections = 3;
 
     /// <summary>
+    /// The most images of photos read from one server at once, apart from the calls and streams of playback, since they need
+    /// no login. A page of photos asks for dozens, so the others wait.
+    /// </summary>
+    public const int PhotoImagesPerServer = 8;
+
+    /// <summary>
+    /// The longest the read of a photo image waits for a place among <see cref="PhotoImagesPerServer"/>.
+    /// </summary>
+    public static readonly TimeSpan PhotoImageQueueWait = TimeSpan.FromSeconds(10);
+
+    /// <summary>
     /// The longest a call waits for a place among <see cref="CallsPerServer"/>. Below the shortest time decision 17 allows
     /// for a call, so that a busy server reads as busy and not as offline.
     /// </summary>

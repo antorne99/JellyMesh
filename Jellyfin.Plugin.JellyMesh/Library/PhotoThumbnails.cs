@@ -35,6 +35,12 @@ public static class PhotoThumbnails
             : Path.Combine(root, FolderName, stubId + ".jpg");
     }
 
+    /// <summary>Tells whether a path is a file of a thumbnail folder, whatever the federated folder is.</summary>
+    /// <param name="path">The path.</param>
+    /// <returns>True for a thumbnail.</returns>
+    public static bool IsThumbnail(string? path)
+        => string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), FolderName, StringComparison.Ordinal);
+
     /// <summary>
     /// Points the Primary of a photo at its thumbnail, as a new image so that Jellyfin measures it again. Nothing is saved.
     /// </summary>
