@@ -49,6 +49,17 @@ public static class ProviderProtocol
     public const string ProbeHeader = "X-JellyMesh-Probe";
 
     /// <summary>
+    /// The request header naming the device a stream of audio plays on, as a hash only the consumer can make, so that its
+    /// streams take one slot (row 511). A provider that does not know it counts each stream, as before.
+    /// </summary>
+    public const string DeviceHeader = "X-JellyMesh-Device";
+
+    /// <summary>
+    /// The length of the value of <see cref="DeviceHeader"/>: 32 bytes in lowercase hexadecimal.
+    /// </summary>
+    public const int DeviceLength = 64;
+
+    /// <summary>
     /// The most items in a page of the catalog, and the most identifiers in one lookup.
     /// </summary>
     public const int MaxItemsPerPage = 500;

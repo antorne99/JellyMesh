@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
@@ -31,6 +32,8 @@ internal sealed class ProviderFixture
     public static readonly Guid SharedItem = Guid.Parse("30000000-0000-0000-0000-000000000000");
     public static readonly Guid PrivateItem = Guid.Parse("40000000-0000-0000-0000-000000000000");
     public static readonly Guid StubItem = Guid.Parse("50000000-0000-0000-0000-000000000000");
+    public static readonly Guid SharedTrack = Guid.Parse("60000000-0000-0000-0000-000000000000");
+    public static readonly Guid PrivateTrack = Guid.Parse("70000000-0000-0000-0000-000000000000");
 
     public ProviderFixture()
     {
@@ -48,6 +51,8 @@ internal sealed class ProviderFixture
         AddItem(SharedItem, new Movie { Path = "/media/film/a.mkv" }, SharedLibrary);
         AddItem(PrivateItem, new Movie { Path = "/other/film/b.mkv" }, PrivateLibrary);
         AddItem(StubItem, new Movie { Path = "/federata/Film/c/c.strm", ShortcutPath = "http://127.0.0.1:8096/JellyMesh/Play/stub" }, SharedLibrary);
+        AddItem(SharedTrack, new Audio { Path = "/media/music/a.flac" }, SharedLibrary);
+        AddItem(PrivateTrack, new Audio { Path = "/other/music/b.flac" }, PrivateLibrary);
         WithLibrary(SharedLibrary, "/media/film");
         Connect();
     }

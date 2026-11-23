@@ -42,11 +42,16 @@ public class PeerGuardFilterTests
     // The legacy params query parameter with the play session in field 20, the one stock reads over PlaySessionId.
     private static string LegacyParams(string playSession) => "params=" + Uri.EscapeDataString(new string(';', 20)) + playSession;
 
-    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, string method, Guid? item, string query = "", Action? during = null, Action<DefaultHttpContext>? ends = null, Exception? failure = null, Dictionary<string, StringValues>? decoded = null)
+    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, string method, Guid? item, string query = "", Action? during = null, Action<DefaultHttpContext>? ends = null, Exception? failure = null, Dictionary<string, StringValues>? decoded = null, StringValues device = default)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = method;
         http.Request.QueryString = new QueryString(query);
+        if (device.Count > 0)
+        {
+            http.Request.Headers[ProviderProtocol.DeviceHeader] = device;
+        }
+
         if (decoded is not null)
         {
             http.Request.Query = new QueryCollection(decoded);
@@ -911,6 +916,131 @@ public class PeerGuardFilterTests
         Assert.Equal(1, Slots);
     }
 
+    private const string DeviceOne = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private const string DeviceTwo = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+    private async Task<bool> FileAsync(StringValues device, Guid? item = null, string query = "?static=true")
+    {
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", item ?? ProviderFixture.SharedTrack, query, device: device);
+        Assert.Equal(ran ? null : StatusCodes.Status429TooManyRequests, StatusOf(context));
+        return ran;
+    }
+
+    [Fact]
+    public async Task A_track_read_with_no_play_session_holds_the_slot_of_its_device_until_the_idle_time()
+    {
+        Assert.True(await FileAsync(DeviceOne));
+        Assert.Equal(1, Slots);
+
+        Assert.True(await FileAsync(DeviceOne));
+        Assert.False(await FileAsync(DeviceTwo));
+        Assert.False(await FileAsync(default));
+
+        Elapse(StreamSlots.IdleTimeout);
+        Assert.True(await FileAsync(DeviceTwo));
+        VerifyNothingClosed();
+    }
+
+    [Fact]
+    public async Task The_tracks_of_a_device_stream_in_one_slot()
+    {
+        _fixture.Own("playing");
+        _fixture.Own("next");
+
+        Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=playing"));
+        Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=next"));
+
+        Assert.Equal(1, Slots);
+    }
+
+    [Fact]
+    public async Task A_track_is_grouped_on_the_hls_routes_too()
+    {
+        _fixture.Own("playing");
+        _fixture.Own("next");
+        var segment = ProviderFixture.Stock("DynamicHls", "GetHlsAudioSegment");
+
+        var (_, first) = await RunAsync(segment, "GET", ProviderFixture.SharedTrack, "?PlaySessionId=playing", device: DeviceOne);
+        var (_, second) = await RunAsync(segment, "GET", ProviderFixture.SharedTrack, "?PlaySessionId=next", device: DeviceOne);
+
+        Assert.True(first);
+        Assert.True(second);
+        Assert.Equal(1, Slots);
+    }
+
+    [Fact]
+    public async Task Anything_but_audio_ignores_the_device()
+    {
+        _fixture.Own("one");
+        _fixture.Own("two");
+
+        Assert.True(await FileAsync(DeviceOne, ProviderFixture.SharedItem, "?PlaySessionId=one"));
+        Assert.False(await FileAsync(DeviceOne, ProviderFixture.SharedItem, "?PlaySessionId=two"));
+        Assert.False(await FileAsync(DeviceOne, ProviderFixture.SharedItem));
+        Assert.False(await FileAsync(DeviceOne));
+    }
+
+    [Fact]
+    public async Task A_film_read_under_the_play_session_of_a_track_counts_on_its_own()
+    {
+        _fixture.Own("playing");
+        _fixture.Own("next");
+        Assert.True(await FileAsync(DeviceOne, query: "?PlaySessionId=playing"));
+        Assert.True(await FileAsync(DeviceOne, query: "?PlaySessionId=next"));
+
+        Assert.False(await FileAsync(DeviceOne, ProviderFixture.SharedItem, "?PlaySessionId=next"));
+        Assert.Equal(1, Slots);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("phone")]
+    [InlineData("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde")]
+    [InlineData("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0")]
+    [InlineData("0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    public async Task A_device_that_is_not_a_hash_counts_as_none(string device)
+    {
+        Assert.True(await FileAsync(device));
+
+        Assert.Equal(0, Slots);
+    }
+
+    [Fact]
+    public async Task A_repeated_device_counts_as_none()
+    {
+        Assert.True(await FileAsync(new StringValues([DeviceOne, DeviceTwo])));
+
+        Assert.Equal(0, Slots);
+    }
+
+    [Fact]
+    public async Task A_device_opens_nothing_that_is_not_shared()
+    {
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", ProviderFixture.PrivateTrack, "?static=true", device: DeviceOne);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.Equal(0, Slots);
+    }
+
+    [Theory]
+    [InlineData(true, DeviceOne)]
+    [InlineData(false, null)]
+    public async Task A_playback_info_notes_the_device_of_a_track_only(bool track, string? expected)
+    {
+        string? noted = "nothing ran";
+
+        await RunAsync(
+            ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"),
+            "POST",
+            track ? ProviderFixture.SharedTrack : ProviderFixture.SharedItem,
+            ends: http => noted = PeerGuardFilter.NotedDevice(http),
+            device: DeviceOne);
+
+        Assert.Equal(expected, noted);
+    }
+
     [Fact]
     public async Task Closing_a_transcode_takes_no_slot_even_on_a_full_server()
     {
@@ -1186,6 +1316,8 @@ public class PeerGuardFilterTests
 
 public class PeerPlaybackInfoFilterTests
 {
+    private const string DeviceHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     private readonly ProviderFixture _fixture = new();
     private readonly PeerPlaybackInfoFilter _filter;
 
@@ -1194,7 +1326,7 @@ public class PeerPlaybackInfoFilterTests
         _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots, _fixture.Closer);
     }
 
-    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, bool bodyBound = true)
+    private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, bool bodyBound = true, string? device = null)
     {
         // Stock binds the posted body of every consumer PlaybackInfo, so the tests post one unless told otherwise.
         arguments ??= new Dictionary<string, object?>();
@@ -1203,13 +1335,14 @@ public class PeerPlaybackInfoFilterTests
             arguments.TryAdd("playbackInfoDto", new PostedBody());
         }
 
-        return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft, arguments);
+        return RunAsync(ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"), result, replaces, failure, consumerLeft, arguments, device);
     }
 
-    private async Task<(ActionExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null)
+    private async Task<(ActionExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, string? device = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = "POST";
+        PeerGuardFilter.NoteDevice(http, device);
         if (replaces is not null)
         {
             http.Request.Headers[ProviderProtocol.ReplacesHeader] = replaces;
@@ -1378,6 +1511,37 @@ public class PeerPlaybackInfoFilterTests
 
         Assert.True(ran);
         Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+    }
+
+    [Fact]
+    public async Task The_next_track_of_a_device_passes_on_a_full_server()
+    {
+        await RunAsync(Answer("playing"), device: "phone");
+        var (next, ran) = await RunAsync(Answer("next"), device: "phone");
+        var (other, otherRan) = await RunAsync(Answer("other"), device: "tablet");
+
+        Assert.True(ran);
+        Assert.Null(next.Result);
+        Assert.False(otherRan);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, (other.Result as StatusCodeResult)?.StatusCode);
+        Assert.Equal(1, _fixture.Slots.Count(_fixture.Peer.Id));
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "next"));
+    }
+
+    // The guard notes the device of audio alone, so the header by itself groups nothing.
+    [Fact]
+    public async Task A_playback_reads_no_device_from_the_header()
+    {
+        _fixture.Slots.TryEnter(_fixture.Peer.Id, 1, "playing", device: DeviceHash);
+        var http = new DefaultHttpContext();
+        http.Request.Method = "POST";
+        http.Request.Headers[ProviderProtocol.DeviceHeader] = DeviceHash;
+        var actionContext = new ActionContext(http, new RouteData(), ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"));
+        var context = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), new Dictionary<string, object?> { ["playbackInfoDto"] = new PostedBody() }, new object());
+
+        await _filter.OnActionExecutionAsync(context, () => throw new InvalidOperationException("It must not run"));
+
+        Assert.Equal(StatusCodes.Status429TooManyRequests, (context.Result as StatusCodeResult)?.StatusCode);
     }
 
     [Fact]
