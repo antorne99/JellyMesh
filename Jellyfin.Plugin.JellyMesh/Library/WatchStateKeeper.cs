@@ -416,7 +416,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         SavedUtc = now
     };
 
-    // What the remote title is decides the kind, not the type its library gave the item.
+    // The kind of stub decides for all but films and episodes, whatever type the library gave the item.
     private KeptTitle TitleOf(BaseItem item, StubKind? stub, string relativePath, Dictionary<Guid, BaseItem?> parents, DateTime now)
     {
         var kind = stub is { } known ? KeptKindOf(known) : (KeptTitleKind?)null;
