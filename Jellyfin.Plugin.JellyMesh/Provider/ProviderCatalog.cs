@@ -488,7 +488,7 @@ public sealed class ProviderCatalog
 
     /// <summary>
     /// Narrows a page of a library to what is outside the federated folder, at any depth, and outside the paths of the library
-    /// that hold a server folder left by a moved one. Null when there is nothing to read.
+    /// that are a server folder left by a moved one. Null when there is nothing to read.
     /// </summary>
     private LibraryScope? ScopeOf(Guid libraryId)
     {
@@ -499,18 +499,21 @@ public sealed class ProviderCatalog
             return null;
         }
 
-        // A path that holds the layout of a server folder has only hidden items under it, whatever the root is now.
+        // Every item under a path named with the layout of a server folder is hidden, whatever the root is now. A path that
+        // only links to one is not left out, since what it holds may link out of it.
         var root = FederatedRoot();
         var locations = Locations(library);
-        var federated = locations.Where(location => (root is not null && location.IsWithin(root)) || HasServerFolderLayout(location)).ToList();
-        IReadOnlyList<FolderPath> hidden = root is not null && locations.Any(root.IsWithin) ? [root, .. federated] : federated;
-        var above = locations.Except(federated).Where(location => hidden.Any(folder => folder.IsWithin(location))).ToList();
-        if (above.Count > 0)
+        var old = locations.Where(location => HasServerFolderLayout(location.Lexical)).ToList();
+        var federated = locations.Where(location => old.Contains(location) || (root is not null && location.IsWithin(root))).ToList();
+        var outside = locations.Except(federated).ToList();
+        var above = root is null ? [] : outside.Where(root.IsWithin).ToList();
+        if (above.Count > 0 || outside.Exists(location => old.Exists(folder => folder.IsNamedWithin(location))))
         {
-            // Jellyfin names a hidden folder after the path of the library, which may reach it by a link.
-            var folders = above.SelectMany(location => hidden.Select(location.Below))
+            // Jellyfin names the federated folder after the path of the library, which may reach it by a link.
+            var folders = above.Select(location => location.Below(root!))
+                .Prepend(above.Count > 0 ? root!.Indexed : null)
                 .OfType<string>()
-                .Concat(hidden.Select(folder => folder.Indexed))
+                .Concat(federated.Select(folder => folder.Indexed))
                 .Distinct(StringComparer.Ordinal)
                 .Select(path => _library.FindByPath(path, true))
                 .OfType<BaseItem>()
@@ -528,12 +531,18 @@ public sealed class ProviderCatalog
             return LibraryScope.Whole;
         }
 
-        var paths = locations.Except(federated).Select(location => location.Indexed).ToList();
+        var paths = outside.Select(location => location.Indexed).ToList();
         var real = paths
             .Select(path => _library.FindByPath(path, true))
             .OfType<BaseItem>()
             .Select(folder => folder.Id)
             .ToArray();
+        if (old.Count > 0 && real.Length < paths.Count)
+        {
+            // A read that fails keeps what the peer already has; one that succeeds without a real path takes it away.
+            return LibraryScope.Whole;
+        }
+
         if (real.Length == 0 && paths.Count > 0)
         {
             _logger.LogDebug("The real paths of library {LibraryId} are not indexed yet, so a page of it reads as empty", libraryId);
@@ -554,6 +563,9 @@ public sealed class ProviderCatalog
 
         public bool IsWithin(FolderPath folder) =>
             PathIdentity.IsWithin(Lexical, folder.Lexical, PathIdentity.Comparison) || PathIdentity.IsWithin(Canonical, folder.Canonical, PathIdentity.Comparison);
+
+        // Whether it is within a folder by its name alone, links not resolved.
+        public bool IsNamedWithin(FolderPath folder) => PathIdentity.IsWithin(Lexical, folder.Lexical, PathIdentity.Comparison);
 
         // A folder within this one on disk, named from the indexed path of this one. Null if it is not within on disk.
         public string? Below(FolderPath folder) =>

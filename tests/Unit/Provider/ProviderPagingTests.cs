@@ -140,6 +140,19 @@ public sealed class ProviderPagingTests : IDisposable
     }
 
     [Fact]
+    public async Task A_film_under_a_real_path_not_indexed_yet_is_not_dropped_from_the_consumer_for_the_folder_of_a_server()
+    {
+        WithLocations(Real, Server + "/Film");
+        Add(Real + "/A.mkv");
+        Add(Server + "/Film/Title/Title - Server.strm");
+        _provider.Library.Setup(manager => manager.FindByPath(Real, It.IsAny<bool?>())).Returns((BaseItem?)null);
+
+        var read = await ReadAsync();
+
+        Assert.Equal(RemoteFailure.CatalogChanged, read.Failure);
+    }
+
+    [Fact]
     public async Task A_page_of_a_library_with_the_folder_of_a_server_as_a_path_costs_no_read_of_its_items()
     {
         WithLocations(Real, Server + "/Film");
