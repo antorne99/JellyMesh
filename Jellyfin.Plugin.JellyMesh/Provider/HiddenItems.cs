@@ -17,7 +17,7 @@ internal sealed class HiddenItems(TimeProvider clock)
     public const int MaxPerType = 10_000;
 
     /// <summary>How often the items kept are looked up again, at most.</summary>
-    public static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(1);
 
     private readonly Lock _lock = new();
     private readonly Dictionary<(Guid Library, BaseItemKind Kind), Entry> _entries = [];
@@ -80,12 +80,15 @@ internal sealed class HiddenItems(TimeProvider clock)
     {
         lock (_lock)
         {
-            if (!_entries.TryGetValue((libraryId, kind), out var entry) || entry.Ids.IsEmpty || clock.GetUtcNow() - entry.CheckedUtc < CheckInterval)
+            var now = clock.GetUtcNow();
+            if (!_entries.TryGetValue((libraryId, kind), out var entry)
+                || entry.Ids.IsEmpty
+                || (now >= entry.CheckedUtc && now - entry.CheckedUtc < CheckInterval))
             {
                 return false;
             }
 
-            entry.CheckedUtc = clock.GetUtcNow();
+            entry.CheckedUtc = now;
             return true;
         }
     }

@@ -89,6 +89,16 @@ public sealed class HiddenItemsTests
     }
 
     [Fact]
+    public void Items_are_looked_up_again_when_the_clock_was_set_back()
+    {
+        _hidden.Add(_library, BaseItemKind.Movie, [Guid.NewGuid()]);
+
+        _clock.Advance(-TimeSpan.FromDays(1));
+
+        Assert.True(_hidden.TryBeginCheck(_library, BaseItemKind.Movie));
+    }
+
+    [Fact]
     public void Libraries_no_longer_there_are_forgotten()
     {
         var other = Guid.NewGuid();
