@@ -44,9 +44,12 @@ public static class BookIdentity
     }
 
     // Whether two books have different IDs of one provider.
-    private static bool HaveOtherIds(BookItem left, BookItem right) => left.ProviderIds.Any(pair => right.ProviderIds.Any(other =>
-        string.Equals(pair.Key, other.Key, StringComparison.OrdinalIgnoreCase)
-        && !string.IsNullOrWhiteSpace(pair.Value)
-        && !string.IsNullOrWhiteSpace(other.Value)
-        && !string.Equals(pair.Value.Trim(), other.Value.Trim(), StringComparison.OrdinalIgnoreCase)));
+    private static bool HaveOtherIds(BookItem left, BookItem right)
+    {
+        var ids = left.ProviderIds
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+            .ToLookup(pair => pair.Key, pair => pair.Value.Trim(), StringComparer.OrdinalIgnoreCase);
+        return right.ProviderIds.Any(other => !string.IsNullOrWhiteSpace(other.Value)
+            && ids[other.Key].Any(id => !string.Equals(id, other.Value.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
 }
