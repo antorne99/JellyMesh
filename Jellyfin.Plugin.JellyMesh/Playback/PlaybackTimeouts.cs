@@ -70,7 +70,7 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan PhotoImageWrite = TimeSpan.FromSeconds(60);
 
     /// <summary>
-    /// How long no image of a photo is asked of a server that did not answer or refused the login, so that a page of photos
+    /// How long no image of a photo is asked of a server that did not answer or whose login was refused, so that a page of photos
     /// does not repeat the login or the wait for each one.
     /// </summary>
     public static readonly TimeSpan PhotoServerPause = TimeSpan.FromSeconds(10);

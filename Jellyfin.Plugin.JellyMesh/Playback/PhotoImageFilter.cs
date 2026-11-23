@@ -199,7 +199,8 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
             return read.Value.Content;
         }
 
-        if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.AuthenticationFailed)
+        if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.AuthenticationFailed
+            or RemoteFailure.OtherServer or RemoteFailure.AdministratorAccount)
         {
             // A failed anonymous read pauses no signed-in user.
             (anonymous ? _anonymousPaused : _paused)[source.ServerId] = _clock.GetUtcNow() + PlaybackTimeouts.PhotoServerPause;

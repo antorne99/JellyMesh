@@ -586,6 +586,8 @@ public class PhotoImageFilterTests
     [InlineData(RemoteFailure.Unreachable, 1)]
     [InlineData(RemoteFailure.Timeout, 1)]
     [InlineData(RemoteFailure.AuthenticationFailed, 1)]
+    [InlineData(RemoteFailure.OtherServer, 1)]
+    [InlineData(RemoteFailure.AdministratorAccount, 1)]
     [InlineData(RemoteFailure.ServerError, 2)]
     [InlineData(RemoteFailure.InvalidResponse, 2)]
     public async Task After_a_failure_of_the_server_its_images_pause(RemoteFailure failure, int calls)
