@@ -319,6 +319,29 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Equal((7, false), (row.PlaybackPositionTicks, row.Played));
     }
 
+    // The file of two episodes backs both, so its stub joins the one of its own episode.
+    [Fact]
+    public async Task AStubOfAFileOfTwoEpisodesJoinsTheStubOfItsEpisode()
+    {
+        await AddSeriesAsync(("a1", TestLibraries.Shows, 1, 1), ("a2", TestLibraries.Shows, 1, 2), ("a3", TestLibraries.Shows, 1, 2), ("b1", TestLibraries.ShowsB, 1, 1));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("x", "s" + TestLibraries.ShowsB, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source("x", 480, 500_000)] });
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var stub = Assert.Single(Stubs, stub => stub.Sources.Count == 1 && stub.Sources[0].ItemId == "x");
+        Give(_anna, PathOf(stub), Full());
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        var first = Assert.Single(Stubs, stub => stub.Sources.Any(source => source.ItemId == "a1"));
+        var second = Assert.Single(Stubs, stub => stub.Sources.Any(source => source.ItemId == "a2"));
+        AssertFull(Row(_anna, PathOf(second)));
+        Assert.False(Row(_anna, PathOf(first)).Played);
+        Assert.DoesNotContain(Stubs, left => left.Id == stub.Id);
+    }
+
     // No users may mean they cannot be read for now.
     [Fact]
     public async Task AJoinWaitsWhileThereAreNoUsersToHandTheStateOver()

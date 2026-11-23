@@ -92,10 +92,12 @@ public sealed class StubMatcher
             .ToList();
 
         var owners = new Dictionary<(Guid ServerId, string ItemId), int>();
+        var titles = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var index = 0; index < claims.Count; index++)
         {
             if (claims[index].Stub is not null)
             {
+                titles.TryAdd(claims[index].Content.Identity.Key, index);
                 foreach (var item in claims[index].Content.RemoteItems)
                 {
                     owners.TryAdd((item.ServerId, item.ItemId), index);
@@ -105,18 +107,34 @@ public sealed class StubMatcher
 
         foreach (var stub in _stubs.Where(stub => !_claimed.Contains(stub.Id)))
         {
-            foreach (var source in stub.Sources)
+            if (OwnerOf(stub) is { } owner)
             {
-                if (owners.TryGetValue((source.ServerId, source.ItemId), out var owner))
-                {
-                    claims[owner] = claims[owner] with { Merged = [.. claims[owner].Merged, stub] };
-                    _claimed.Add(stub.Id);
-                    break;
-                }
+                claims[owner] = claims[owner] with { Merged = [.. claims[owner].Merged, stub] };
+                _claimed.Add(stub.Id);
             }
         }
 
         return claims;
+
+        // A file of several episodes is an item of each, so the content of the stub's own key comes first.
+        int? OwnerOf(StubEntry stub)
+        {
+            if (titles.TryGetValue(stub.IdentityKey, out var title)
+                && claims[title].Content.RemoteItems.Any(item => stub.Sources.Any(source => source.ServerId == item.ServerId && string.Equals(source.ItemId, item.ItemId, StringComparison.Ordinal))))
+            {
+                return title;
+            }
+
+            foreach (var source in stub.Sources)
+            {
+                if (owners.TryGetValue((source.ServerId, source.ItemId), out var owner))
+                {
+                    return owner;
+                }
+            }
+
+            return null;
+        }
     }
 
     /// <summary>
