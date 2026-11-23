@@ -429,7 +429,7 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        return [session.RemotePlaySessionId ?? string.Empty, session.Source.ServerId.ToString("N")];
+        return [session.RemotePlaySessionId ?? string.Empty, session.Source.ServerId.ToString("N"), session.RemoteDevice ?? string.Empty];
     }
 
     /// <summary>

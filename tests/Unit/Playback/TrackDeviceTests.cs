@@ -106,6 +106,16 @@ public class TrackDeviceTests
         Assert.Equal([HashFor(source), HashFor(source)], _fixture.Client.Devices);
     }
 
+    [Fact]
+    public async Task The_hash_of_a_device_never_reaches_a_client()
+    {
+        var source = JellyMeshSource();
+
+        Assert.Equal(PlaybackOutcomeKind.Remote, (await _fixture.OpenAsync(Track(source))).Kind);
+
+        Assert.Contains(HashFor(source), PlaybackCoordinator.SecretsOf(Assert.Single(_fixture.Sessions.All)));
+    }
+
     // One slot per device, whichever way a client reads its tracks.
     [Fact]
     public async Task A_file_read_names_the_same_device_as_a_playback_info()
