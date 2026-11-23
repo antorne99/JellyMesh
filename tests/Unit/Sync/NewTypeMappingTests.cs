@@ -30,6 +30,22 @@ public class NewTypeMappingTests
         }
         """;
 
+    // A remote that does not know a duration may send 0, which is unknown everywhere (row 542).
+    [Theory]
+    [InlineData("0", null)]
+    [InlineData("-1", null)]
+    [InlineData("null", null)]
+    [InlineData("1", 1L)]
+    public void ADurationThatIsNotPositiveIsUnknown(string ticks, long? expected)
+    {
+        var track = Map(
+            "{ \"Id\": \"t1\", \"Type\": \"Audio\", \"RunTimeTicks\": " + ticks + ", \"MediaSources\": [{ \"Id\": \"s1\", \"RunTimeTicks\": " + ticks + " }] }",
+            RemoteItemType.Audio);
+
+        Assert.Equal(expected, track.RunTimeTicks);
+        Assert.Equal(expected, Assert.Single(track.Versions).RunTimeTicks);
+    }
+
     [Fact]
     public void ATrackKeepsItsAlbumArtistsNumbersMusicBrainzIdsLyricsAndAudioStream()
     {

@@ -267,13 +267,28 @@ public class TrackDedupTests
         Assert.Empty(Pairs([saved], current with { Title = "Other" }, current with { RunTimeTicks = 190 * Second }, current with { Album = "Else" }));
     }
 
-    // A remote may send any number: a negative one is no duration, so the place matches nothing.
-    [Fact]
-    public void ANegativeDurationNeverMatchesByPlace()
+    // A remote may send any number: zero or less is no duration, so the place matches nothing (row 542).
+    [Theory]
+    [InlineData(long.MinValue, false)]
+    [InlineData(-1, false)]
+    [InlineData(-1, true)]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
+    public void ADurationThatIsNotPositiveNeverMatchesByPlace(long ticks, bool onlyFile)
     {
-        var wrong = Track("a", "a1") with { RunTimeTicks = long.MinValue };
+        var wrong = Track("a", "a1") with { RunTimeTicks = ticks, IsOnlyFile = onlyFile };
 
-        Assert.Equal(2, TrackDedup.Resolve([wrong, Track("b", "b1")]).Count);
-        Assert.Empty(Pairs([Saved("1")], wrong));
+        Assert.Equal(2, TrackDedup.Resolve([wrong, wrong with { ServerId = "b", ItemId = "b1" }]).Count);
+        Assert.Empty(Pairs([Saved("1") with { IsOnlyFile = onlyFile }, Saved("2", seconds: 1) with { IsOnlyFile = onlyFile }, wrong with { ServerId = "kept", ItemId = "3" }], wrong));
+        Assert.Equal(["1>a:a1"], Pairs([Saved("1", recording: "r")], wrong with { RecordingId = "r" }));
+    }
+
+    [Fact]
+    public void TheLongestDurationMatchesOnlyItself()
+    {
+        var longest = Track("a", "a1") with { RunTimeTicks = long.MaxValue };
+
+        Assert.Empty(Pairs([Saved("1"), Saved("2", seconds: 1)], longest));
+        Assert.Equal(["3>a:a1"], Pairs([Saved("3") with { RunTimeTicks = long.MaxValue }], longest));
     }
 }
