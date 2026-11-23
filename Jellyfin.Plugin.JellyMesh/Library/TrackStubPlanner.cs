@@ -121,7 +121,7 @@ internal static class TrackStubPlanner
         return new StubWork(entry, stub is null, metadata, string.Empty, string.Empty, url, hash, images, imageTag, technical) { RemovedImages = removed };
     }
 
-    // Each part has its own cover, named as its file, which 12.4 reads as the Primary image of an audiobook (D69).
+    // The cover of a part, named as its file beside it, and the one to delete when the remote dropped it (D69).
     private static (List<StubImage> Images, string ImageTag, List<StubImage> Removed) PartCoverOf(StubEntry entry, IndexedItem part, Guid serverId)
     {
         var stem = Path.ChangeExtension(entry.RelativePath, null);
