@@ -186,6 +186,12 @@ public static class DedupEngine
     private static List<ContentIdentity> IdentifyRemote(CatalogItem item, WorkResolver works)
     {
         var identities = Identify(item, works);
+        if (identities.Count == 0 && item.Kind == ContentKind.Episode && item.SeriesId is not null && works.Find(item) is null)
+        {
+            // Keeps the episodes of a series without a work together, as a series of their server.
+            identities = IdentifyEpisodes(item, new WorkResolver.Work(WorkResolver.KeyOfAlone(item), MatchKind.ItemOnly));
+        }
+
         return identities.Count > 0 ? identities : IdentifyAlone(item, works);
     }
 
@@ -201,6 +207,11 @@ public static class DedupEngine
             return [new ContentIdentity(work.Key, work.Key, ContentKind.Movie, work.Match)];
         }
 
+        return IdentifyEpisodes(item, work);
+    }
+
+    private static List<ContentIdentity> IdentifyEpisodes(CatalogItem item, WorkResolver.Work work)
+    {
         if (item.SeasonNumber is not { } season)
         {
             return [];
