@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public static class StubItemTypes
 {
-    /// <summary>Tells whether a stub of a kind becomes a video, the only item Jellyfin links as a version.</summary>
+    /// <summary>Tells whether a stub of a kind becomes a video in a library of its own type; only videos have versions.</summary>
     /// <param name="kind">The kind.</param>
     /// <returns>True for a video.</returns>
     public static bool IsVideo(StubKind kind) => kind is not (StubKind.Track or StubKind.Book);
