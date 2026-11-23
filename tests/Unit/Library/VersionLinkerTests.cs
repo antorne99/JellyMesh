@@ -433,6 +433,29 @@ public sealed class VersionLinkerTests : IDisposable
         }
     }
 
+    // A track and a book are never versions: a run reads nothing of them, by ID or by path.
+    [Theory]
+    [InlineData(false, StubKind.Track)]
+    [InlineData(true, StubKind.Track)]
+    [InlineData(false, StubKind.Book)]
+    [InlineData(true, StubKind.Book)]
+    public async Task AStubThatIsNoVideoIsNotReadFromTheLibrary(bool thorough, StubKind kind)
+    {
+        var film = Stub("film", _serverA, 1080);
+        var other = Stub("other", _serverB, 2160) with { Kind = kind };
+        await SaveAsync([film, other]);
+        var item = Scanned(film);
+        var path = FederatedPaths.Resolve(Root, other.RelativePath);
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(item.Id))), Times.Once);
+        _library.Verify(
+            library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(IdOf(path, StubItemTypes.Of(kind))) || query.ItemIds.Contains(IdOf(path, typeof(Video))))),
+            Times.Never);
+        _library.Verify(library => library.FindByPath(path, It.IsAny<bool?>()), Times.Never);
+    }
+
     // Q387: the link state comes from block reads; a group already linked costs no lookup of its own.
     [Theory]
     [InlineData(false)]

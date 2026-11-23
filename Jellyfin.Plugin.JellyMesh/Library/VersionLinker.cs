@@ -531,7 +531,7 @@ public sealed class VersionLinker : IVersionLinker
         public void KnowItemsOf(IEnumerable<StubEntry> stubs)
         {
             _known.Clear();
-            foreach (var chunk in stubs.SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
+            foreach (var chunk in stubs.Where(stub => StubItemTypes.IsVideo(stub.Kind)).SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
             {
                 foreach (var video in library.GetItemList(new InternalItemsQuery { ItemIds = chunk }).OfType<Video>())
                 {
@@ -540,8 +540,14 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
+        // The links of the stub's item, null for a kind that is never a version.
         public ItemLinks? FindStub(StubEntry stub)
         {
+            if (!StubItemTypes.IsVideo(stub.Kind))
+            {
+                return null;
+            }
+
             if (IdsOf(stub).Select(id => _known.GetValueOrDefault(id)).OfType<ItemLinks>().FirstOrDefault() is { } links)
             {
                 return links;
