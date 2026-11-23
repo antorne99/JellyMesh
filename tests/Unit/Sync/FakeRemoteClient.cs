@@ -196,6 +196,9 @@ internal sealed class FakeRemoteClient : IJellyfinRemoteClient
             : RemoteResult.Fail<RemoteImage>(ThumbnailFailure));
     }
 
+    public Task<RemoteResult<RemoteImage>> GetPhotoImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, CancellationToken cancellationToken)
+        => GetPhotoThumbnailAsync(endpoint, session, itemId, cancellationToken);
+
     public Task<RemoteResult<RemoteItemPage>> GetItemsAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteItemQuery query, CancellationToken cancellationToken)
     {
         Queries.Add(query);

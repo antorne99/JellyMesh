@@ -101,6 +101,17 @@ public sealed class PhotoThumbnailsTests
         Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Sized(width, height, Jfif)));
     }
 
+    // An image served to a client has its own largest side, and the same segments.
+    [Theory]
+    [InlineData(4096, 4096, true)]
+    [InlineData(4097, 10, false)]
+    [InlineData(10, 4097, false)]
+    public void AServedImageIsBoundedByItsOwnSide(int width, int height, bool allowed)
+    {
+        Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Sized(width, height, Jfif), 4096));
+        Assert.False(PhotoThumbnails.IsCleanJpeg(Sized(width, height, Segment(0xE1, Encoding.ASCII.GetBytes("Exif\0\0"))), 4096));
+    }
+
     [Fact]
     public void EveryFrameMustFitTheThumbnail()
     {

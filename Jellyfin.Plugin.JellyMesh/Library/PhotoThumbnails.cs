@@ -76,7 +76,16 @@ public static class PhotoThumbnails
     /// </summary>
     /// <param name="bytes">The file.</param>
     /// <returns>True for such a JPEG; false for one with other data, a truncated one or any other format.</returns>
-    public static bool IsCleanJpeg(ReadOnlySpan<byte> bytes)
+    public static bool IsCleanJpeg(ReadOnlySpan<byte> bytes) => IsCleanJpeg(bytes, JellyfinRemoteClient.PhotoThumbnailSide);
+
+    /// <summary>
+    /// Tells whether a file is a whole JPEG with only the segments of the image, so no EXIF, GPS, XMP or IPTC (row 470),
+    /// and no larger than a side.
+    /// </summary>
+    /// <param name="bytes">The file.</param>
+    /// <param name="maxSide">The longest side allowed, in pixels.</param>
+    /// <returns>True for such a JPEG; false for one with other data, a truncated one or any other format.</returns>
+    public static bool IsCleanJpeg(ReadOnlySpan<byte> bytes, int maxSide)
     {
         if (bytes.Length < 4 || bytes[0] != Marker || bytes[1] != StartOfImage)
         {
@@ -128,7 +137,7 @@ public static class PhotoThumbnails
             if (IsFrame(marker))
             {
                 // Precision, then height and width: neither may be above the side asked of the remote.
-                if (length < 7 || !FitsThumbnail((bytes[i + 5] << 8) | bytes[i + 6]) || !FitsThumbnail((bytes[i + 7] << 8) | bytes[i + 8]))
+                if (length < 7 || !Fits((bytes[i + 5] << 8) | bytes[i + 6], maxSide) || !Fits((bytes[i + 7] << 8) | bytes[i + 8], maxSide))
                 {
                     return false;
                 }
@@ -146,7 +155,7 @@ public static class PhotoThumbnails
 
     private static bool IsFrame(byte marker) => marker is >= 0xC0 and <= 0xCF && marker is not (0xC4 or 0xC8 or 0xCC);
 
-    private static bool FitsThumbnail(int side) => side is > 0 and <= JellyfinRemoteClient.PhotoThumbnailSide;
+    private static bool Fits(int side, int maxSide) => side > 0 && side <= maxSide;
 
     // The segments an encoder writes for the image itself: JFIF, ICC profile, Adobe, tables, frames, restart interval
     // and scans. Markers with no length and any other application data or comment are refused.

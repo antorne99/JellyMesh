@@ -113,6 +113,46 @@ public class JellyfinRemoteClientTests
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
     }
 
+    private static StubHandler PhotoImageHandler(string type = "image/jpeg") => new(_ =>
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0xD8, 0xFF, 0xD9]) };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(type);
+        return response;
+    });
+
+    // Whatever the client asks for, the answer is a re-encoded JPEG of a bounded size.
+    [Theory]
+    [InlineData(null, null, null, null, null, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
+    [InlineData(1920, 1080, null, null, null, null, 60, "?maxWidth=1920&maxHeight=1080&quality=60&format=Jpg")]
+    [InlineData(null, 300, 400, 500, 600, 700, 100, "?maxWidth=4096&maxHeight=300&quality=80&format=Jpg&width=400&height=500&fillWidth=600&fillHeight=700")]
+    [InlineData(100000, 100000, 100000, 100000, 100000, 100000, int.MaxValue, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&width=4096&height=4096&fillWidth=4096&fillHeight=4096")]
+    [InlineData(0, -1, 0, -1, 0, int.MinValue, 0, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
+    public async Task APhotoImageIsAskedReEncodedAndBoundedWithTheSessionInTheHeaderOnly(int? maxWidth, int? maxHeight, int? width, int? height, int? fillWidth, int? fillHeight, int? quality, string query)
+    {
+        var handler = PhotoImageHandler();
+        var size = new RemotePhotoSize { MaxWidth = maxWidth, MaxHeight = maxHeight, Width = width, Height = height, FillWidth = fillWidth, FillHeight = fillHeight, Quality = quality };
+
+        var result = await ClientFor(handler).GetPhotoImageAsync(_endpoint, _session, "item 1", size, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items/item%201/Images/Primary/0", request.Uri.AbsolutePath);
+        Assert.Equal(query, request.Uri.Query);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("image/png")]
+    [InlineData("image/svg+xml")]
+    [InlineData("text/html")]
+    public async Task APhotoImageThatIsNotAJpegIsRefused(string type)
+    {
+        var result = await ClientFor(PhotoImageHandler(type)).GetPhotoImageAsync(_endpoint, _session, "item", new RemotePhotoSize(), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
     [Theory]
     [InlineData("image/png")]
     [InlineData("application/json")]

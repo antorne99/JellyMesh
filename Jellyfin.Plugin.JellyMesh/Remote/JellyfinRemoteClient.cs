@@ -50,9 +50,14 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     public const int PhotoThumbnailSide = 640;
 
     /// <summary>
-    /// JPEG quality of the local thumbnail of a remote photo.
+    /// Longest side of the image of a remote photo served to a client, in pixels. Above a 4K screen.
     /// </summary>
-    public const int PhotoThumbnailQuality = 80;
+    public const int PhotoImageSide = 4096;
+
+    /// <summary>
+    /// Highest JPEG quality of the image of a remote photo. Below 90, so that Jellyfin always encodes it again.
+    /// </summary>
+    public const int PhotoImageQuality = 80;
 
     /// <summary>
     /// Timeout of a whole request, the body included.
@@ -317,12 +322,27 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<RemoteImage>> GetPhotoThumbnailAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    public Task<RemoteResult<RemoteImage>> GetPhotoThumbnailAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+        => GetPhotoImageAsync(endpoint, session, itemId, new RemotePhotoSize { MaxWidth = PhotoThumbnailSide, MaxHeight = PhotoThumbnailSide }, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemoteImage>> GetPhotoImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(size);
 
         // Below quality 90 Jellyfin never sends the original file, so the photo's own EXIF is not copied.
-        var path = string.Create(CultureInfo.InvariantCulture, $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={PhotoThumbnailSide}&maxHeight={PhotoThumbnailSide}&quality={PhotoThumbnailQuality}&format=Jpg");
+        var path = string.Create(
+            CultureInfo.InvariantCulture,
+            $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={BoundedSide(size.MaxWidth) ?? PhotoImageSide}&maxHeight={BoundedSide(size.MaxHeight) ?? PhotoImageSide}&quality={Bounded(size.Quality, PhotoImageQuality) ?? PhotoImageQuality}&format=Jpg");
+        foreach (var (name, value) in new[] { ("width", size.Width), ("height", size.Height), ("fillWidth", size.FillWidth), ("fillHeight", size.FillHeight) })
+        {
+            if (BoundedSide(value) is { } side)
+            {
+                path += string.Create(CultureInfo.InvariantCulture, $"&{name}={side}");
+            }
+        }
+
         var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, MaxImageBytes).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
@@ -333,6 +353,11 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType!))
             : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
     }
+
+    private static int? BoundedSide(int? side) => Bounded(side, PhotoImageSide);
+
+    // A positive value up to a limit, null for none.
+    private static int? Bounded(int? value, int limit) => value is > 0 ? Math.Min(value.Value, limit) : null;
 
     // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
     private async Task<RemoteResult<RemoteItemPage>> ReadBriefPageAsync(RemoteEndpoint endpoint, RemoteSession session, string parentId, string filter, int startIndex, int limit, CancellationToken cancellationToken)
