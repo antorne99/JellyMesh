@@ -199,11 +199,14 @@ public static class StubPlanner
             .Concat(seriesWorks.Select(work => work.Entry))
             .ToList();
 
-        // A stub with no copy left on its server goes at once, and closes its wait (§10 row 537).
-        var lost = removals.Where(stub => stub.Sources.All(source => catalog.Find(source.ServerId, source.ItemId) is null)).Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        // A stub or a series with no copy left on its server closes its wait (§10 row 537).
+        var lost = removals.Where(stub => IsLost(stub.Sources)).Select(stub => stub.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var living = stubs.Except(removals).Select(stub => stub.SeriesStubId).ToHashSet(StringComparer.Ordinal);
+        lost.UnionWith(series.Where(entry => !living.Contains(entry.Id) && IsLost(entry.Sources)).Select(entry => entry.Id));
         var splits = SplitsOf(input, works, seriesWorks, stubs, series, removals, lost);
         var waiting = splits.Select(split => split.FromStubId).ToHashSet(StringComparer.Ordinal);
-        removals.RemoveAll(stub => stub.ServerId is { } server && servers.ContainsKey(server) && !lost.Contains(stub.Id)
+        removals.RemoveAll(stub => stub.ServerId is { } server && servers.ContainsKey(server)
             && (waiting.Contains(stub.Id) || (stub.SeriesStubId is { } owner && waiting.Contains(owner))));
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
@@ -215,6 +218,8 @@ public static class StubPlanner
             MergedStubs = merged.Count,
             Unconfigured = unconfigured
         };
+
+        bool IsLost(IReadOnlyList<StubSource> sources) => sources.All(source => catalog.Find(source.ServerId, source.ItemId) is null);
     }
 
     /// <summary>

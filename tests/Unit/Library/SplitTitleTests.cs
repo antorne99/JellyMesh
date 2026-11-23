@@ -655,6 +655,54 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Single(_fixture.Registry.State.Splits);
     }
 
+    // The series is still on its server, so it keeps its state until the new one takes it.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ASeriesThatLostItsEpisodesWaitsUnlessItIsGoneToo(bool gone)
+    {
+        await AddSeriesAsync(("e1", TestLibraries.Shows, 1, 1), ("e2", TestLibraries.ShowsB, 2, 1));
+        foreach (var library in new[] { TestLibraries.Shows, TestLibraries.ShowsB })
+        {
+            var other = TestItems.Series("o" + library, "Altra " + library) with { ProviderIds = new Dictionary<string, string?>() };
+            _fixture.Sync.Client.Add(library, RemoteItemType.Series, other);
+            _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode("o1" + library, other.Id, 1, 1, other.Name!));
+        }
+
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var series = Assert.Single(_fixture.Registry.State.Series, entry => entry.Sources.Count == 2);
+        var (stays, leaves) = FederatedPaths.RemoteLibraryOf(Assert.Single(Stubs, stub => stub.Sources[0].ItemId == "e1").RelativePath) == TestLibraries.Shows
+            ? (TestLibraries.Shows, TestLibraries.ShowsB)
+            : (TestLibraries.ShowsB, TestLibraries.Shows);
+        Give(_anna, _fixture.Path_(series.RelativePath), new UserItemData { Key = "k", IsFavorite = true });
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Contains(_fixture.Registry.State.Splits, split => split.FromStubId == series.Id);
+
+        Remove(stays, RemoteItemType.Episode, stays == TestLibraries.Shows ? "e1" : "e2");
+        Remove(leaves, RemoteItemType.Episode, leaves == TestLibraries.Shows ? "e1" : "e2");
+        _fixture.Sync.Client.Add(leaves, RemoteItemType.Episode, TestItems.Episode("new", "s" + leaves, leaves == TestLibraries.Shows ? 1 : 2, 1));
+        if (gone)
+        {
+            Remove(stays, RemoteItemType.Series, "s" + stays);
+            Remove(leaves, RemoteItemType.Series, "s" + leaves);
+            _fixture.Sync.Client.Items[(leaves, RemoteItemType.Episode)].RemoveAll(item => item.Id == "new");
+        }
+
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(!gone, _fixture.Registry.State.Splits.Any(split => split.FromStubId == series.Id));
+        Assert.Equal(!gone, _fixture.Registry.State.Series.Any(entry => entry.Id == series.Id));
+        if (!gone)
+        {
+            await ScanAsync();
+            Assert.Empty(_fixture.Registry.State.Splits);
+            var added = Assert.Single(_fixture.Registry.State.Series, entry => entry.Id != series.Id && entry.RelativePath.Contains("Show (2020)", StringComparison.Ordinal));
+            Assert.True(Row(_anna, _fixture.Path_(added.RelativePath)).IsFavorite);
+        }
+    }
+
     private static UserItemData Full() => new()
     {
         Key = "k",
