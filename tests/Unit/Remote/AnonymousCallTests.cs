@@ -159,9 +159,9 @@ public class AnonymousCallTests
         Assert.Equal(3, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Sessions/Logout"));
     }
 
-    // Decision 128: the next login of another call tells it.
+    // Decision 128: a Server Id another server holds is not stored and is told, also within the line of the interval.
     [Fact]
-    public async Task AServerIdHeldElsewhereIsNeitherStoredNorLogged()
+    public async Task AServerIdHeldElsewhereIsToldOncePerInterval()
     {
         using var fixture = new RegistryFixture();
         var server = await fixture.AddServerAsync();
@@ -172,8 +172,32 @@ public class AnonymousCallTests
 
         Assert.Equal(RemoteFailure.None, (await AnonymousAsync(registry, server.Id, RemoteFailure.None)).Failure);
 
-        Assert.Empty(fixture.Logger.Lines);
+        await AnonymousAsync(registry, server.Id, RemoteFailure.Timeout);
+        Assert.Contains("which another configured server holds", Assert.Single(fixture.Logger.Lines), StringComparison.Ordinal);
         Assert.Empty(fixture.Store.Configuration.Servers[0].JellyfinServerId);
+
+        using var silent = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, fixture.Logger) { Clock = _clock };
+        _login = AdminLogin;
+        await AnonymousAsync(silent, server.Id, RemoteFailure.None);
+        _login = "{\"ServerId\":\"" + FirstId + "\"," + TestValues.LoginJson[1..];
+        await AnonymousAsync(silent, server.Id, RemoteFailure.None);
+        Assert.Equal(2, fixture.Logger.Lines.Count);
+        Assert.Contains(nameof(RemoteFailure.AdministratorAccount), fixture.Logger.Lines[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AClockSetBackDoesNotSilenceTheLog()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        using var registry = Restarted(fixture);
+        fixture.Logger.Lines.Clear();
+
+        await AnonymousAsync(registry, server.Id, RemoteFailure.Timeout);
+        _clock.Advance(TimeSpan.FromDays(-1));
+        await AnonymousAsync(registry, server.Id, RemoteFailure.Timeout);
+
+        Assert.Equal(2, fixture.Logger.Lines.Count);
     }
 
     [Fact]

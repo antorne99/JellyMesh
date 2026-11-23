@@ -145,7 +145,7 @@ public interface IRemoteServerRegistry
 
     /// <summary>
     /// Runs a call for a request without a user like <see cref="RunWithSessionAsync{T}"/>, without recording its outcome and
-    /// with one log line per server and interval for its failures (row 534).
+    /// with one log line per server and interval for its failures (row 534). Only for reads anyone may make.
     /// </summary>
     /// <typeparam name="T">The result type.</typeparam>
     /// <param name="serverId">The server.</param>

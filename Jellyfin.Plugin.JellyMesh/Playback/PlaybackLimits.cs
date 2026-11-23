@@ -61,7 +61,7 @@ public static class PlaybackLimits
 
     /// <summary>
     /// How many of <see cref="PhotoImagesInMemory"/> an anonymous read never takes, so that signed-in users still see their
-    /// photos. One server's reads at once, hence a page of photos keeps loading at full speed.
+    /// photos. As many as the reads of one server at once, which fewer would not let run.
     /// </summary>
     public const int PhotoImagesForUsers = PhotoImagesPerServer;
 
