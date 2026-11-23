@@ -27,9 +27,8 @@ public static class HomeVideoIdentity
         ArgumentNullException.ThrowIfNull(current);
         var byName = current
             .Where(video => NameKey(video) is not null)
-            .DistinctBy(video => (video.ServerId, video.ItemId, video.RunTimeTicks))
             .GroupBy(video => NameKey(video)!, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.OrderBy(video => video.RunTimeTicks).ToList(), StringComparer.Ordinal);
+            .ToDictionary(group => group.Key, group => group.DistinctBy(video => (video.ServerId, video.ItemId, video.RunTimeTicks)).OrderBy(video => video.RunTimeTicks).ToList(), StringComparer.Ordinal);
         var pairs = new List<(HomeVideoItem Saved, HomeVideoItem Current)>();
         var left = 0;
         foreach (var video in saved)

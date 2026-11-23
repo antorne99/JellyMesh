@@ -81,6 +81,13 @@ public class HomeVideoIdentityTests
         Assert.Equal([("k2", "b1"), ("k2", "b2")], found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId)));
     }
 
+    // A video in two folders is known by either, in any order.
+    [Theory]
+    [InlineData("Other", "Trips")]
+    [InlineData("Trips", "Other")]
+    public void AVideoInTwoFoldersIsFoundByEither(string first, string second)
+        => Assert.Equal(["k1>a1"], Pairs([Video("k1")], Video("a1", folder: first), Video("a1", folder: second)));
+
     // Only the videos of the same duration are copies, and one in more than one place is one copy, whatever its versions.
     [Fact]
     public void VideosOfOtherDurationsAndOneVideoInManyPlacesAreNotManyCopies()
