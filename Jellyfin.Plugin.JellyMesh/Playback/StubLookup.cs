@@ -178,8 +178,8 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub or a version
-    /// sits in a library, since Jellyfin shows an item with no library to everyone (D17).
+    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub, also one the
+    /// registry no longer knows (row 514), or a version sits in a library, as Jellyfin shows one with none to all (D17).
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="itemId">The item.</param>
@@ -194,7 +194,7 @@ public sealed class StubLookup
         }
 
         return user.HasPermission(PermissionKind.IsAdministrator)
-            || (FindFile(itemId) is null && !HasVersions(itemId))
+            || (!IsStub(itemId) && !HasVersions(itemId))
             || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 

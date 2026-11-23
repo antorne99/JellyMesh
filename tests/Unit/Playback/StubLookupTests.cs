@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Controller.Entities;
@@ -53,6 +55,23 @@ public class StubLookupTests
 
         Assert.True(Lookup().HasVersions(local.Id));
         Assert.False(Lookup().HasVersions(alone.Id));
+    }
+
+    // Row 514: D17 holds for a stub the registry lacks too; Jellyfin shows an item in no library to everyone.
+    [Theory]
+    [InlineData("/federata/S/Film/A/A.strm", false, false, false)]
+    [InlineData("/federata/S/Film/A/A.strm", true, false, true)]
+    [InlineData("/federata/S/Film/A/A.strm", false, true, true)]
+    [InlineData("/media/film/A.mkv", false, false, true)]
+    public void AStubTheRegistryLacksIsSeenOnlyInALibraryOrByAnAdmin(string path, bool inLibrary, bool admin, bool seen)
+    {
+        var user = new User("viewer", "auth", "reset");
+        user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, admin));
+        var item = Item(path);
+        _library.Setup(library => library.GetItemById<BaseItem>(item.Id, user)).Returns(item);
+        _library.Setup(library => library.GetCollectionFolders(item)).Returns(inLibrary ? [new Folder()] : []);
+
+        Assert.Equal(seen, Lookup().Sees(user, item.Id));
     }
 
     // A track stub has no plugin URL: the file routes find it by its path, playback does not until F56.
