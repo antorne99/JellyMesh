@@ -549,6 +549,25 @@ public class ProviderCatalogTests
     }
 
     [Fact]
+    public void A_page_of_series_leaves_out_those_of_an_old_0_5_folder()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, "/media/serie", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie");
+        BaseItem left = new Series { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show" };
+        BaseItem real = new Series { Id = Guid.NewGuid(), Path = "/media/serie/Show" };
+        _fixture.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()))
+            .Returns(new QueryResult<BaseItem>(0, 2, [left, real]));
+        IReadOnlyList<BaseItem>? sent = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((items, _, _, _, _) => sent = items)
+            .Returns([]);
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Equal([real], sent!);
+    }
+
+    [Fact]
     public void A_lookup_leaves_out_what_the_peer_may_not_reach()
     {
         IReadOnlyList<BaseItem>? sent = null;
@@ -1556,6 +1575,19 @@ public class ChangeFeedRecorderTests
         RaiseUpdated(new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/Album" });
 
         Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task A_series_of_an_old_0_5_folder_never_enters_the_feed()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+        var cursor = await StartAsync();
+        var real = new Series { Id = Guid.NewGuid(), Path = "/media/serie/Show" };
+
+        RaiseUpdated(new Series { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show" });
+        RaiseUpdated(real);
+
+        Assert.Equal([real.Id], _journal.Read(cursor, "share", 10).ItemIds);
     }
 
     [Fact]
