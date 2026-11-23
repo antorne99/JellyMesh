@@ -28,7 +28,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     public static readonly TimeSpan LogoutTimeout = TimeSpan.FromSeconds(3);
 
     /// <summary>
-    /// The shortest time between two log lines of the anonymous calls to a server (row 534).
+    /// The shortest time between two log lines about the failed anonymous calls to a server (row 534), and between two about its
+    /// Server Id (row 540).
     /// </summary>
     public static readonly TimeSpan AnonymousLogInterval = TimeSpan.FromMinutes(5);
 
@@ -1150,7 +1151,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         return libraries;
     }
 
-    // Whether a call may write a log line: an anonymous one at most one per interval and server (row 534).
+    // Whether a call may write the line about its failure: an anonymous one at most one per interval and server (row 534).
     private bool MayLog(ServerRuntime runtime, bool anonymous) => !anonymous || runtime.TryTakeAnonymousLine(Clock);
 
     private async Task<SessionAttempt<T>> CallOnceAsync<T>(
@@ -1231,7 +1232,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
             if (fresh.ServerId is { } remoteId)
             {
-                RememberServerId(server, remoteId, () => MayLog(runtime, anonymous));
+                RememberServerId(server, remoteId, () => !anonymous || runtime.TryTakeServerIdLine(Clock));
             }
 
             return login;
@@ -1604,6 +1605,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         private readonly Lock _gate = new();
         private DateTimeOffset? _anonymousLine;
+        private DateTimeOffset? _serverIdLine;
         private bool? _reachable;
         private RemoteSession? _session;
         private bool _forgotten;
@@ -1657,21 +1659,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
         }
 
-        // Takes the log line of the anonymous calls, at most one per interval. A clock set back starts a new one.
-        public bool TryTakeAnonymousLine(TimeProvider clock)
-        {
-            lock (_gate)
-            {
-                var now = clock.GetUtcNow();
-                if (now >= _anonymousLine && now - _anonymousLine < AnonymousLogInterval)
-                {
-                    return false;
-                }
+        // Takes the log line about the failed anonymous calls, at most one per interval.
+        public bool TryTakeAnonymousLine(TimeProvider clock) => TryTakeLine(ref _anonymousLine, clock);
 
-                _anonymousLine = now;
-                return true;
-            }
-        }
+        // Takes the log line about the Server Id of an anonymous login, at most one per interval (row 540).
+        public bool TryTakeServerIdLine(TimeProvider clock) => TryTakeLine(ref _serverIdLine, clock);
 
         // Keeps a new login, unless the server was removed meanwhile.
         public bool TryKeep(RemoteSession session)
@@ -1714,6 +1706,22 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         public void Dispose() => LoginGate.Dispose();
+
+        // Takes a line when the last one is an interval old. A clock set back starts a new interval.
+        private bool TryTakeLine(ref DateTimeOffset? last, TimeProvider clock)
+        {
+            lock (_gate)
+            {
+                var now = clock.GetUtcNow();
+                if (now >= last && now - last < AnonymousLogInterval)
+                {
+                    return false;
+                }
+
+                last = now;
+                return true;
+            }
+        }
 
         // Offline when nothing answered, reachable when the remote answered. An error status, which a gateway in front of
         // it can send, or a call never sent says nothing about it.

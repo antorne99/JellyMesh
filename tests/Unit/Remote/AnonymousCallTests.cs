@@ -17,6 +17,8 @@ public class AnonymousCallTests
     private const string OtherId = "1e3f1c2a4b5d4e6f8a9b0c1d2e3f4a5b";
     private const string AdminLogin = "{\"ServerId\":\"" + FirstId + "\",\"AccessToken\":\"t\",\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":true}}}";
 
+    private const string HeldElsewhere = "which another configured server holds";
+
     private readonly ManualClock _clock = new();
     private string _login = "{\"ServerId\":\"" + FirstId + "\"," + TestValues.LoginJson[1..];
 
@@ -159,9 +161,9 @@ public class AnonymousCallTests
         Assert.Equal(3, fixture.Handler.Requests.Count(request => request.Uri.AbsolutePath == "/Sessions/Logout"));
     }
 
-    // Decision 128: a Server Id another server holds is not stored and is told, also within the line of the interval.
+    // Decision 128 and row 540: a Server Id another server holds is not stored and has a line of its own per interval.
     [Fact]
-    public async Task AServerIdHeldElsewhereIsToldOncePerInterval()
+    public async Task AServerIdHeldElsewhereIsToldOncePerIntervalBesideTheFailures()
     {
         using var fixture = new RegistryFixture();
         var server = await fixture.AddServerAsync();
@@ -169,20 +171,43 @@ public class AnonymousCallTests
         var client = new JellyfinRemoteClient(new StubHttpClientFactory(Remote()));
         using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, fixture.Logger) { Clock = _clock };
         fixture.Logger.Lines.Clear();
+        var accepted = _login;
 
-        Assert.Equal(RemoteFailure.None, (await AnonymousAsync(registry, server.Id, RemoteFailure.None)).Failure);
-
-        await AnonymousAsync(registry, server.Id, RemoteFailure.Timeout);
-        Assert.Contains("which another configured server holds", Assert.Single(fixture.Logger.Lines), StringComparison.Ordinal);
-        Assert.Empty(fixture.Store.Configuration.Servers[0].JellyfinServerId);
-
-        using var silent = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, fixture.Logger) { Clock = _clock };
         _login = AdminLogin;
-        await AnonymousAsync(silent, server.Id, RemoteFailure.None);
-        _login = "{\"ServerId\":\"" + FirstId + "\"," + TestValues.LoginJson[1..];
-        await AnonymousAsync(silent, server.Id, RemoteFailure.None);
+        await AnonymousAsync(registry, server.Id, RemoteFailure.None);
+        Assert.Contains(nameof(RemoteFailure.AdministratorAccount), Assert.Single(fixture.Logger.Lines), StringComparison.Ordinal);
+
+        // Each refused token is followed by a login, which answers with the same Server Id.
+        _login = accepted;
+        Assert.Equal(RemoteFailure.None, (await AnonymousAsync(registry, server.Id, RemoteFailure.None)).Failure);
+        await AnonymousAsync(registry, server.Id, RemoteFailure.AuthenticationFailed);
+        await AnonymousAsync(registry, server.Id, RemoteFailure.AuthenticationFailed);
         Assert.Equal(2, fixture.Logger.Lines.Count);
-        Assert.Contains(nameof(RemoteFailure.AdministratorAccount), fixture.Logger.Lines[1], StringComparison.Ordinal);
+        Assert.Contains(HeldElsewhere, fixture.Logger.Lines[1], StringComparison.Ordinal);
+
+        _clock.Advance(RemoteServerRegistry.AnonymousLogInterval);
+        await AnonymousAsync(registry, server.Id, RemoteFailure.AuthenticationFailed);
+        await AnonymousAsync(registry, server.Id, RemoteFailure.AuthenticationFailed);
+        Assert.Equal(4, fixture.Logger.Lines.Count);
+        Assert.Single(fixture.Logger.Lines.Skip(2), line => line.Contains(HeldElsewhere, StringComparison.Ordinal));
+        Assert.Empty(fixture.Store.Configuration.Servers[0].JellyfinServerId);
+    }
+
+    // Row 540: a login of an anonymous call still stores the Server Id of a server that has none (decision 121).
+    [Fact]
+    public async Task AnAnonymousLoginStoresTheServerIdOnce()
+    {
+        using var fixture = new RegistryFixture(Remote());
+        var server = await fixture.AddServerAsync();
+        fixture.Store.Configuration.Servers.Single().JellyfinServerId = string.Empty;
+        using var registry = Restarted(fixture);
+
+        await AnonymousAsync(registry, server.Id, RemoteFailure.None);
+        var saves = fixture.Store.Saves;
+        await AnonymousAsync(registry, server.Id, RemoteFailure.AuthenticationFailed);
+
+        Assert.Equal(FirstId, fixture.Store.Configuration.Servers.Single().JellyfinServerId);
+        Assert.Equal(saves, fixture.Store.Saves);
     }
 
     [Fact]
