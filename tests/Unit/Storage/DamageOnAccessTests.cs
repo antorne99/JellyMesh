@@ -104,6 +104,24 @@ public sealed class DamageOnAccessTests : IDisposable
         stream.Flush(true);
     }
 
+    // Gives two tables each other's index, which leaves every page readable.
+    private static async Task SwapIndexesAsync(PluginDatabase database)
+    {
+        await database.WriteAsync(
+            (connection, transaction) =>
+            {
+                Scalar(connection, "CREATE TABLE first (value TEXT); CREATE INDEX first_index ON first (value); INSERT INTO first VALUES ('a');", transaction);
+                Scalar(connection, "CREATE TABLE second (value TEXT); CREATE INDEX second_index ON second (value); INSERT INTO second VALUES ('b');", transaction);
+                var root = (long)Scalar(connection, "SELECT rootpage FROM sqlite_master WHERE name = 'first_index';", transaction)!;
+                var other = (long)Scalar(connection, "SELECT rootpage FROM sqlite_master WHERE name = 'second_index';", transaction)!;
+                Scalar(connection, "PRAGMA writable_schema = ON;", transaction);
+                Scalar(connection, $"UPDATE sqlite_master SET rootpage = {other} WHERE name = 'first_index'; UPDATE sqlite_master SET rootpage = {root} WHERE name = 'second_index';", transaction);
+                Scalar(connection, "PRAGMA writable_schema = RESET;", transaction);
+            },
+            CancellationToken.None);
+        Assert.Equal("ok", await database.ReadAsync((connection, transaction) => Scalar(connection, "PRAGMA quick_check;", transaction), CancellationToken.None));
+    }
+
     private string[] SetAside() => Directory.GetFiles(Folder, PluginDatabase.FileName + ".damaged-*").Where(file => !file.EndsWith("-wal", StringComparison.Ordinal)).Select(Path.GetFileName).ToArray()!;
 
     private static async Task UntilAsync(Func<bool> condition)
@@ -314,6 +332,61 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Single(SetAside());
     }
 
+    // A read that meets the damage meanwhile stops the copy before it takes the place of another.
+    [Fact]
+    public async Task ADamageFoundWhileACopyIsMadeReplacesNoCopy()
+    {
+        var guard = new CopyingGuard();
+        var database = await WithACopyAsync(guard);
+        _clock.Now += TimeSpan.FromDays(1);
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(1);
+        var copies = Copies();
+        guard.Copying = () => Assert.Throws<StoreSuspendedException>(() => database.ReadAsync<int>((_, _) => throw new SqliteException("malformed", 11), CancellationToken.None).GetAwaiter().GetResult());
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.BackUpAsync(CancellationToken.None));
+
+        await RecoveredAsync(database);
+        Assert.Equal(2, copies.Length);
+        Assert.Equal(copies, Copies());
+        Assert.Empty(Directory.GetFiles(Folder, "*.partial"));
+    }
+
+    // Two indexes that hold each other's keys pass a quick check, and a delete that uses one fails as damage.
+    [Fact]
+    public async Task AnIndexThatDoesNotMatchItsTableMakesNoCopy()
+    {
+        var database = await WithACopyAsync();
+        await SwapIndexesAsync(database);
+        var copies = Copies();
+        _clock.Now += TimeSpan.FromDays(1);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => database.BackUpAsync(CancellationToken.None));
+
+        Assert.Equal(copies, Copies());
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((connection, transaction) => Scalar(connection, "DELETE FROM first WHERE rowid = 1;", transaction), CancellationToken.None));
+        await RecoveredAsync(database);
+        Assert.Equal("copied", await ItemsAsync(database));
+    }
+
+    // Such a copy of an earlier version would be found damaged again after every restore.
+    [Fact]
+    public async Task ACopyWithAnIndexThatDoesNotMatchItsTableIsPassedOver()
+    {
+        var database = await WithACopyAsync();
+        _clock.Now += TimeSpan.FromDays(1);
+        var copy = await database.BackUpAsync(CancellationToken.None);
+        await SwapIndexesAsync(database);
+        Assert.True(await database.TruncateWalAsync(CancellationToken.None));
+        File.Copy(DatabasePath, copy.FilePath, overwrite: true);
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((connection, transaction) => Scalar(connection, "DELETE FROM first WHERE rowid = 1;", transaction), CancellationToken.None));
+
+        await RecoveredAsync(database);
+        Assert.Equal("copied", await ItemsAsync(database));
+        Assert.Equal(_clock.Now - TimeSpan.FromHours(25), database.Recovery?.CopyDate);
+    }
+
     // The banner is of a restore that ended: until then no copy date is known, and the state says what is wrong.
     [Fact]
     public async Task ARestoreNotEndedYetShowsNoBanner()
@@ -436,6 +509,26 @@ public sealed class DamageOnAccessTests : IDisposable
 
         public FileStream CreatePrivate(string path) =>
             Fails && Path.GetFileName(path).StartsWith(PluginDatabase.FileName + ".recovery", StringComparison.Ordinal) ? throw new IOException("The file is locked") : _inner.CreatePrivate(path);
+
+        public void KeepPrivate(string path) => _inner.KeepPrivate(path);
+    }
+
+    // Runs something as a copy starts.
+    private sealed class CopyingGuard : IKeyFileGuard
+    {
+        private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();
+
+        public Action? Copying { get; set; }
+
+        public FileStream CreatePrivate(string path)
+        {
+            if (path.EndsWith(".partial", StringComparison.Ordinal))
+            {
+                Copying?.Invoke();
+            }
+
+            return _inner.CreatePrivate(path);
+        }
 
         public void KeepPrivate(string path) => _inner.KeepPrivate(path);
     }

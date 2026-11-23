@@ -297,8 +297,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return command.ExecuteScalar();
     }
 
-    private static bool PassesCheck(SqliteConnection connection) =>
-        string.Equals(Convert.ToString(Scalar(connection, "PRAGMA quick_check;"), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal);
+    // The full check also compares the indexes with their tables, which the quick one leaves out.
+    private static bool PassesCheck(SqliteConnection connection, bool full) =>
+        string.Equals(Convert.ToString(Scalar(connection, full ? "PRAGMA integrity_check;" : "PRAGMA quick_check;"), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal);
 
     private static void ThrowIfSuspended(StoreHealth health)
     {
@@ -521,11 +522,12 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         try
         {
             VacuumInto(writer, partial);
-            if (!PassesCheck(writer))
+            if (!PassesCheck(writer, full: true))
             {
                 throw new InvalidDataException("The database failed its integrity check, so it is not copied.");
             }
 
+            ThrowIfSuspended(_health!);
             if (File.Exists(copy.FilePath))
             {
                 TryErase(copy.FilePath, "copy replaced");
@@ -559,7 +561,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (SqliteException exception) when (IsDamage(exception))
         {
-            if (!PassesCheck(writer))
+            if (!PassesCheck(writer, full: true))
             {
                 throw;
             }
@@ -727,8 +729,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once
-    // its version is known and it passes the check. Every connection is closed when it returns.
-    private StoreHealth OpenFile()
+    // its version is known and it passes the check, in full for a restored copy. Every connection is closed when it returns.
+    private StoreHealth OpenFile(bool restored = false)
     {
         SqliteConnection? writer = null;
         try
@@ -743,7 +745,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
                 }
 
-                if (!PassesCheck(probe))
+                if (!PassesCheck(probe, restored))
                 {
                     _logger.LogWarning("The JellyMesh database failed its integrity check");
                     return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
@@ -836,7 +838,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 }
 
                 Restore(copy.FilePath);
-                var health = OpenFile();
+                var health = OpenFile(restored: true);
                 if (health.State == StoreState.Damaged)
                 {
                     _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too and is passed over", Path.GetFileName(copy.FilePath));
