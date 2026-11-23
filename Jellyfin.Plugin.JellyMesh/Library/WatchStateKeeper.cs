@@ -30,6 +30,9 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 {
     private const string SavedServer = "kept";
 
+    // The most copies a kept title is put back on (row 542).
+    private const int MaxCopies = 100;
+
     // How long a record nobody used is kept (row 412).
     private static readonly TimeSpan _keptFor = TimeSpan.FromDays(90);
 
@@ -495,21 +498,31 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     {
         var done = new List<(long TitleId, Guid UserId)>();
         var films = titles.Where(IsInDedup).ToList();
-        var own = titles.ToLookup(title => title.Kind);
         var current = CurrentStubs(titles.Select(title => title.Kind).ToHashSet());
         var paths = current.Paths;
         var byId = titles.ToDictionary(title => title.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
         var saved = films.Where(title => title.Kind != KeptTitleKind.Series).Select(Saved).ToList();
         var savedSeries = films.Where(title => title.Kind == KeptTitleKind.Series).Select(Saved).ToList();
-        var pairs = DedupEngine.Pair(saved, savedSeries, current.Titles, current.Series, [.. _merges.Merges, .. films.Select(MergeOf).OfType<ManualMerge>()])
-            .Select(pair => (Saved: pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId))
-            .Concat(TrackDedup.Pair(own[KeptTitleKind.Track].Select(SavedTrack).ToList(), current.Tracks).Select(pair => (Saved: pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)))
-            .Concat(TrackDedup.Pair(own[KeptTitleKind.AudioBook].Select(SavedTrack).ToList(), current.AudioBooks).Select(pair => (Saved: pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)))
-            .Concat(BookIdentity.Pair(own[KeptTitleKind.Book].Select(SavedBook).ToList(), current.Books).Select(pair => (Saved: pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)))
-            .Concat(HomeVideoIdentity.Pair(own[KeptTitleKind.HomeVideo].Select(SavedHomeVideo).ToList(), current.HomeVideos).Select(pair => (Saved: pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)));
+        var left = 0;
+        List<(string Saved, string ServerId, string ItemId)> pairs =
+        [
+            .. Match("films and series", () => new SavedPairs<CatalogItem>(
+                DedupEngine.Pair(saved, savedSeries, current.Titles, current.Series, [.. _merges.Merges, .. films.Select(MergeOf).OfType<ManualMerge>()]).Select(pair => (pair.Saved, pair.Current)).ToList(),
+                0)),
+            .. Match("tracks", () => TrackDedup.Pair(Own(KeptTitleKind.Track, SavedTrack), current.Tracks, MaxCopies, cancellationToken)),
+            .. Match("audiobooks", () => TrackDedup.Pair(Own(KeptTitleKind.AudioBook, SavedTrack), current.AudioBooks, MaxCopies, cancellationToken)),
+            .. Match("books", () => BookIdentity.Pair(Own(KeptTitleKind.Book, SavedBook), current.Books, MaxCopies, cancellationToken)),
+            .. Match("home videos", () => HomeVideoIdentity.Pair(Own(KeptTitleKind.HomeVideo, SavedHomeVideo), current.HomeVideos, MaxCopies, cancellationToken))
+        ];
         foreach (var match in pairs.GroupBy(pair => pair.Saved, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (match.Count() > MaxCopies)
+            {
+                left++;
+                continue;
+            }
+
             var title = byId[match.Key];
             var isSeries = title.Kind == KeptTitleKind.Series;
             var items = match
@@ -534,7 +547,24 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
         }
 
+        if (left > 0)
+        {
+            _logger.LogWarning("The kept watch state of {Count} titles stays kept: each matches more than {Max} copies", left, MaxCopies);
+        }
+
         return done;
+
+        List<T> Own<T>(KeptTitleKind kind, Func<KeptTitle, T> savedOf) => titles.Where(title => title.Kind == kind).Select(savedOf).ToList();
+
+        // The pairs of one rule.
+        List<(string Saved, string ServerId, string ItemId)> Match<T>(string types, Func<SavedPairs<T>> rule)
+            where T : IServerItem
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var found = rule();
+            left += found.Left;
+            return found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)).ToList();
+        }
     }
 
     // Each title gets the state once: on its primary version if the user sees it, otherwise on the first version the user

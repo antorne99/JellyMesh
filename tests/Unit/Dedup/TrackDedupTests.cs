@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Xunit;
 
@@ -227,7 +229,7 @@ public class TrackDedupTests
     }
 
     private static string[] Pairs(TrackItem[] saved, params TrackItem[] current)
-        => TrackDedup.Pair(saved, current).Select(pair => pair.Saved.ItemId + ">" + pair.Current.ServerId + ":" + pair.Current.ItemId).Order(StringComparer.Ordinal).ToArray();
+        => TrackDedup.Pair(saved, current, 100, CancellationToken.None).Pairs.Select(pair => pair.Saved.ItemId + ">" + pair.Current.ServerId + ":" + pair.Current.ItemId).Order(StringComparer.Ordinal).ToArray();
 
     // Saved tracks have no version to rank.
     private static TrackItem Saved(string item, string? recording = null, string? trackId = null, string title = "Song", long? seconds = 180)
@@ -291,4 +293,62 @@ public class TrackDedupTests
         Assert.Empty(Pairs([Saved("1"), Saved("2", seconds: 1)], longest));
         Assert.Equal(["3>a:a1"], Pairs([Saved("3") with { RunTimeTicks = long.MaxValue }], longest));
     }
+
+    // Row 542: a title with too many copies is left as it is, by ID, by place or through a chain, and the others go on.
+    [Fact]
+    public void ATrackWithMoreCopiesThanTheMostIsLeftAndTheOthersArePaired()
+    {
+        TrackItem[] byId = [.. Enumerable.Range(1, 4).Select(index => Track("a", "i" + index, recording: "rec-1", title: "T" + index))];
+        TrackItem[] byPlace = [.. Enumerable.Range(1, 4).Select(index => Track("a", "p" + index, title: "Place"))];
+        TrackItem[] chain =
+        [
+            Track("a", "c1", recording: "rec-9", trackId: "trk-9", title: "C1"),
+            Track("a", "c2", trackId: "trk-9", title: "C2"),
+            Track("a", "c3", trackId: "trk-9", title: "Chain"),
+            Track("a", "c4", title: "Chain")
+        ];
+        TrackItem[] crowd = [Track("a", "d1", recording: "rec-8", trackId: "trk-8", title: "D1"), .. Enumerable.Range(2, 3).Select(index => Track("a", "d" + index, trackId: "trk-8", title: "D" + index))];
+
+        var found = TrackDedup.Pair(
+            [Saved("1", recording: "REC-1"), Saved("2", title: "Place"), Saved("3", recording: "rec-9", title: "Old"), Saved("4", recording: "rec-8", title: "Old"), Saved("5", title: "Other")],
+            [.. byId, .. byPlace, .. chain, .. crowd, Track("b", "b1", title: "Other")],
+            3,
+            CancellationToken.None);
+
+        Assert.Equal(4, found.Left);
+        Assert.Equal(("5", "b1"), Assert.Single(found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId))));
+    }
+
+    [Fact]
+    public void ATrackWithTheMostCopiesIsPairedWithAllOfThem()
+    {
+        var found = TrackDedup.Pair([Saved("1")], [.. Enumerable.Range(1, 3).Select(index => Track("a", "p" + index))], 3, CancellationToken.None);
+
+        Assert.Equal(0, found.Left);
+        Assert.Equal(3, found.Pairs.Count);
+    }
+
+    // A remote that lists one ID very many times costs no more than a list of as many tracks.
+    [Fact]
+    public void VeryManyCopiesOfOneTrackAreNotComparedWithEachOther()
+    {
+        var copies = Enumerable.Range(0, 60_000).Select(index => Track("a", "i" + index, recording: "rec-1", trackId: "trk-1")).ToArray();
+        var clock = Stopwatch.StartNew();
+
+        Assert.Equal(1, TrackDedup.Pair([Saved("1", recording: "rec-1")], copies, 100, CancellationToken.None).Left);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), clock.Elapsed.ToString());
+    }
+
+    // The dedup of music has no such limit: it decides what is shown, not what is put back.
+    [Fact]
+    public void TheDedupJoinsEveryCopyWhateverTheirNumber()
+    {
+        var decision = Assert.Single(TrackDedup.Resolve(Enumerable.Range(0, 150).Select(index => Track("s" + index, "t", recording: "rec-1"))));
+
+        Assert.Equal(150, Items(decision).Count);
+    }
+
+    [Fact]
+    public void ThePairingOfTracksCanBeCancelled()
+        => Assert.Throws<OperationCanceledException>(() => TrackDedup.Pair([Saved("1")], [Track("a", "a1")], 100, new CancellationToken(true)));
 }

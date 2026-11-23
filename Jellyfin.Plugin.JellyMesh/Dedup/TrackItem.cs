@@ -6,7 +6,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// <summary>
 /// A music track of a remote catalog, with what its identity and quality are read from (row 453).
 /// </summary>
-public sealed record TrackItem
+public sealed record TrackItem : IServerItem
 {
     /// <summary>Gets the plugin's ID for the server holding the track.</summary>
     public required string ServerId { get; init; }

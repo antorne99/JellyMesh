@@ -304,7 +304,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     }
 
     // A remote title of a type with a kept kind of its own, by the name, year and number all of them share.
-    private void AddRemote(StubKind kind, string? id = null)
+    private void AddRemote(StubKind kind, string? id = null, int copies = 1)
     {
         var (library, type, item) = kind switch
         {
@@ -335,6 +335,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         };
         _fixture.Sync.Client.Libraries.Add(library);
         _fixture.Sync.Client.Add(library.Id, type, item);
+        _fixture.Sync.Client.Add(library.Id, type, [.. Enumerable.Range(1, copies - 1).Select(copy => item with { Id = item.Id + "c" + copy })]);
     }
 
     private static RemoteItem Sound(string id) => new()
@@ -360,7 +361,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     };
 
     // The library item a scan makes of the only stub of a kind, with the name, year and numbers all of them share.
-    private BaseItem ItemOf(RemoteServerInfo server, StubKind kind)
+    private BaseItem ItemOf(RemoteServerInfo server, StubKind kind) => Place(NewItem(kind), server, kind);
+
+    private static BaseItem NewItem(StubKind kind)
     {
         BaseItem item = kind switch
         {
@@ -374,7 +377,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         item.ParentIndexNumber = 2;
         item.IndexNumber = 3;
         item.RunTimeTicks = 181 * TimeSpan.TicksPerSecond;
-        return Place(item, server, kind);
+        return item;
     }
 
     private BaseItem Place(BaseItem item, RemoteServerInfo server, StubKind kind)
@@ -546,6 +549,63 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.False(Row(_anna, b).Played);
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
+
+    // Row 542: a title with more copies than the most keeps its state, one line says so, and the others get theirs.
+    [Theory]
+    [InlineData(StubKind.Movie, 100, true)]
+    [InlineData(StubKind.Movie, 101, false)]
+    [InlineData(StubKind.AudioBook, 100, true)]
+    [InlineData(StubKind.AudioBook, 101, false)]
+    [InlineData(StubKind.Book, 101, false)]
+    [InlineData(StubKind.HomeVideo, 101, false)]
+    public async Task ATitleWithMoreCopiesThanTheMostKeepsItsState(StubKind kind, int copies, bool isPutBack)
+    {
+        var film = kind == StubKind.Movie;
+        if (film)
+        {
+            _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, [.. Enumerable.Range(1, copies).Select(copy => TestItems.Movie("film" + copy, "Song", 2019) with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } })]);
+        }
+        else
+        {
+            AddRemote(kind, copies: copies);
+        }
+
+        var b = await AddAndMaterializeAsync("B", film ? TestLibraries.Films : LibraryOf(kind));
+        var placed = _fixture.Registry.State.Stubs.Where(stub => stub.ServerId == b.Id && stub.Kind == kind).Select(stub =>
+        {
+            var item = film ? new Movie { Name = "Song", ProductionYear = 2019 } : NewItem(kind);
+            item.Id = Guid.NewGuid();
+            item.Path = FederatedPaths.Resolve(_fixture.Root, stub.RelativePath);
+            Add(item);
+            return item;
+        }).ToList();
+        await _kept.SaveAsync([KeptOf(kind)], CancellationToken.None);
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.Equal(isPutBack, placed.Exists(item => Row(_anna, item).Played));
+        Assert.Equal(isPutBack ? 0 : 1, (await _kept.ReadAsync(CancellationToken.None)).Count);
+        Assert.Equal(isPutBack ? 0 : 1, _logger.Lines.Count(line => line.Contains("more than 100 copies", StringComparison.Ordinal)));
+    }
+
+    // A kept title as the keeper saves the item of a stub of a kind, seen by Anna.
+    private KeptTitle KeptOf(StubKind kind) => new()
+    {
+        OldItemId = Guid.NewGuid(),
+        Kind = WatchStateKeeper.KeptKindOf(kind),
+        Title = "Song",
+        Year = 2019,
+        Ids = kind == StubKind.Movie ? new ContentIds { Imdb = "tt1" } : new ContentIds(),
+        AlbumArtists = ["Singer"],
+        Album = "Album",
+        SeriesName = kind == StubKind.Book ? "Saga" : null,
+        Place = kind == StubKind.Book ? "Song.epub" : "Song.strm",
+        SeasonNumber = 2,
+        EpisodeNumber = 3,
+        RunTimeTicks = 180 * TimeSpan.TicksPerSecond,
+        Users = [new KeptUserState(_anna.Id, true, 2, 0, _watched, false, null)],
+        SavedUtc = _fixture.Sync.Clock.Now.UtcDateTime
+    };
 
     [Fact]
     public async Task ABookWithTheSameIdGetsTheStateWhateverItsTitle()

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
@@ -24,7 +25,7 @@ public static class TrackDedup
         ArgumentNullException.ThrowIfNull(tracks);
 
         var items = Sorted(tracks.Where(track => track.Versions.Count > 0));
-        var (sets, positions) = Group(items);
+        var (sets, positions) = Group(items, items.Count, int.MaxValue, CancellationToken.None);
 
         return Enumerable.Range(0, items.Count)
             .GroupBy(sets.Find)
@@ -38,24 +39,40 @@ public static class TrackDedup
     /// </summary>
     /// <param name="saved">The saved tracks.</param>
     /// <param name="current">The current tracks.</param>
-    /// <returns>The pairs.</returns>
-    public static IReadOnlyList<(TrackItem Saved, TrackItem Current)> Pair(IReadOnlyCollection<TrackItem> saved, IReadOnlyCollection<TrackItem> current)
+    /// <param name="maxCopies">The most copies that may share an ID or a place; more leave the saved ones unpaired.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The pairs, and how many saved tracks have more copies than that.</returns>
+    public static SavedPairs<TrackItem> Pair(IReadOnlyCollection<TrackItem> saved, IReadOnlyCollection<TrackItem> current, int maxCopies, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(saved);
         ArgumentNullException.ThrowIfNull(current);
+        cancellationToken.ThrowIfCancellationRequested();
         if (saved.Count == 0 || current.Count == 0)
         {
-            return [];
+            return new([], 0);
         }
 
         var items = Sorted(current);
         var copies = items.Count;
         items.AddRange(saved);
-        var sets = Group(items).Sets;
+        var sets = Group(items, copies, maxCopies, cancellationToken).Sets;
         var copiesOf = Enumerable.Range(0, copies).ToLookup(sets.Find);
-        return Enumerable.Range(copies, items.Count - copies)
-            .SelectMany(kept => copiesOf[sets.Find(kept)].Select(copy => (items[kept], items[copy])))
-            .ToList();
+        var pairs = new List<(TrackItem Saved, TrackItem Current)>();
+        var left = 0;
+        for (var kept = copies; kept < items.Count; kept++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var found = copiesOf[sets.Find(kept)];
+            if (sets.IsCrowded(kept) || found.Count() > maxCopies)
+            {
+                left++;
+                continue;
+            }
+
+            pairs.AddRange(found.Select(copy => (items[kept], items[copy])));
+        }
+
+        return new(pairs, left);
     }
 
     private static List<TrackItem> Sorted(IEnumerable<TrackItem> tracks) => tracks
@@ -64,56 +81,81 @@ public static class TrackDedup
         .ThenBy(track => track.ItemId, StringComparer.Ordinal)
         .ToList();
 
-    // The groups of the copies of one track, with the album place of each copy.
-    private static (Components Sets, string?[] Positions) Group(List<TrackItem> items)
+    // The groups of the copies of one track, with the album place of each copy. Copies before a bound are current and the
+    // rest saved; more of either than the most sharing an ID or a place are not joined, and their groups are crowded.
+    private static (Components Sets, string?[] Positions) Group(List<TrackItem> items, int bound, int maxCopies, CancellationToken cancellationToken)
     {
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
         var positions = items.Select(item => PositionOf(item, item.TrackNumber, names)).ToArray();
         var sets = new Components(items);
-        JoinBy(items, sets, track => track.RecordingId);
-        JoinBy(items, sets, track => track.TrackId);
-        JoinByPosition(items, positions, sets);
+        JoinBy(track => track.RecordingId);
+        JoinBy(track => track.TrackId);
+        JoinByPosition(positions);
 
         // The only files of two audiobooks need no number (row 535).
-        JoinByPosition(items, items.Select(item => item.IsOnlyFile ? PositionOf(item, 0, names) : null).ToArray(), sets);
+        JoinByPosition(items.Select(item => item.IsOnlyFile ? PositionOf(item, 0, names) : null).ToArray());
         return (sets, positions);
-    }
 
-    // Joins the copies sharing an ID, unless their groups hold different recordings.
-    private static void JoinBy(List<TrackItem> items, Components sets, Func<TrackItem, string?> idOf)
-    {
-        var holders = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
-        for (var index = 0; index < items.Count; index++)
+        // Marks the copies sharing an ID or a place when they are too many.
+        bool AreCrowded(IReadOnlyCollection<int> sharing)
         {
-            if (Id(idOf(items[index])) is not { } id)
+            var currentCount = sharing.Count(index => index < bound);
+            if (currentCount <= maxCopies && sharing.Count - currentCount <= maxCopies)
             {
-                continue;
+                return false;
             }
 
-            if (!holders.TryGetValue(id, out var earlier))
+            foreach (var index in sharing)
             {
-                earlier = [];
-                holders[id] = earlier;
+                sets.MarkCrowded(index);
             }
 
-            foreach (var other in earlier)
-            {
-                sets.UnionIfRecordingsAgree(other, index);
-            }
-
-            earlier.Add(index);
+            return true;
         }
-    }
 
-    // Copies in the same place of the same album, joined when their durations are within 2 s and their recordings agree.
-    private static void JoinByPosition(List<TrackItem> items, string?[] positions, Components sets)
-    {
-        var buckets = Enumerable.Range(0, items.Count)
-            .Select(index => (Index: index, Key: positions[index]))
-            .Where(entry => entry.Key is not null)
-            .GroupBy(entry => entry.Key!, entry => entry.Index, StringComparer.Ordinal)
-            .OrderBy(bucket => bucket.Key, StringComparer.Ordinal);
-        foreach (var bucket in buckets)
+        // Joins the copies sharing an ID, unless their groups hold different recordings.
+        void JoinBy(Func<TrackItem, string?> idOf)
+        {
+            var holders = Enumerable.Range(0, items.Count)
+                .Select(index => (Index: index, Id: Id(idOf(items[index]))))
+                .Where(entry => entry.Id is not null)
+                .GroupBy(entry => entry.Id!, entry => entry.Index, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+            var crowded = holders.Where(entry => AreCrowded(entry.Value)).Select(entry => entry.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < items.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Id(idOf(items[index])) is not { } id || crowded.Contains(id))
+                {
+                    continue;
+                }
+
+                foreach (var other in holders[id].TakeWhile(other => other < index))
+                {
+                    sets.UnionIfRecordingsAgree(other, index);
+                }
+            }
+        }
+
+        // Copies in the same place of the same album, joined when their durations are within 2 s and their recordings agree.
+        void JoinByPosition(string?[] places)
+        {
+            var buckets = Enumerable.Range(0, items.Count)
+                .Select(index => (Index: index, Key: places[index]))
+                .Where(entry => entry.Key is not null)
+                .GroupBy(entry => entry.Key!, entry => entry.Index, StringComparer.Ordinal)
+                .OrderBy(bucket => bucket.Key, StringComparer.Ordinal);
+            foreach (var bucket in buckets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!AreCrowded(bucket.ToList()))
+                {
+                    JoinNear(bucket);
+                }
+            }
+        }
+
+        void JoinNear(IEnumerable<int> bucket)
         {
             var sorted = bucket.OrderBy(index => items[index].RunTimeTicks).ThenBy(index => index).ToList();
             for (var left = 0; left < sorted.Count; left++)
@@ -201,12 +243,19 @@ public static class TrackDedup
     {
         private readonly int[] _parent;
         private readonly string?[] _recordings;
+        private readonly bool[] _crowded;
 
         public Components(List<TrackItem> items)
         {
             _parent = Enumerable.Range(0, items.Count).ToArray();
             _recordings = items.Select(item => Id(item.RecordingId)).ToArray();
+            _crowded = new bool[items.Count];
         }
+
+        // Marks the group of a copy as one with too many copies.
+        public void MarkCrowded(int index) => _crowded[Find(index)] = true;
+
+        public bool IsCrowded(int index) => _crowded[Find(index)];
 
         public int Find(int index)
         {
@@ -232,6 +281,7 @@ public static class TrackDedup
             var (root, child) = a < b ? (a, b) : (b, a);
             _parent[child] = root;
             _recordings[root] ??= _recordings[child];
+            _crowded[root] |= _crowded[child];
         }
     }
 }

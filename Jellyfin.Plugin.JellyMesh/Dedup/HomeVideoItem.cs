@@ -3,7 +3,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// <summary>
 /// A home video with what its identity is read from (row 535).
 /// </summary>
-public sealed record HomeVideoItem
+public sealed record HomeVideoItem : IServerItem
 {
     /// <summary>Gets the plugin's ID for the server holding the video.</summary>
     public required string ServerId { get; init; }

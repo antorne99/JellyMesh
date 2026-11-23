@@ -5,7 +5,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// <summary>
 /// An ebook, PDF or comic with what its identity is read from (row 535).
 /// </summary>
-public sealed record BookItem
+public sealed record BookItem : IServerItem
 {
     /// <summary>Gets the plugin's ID for the server holding the book.</summary>
     public required string ServerId { get; init; }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Xunit;
 
@@ -19,7 +20,7 @@ public class HomeVideoIdentityTests
     };
 
     private static List<string> Pairs(HomeVideoItem[] saved, params HomeVideoItem[] current)
-        => HomeVideoIdentity.Pair(saved, current).Select(pair => pair.Saved.ItemId + ">" + pair.Current.ItemId).Order(StringComparer.Ordinal).ToList();
+        => HomeVideoIdentity.Pair(saved, current, 100, CancellationToken.None).Pairs.Select(pair => pair.Saved.ItemId + ">" + pair.Current.ItemId).Order(StringComparer.Ordinal).ToList();
 
     [Theory]
     [InlineData("beach DAY!", 2020, 60.0, "trips", true)]
@@ -65,4 +66,22 @@ public class HomeVideoIdentityTests
     {
         Assert.Equal(["k1>a1", "k1>b1", "k2>a2"], Pairs([Video("k1"), Video("k2", seconds: 90)], Video("a1"), Video("a2", seconds: 91), Video("b1")));
     }
+
+    // Row 542: a title with too many copies is left as it is, and the others go on.
+    [Fact]
+    public void AHomeVideoWithMoreCopiesThanTheMostIsLeftAndTheOthersArePaired()
+    {
+        var found = HomeVideoIdentity.Pair(
+            [Video("k1"), Video("k2", "Other")],
+            [Video("a1"), Video("a2"), Video("a3"), Video("b1", "Other"), Video("b2", "Other")],
+            2,
+            CancellationToken.None);
+
+        Assert.Equal(1, found.Left);
+        Assert.Equal([("k2", "b1"), ("k2", "b2")], found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId)));
+    }
+
+    [Fact]
+    public void ThePairingOfHomeVideosCanBeCancelled()
+        => Assert.Throws<OperationCanceledException>(() => HomeVideoIdentity.Pair([Video("k1")], [Video("a1")], 100, new CancellationToken(true)));
 }

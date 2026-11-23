@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Xunit;
 
@@ -19,7 +20,7 @@ public class BookIdentityTests
     };
 
     private static List<string> Pairs(BookItem[] saved, params BookItem[] current)
-        => BookIdentity.Pair(saved, current).Select(pair => pair.Saved.ItemId + ">" + pair.Current.ItemId).Order(System.StringComparer.Ordinal).ToList();
+        => BookIdentity.Pair(saved, current, 100, CancellationToken.None).Pairs.Select(pair => pair.Saved.ItemId + ">" + pair.Current.ItemId).Order(System.StringComparer.Ordinal).ToList();
 
     [Fact]
     public void OneSharedIdIsEnoughWhateverTheRest()
@@ -75,4 +76,26 @@ public class BookIdentityTests
         Assert.Equal(["k1>a1", "k1>b1", "k2>a2"], Pairs([Book("k1"), Book("k2", "Messiah")], Book("a1"), Book("a2", "Messiah"), Book("b1")));
         Assert.Empty(Pairs([Book("k1"), Book("k2")]));
     }
+
+    // Row 542: a title with too many copies is left as it is, and the others go on.
+    [Fact]
+    public void ABookWithMoreCopiesThanTheMostIsLeftAndTheOthersArePaired()
+    {
+        BookItem[] byId = [.. Enumerable.Range(1, 3).Select(index => Book("a" + index, "T" + index, ids: [("ISBN", "1")]))];
+        BookItem[] byData = [.. Enumerable.Range(1, 3).Select(index => Book("b" + index))];
+        BookItem[] twoWays = [Book("c1", "Two", ids: [("ISBN", "3")]), Book("c2", "Two", ids: [("ISBN", "3")]), Book("d1", "Two")];
+
+        var found = BookIdentity.Pair(
+            [Book("k1", "Old", ids: [("ISBN", "1")]), Book("k2"), Book("k3", "Two", ids: [("ISBN", "3")]), Book("k4", "Messiah")],
+            [.. byId, .. byData, .. twoWays, Book("e1", "Messiah"), Book("e2", "Messiah")],
+            2,
+            CancellationToken.None);
+
+        Assert.Equal(3, found.Left);
+        Assert.Equal([("k4", "e1"), ("k4", "e2")], found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId)));
+    }
+
+    [Fact]
+    public void ThePairingOfBooksCanBeCancelled()
+        => Assert.Throws<System.OperationCanceledException>(() => BookIdentity.Pair([Book("k1")], [Book("a1")], 100, new CancellationToken(true)));
 }
