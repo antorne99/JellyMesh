@@ -12,9 +12,9 @@ public class FederatedAudioBookMappingTests
 {
     private static readonly JsonSerializerOptions _options = new() { PropertyNameCaseInsensitive = true };
 
-    private static IndexedItem Map(string path) => RemoteItemMapper.ToIndexedItem(
+    private static IndexedItem Map(string path, bool hasItemPath = true) => RemoteItemMapper.ToIndexedItem(
         JsonSerializer.Deserialize<RemoteItem>(
-            "{ \"Id\": \"b1\", \"Name\": \"X\", \"Path\": " + JsonSerializer.Serialize(path) + ", \"MediaSources\": [{ \"Id\": \"s1\", \"Protocol\": \"File\", \"Container\": \"strm\", \"Path\": " + JsonSerializer.Serialize(path) + " }] }",
+            "{ \"Id\": \"b1\", \"Name\": \"X\", " + (hasItemPath ? "\"Path\": " + JsonSerializer.Serialize(path) + ", " : string.Empty) + "\"MediaSources\": [{ \"Id\": \"s1\", \"Protocol\": \"File\", \"Container\": \"strm\", \"Path\": " + JsonSerializer.Serialize(path) + " }] }",
             _options)!,
         RemoteItemType.AudioBook,
         "lib",
@@ -26,6 +26,9 @@ public class FederatedAudioBookMappingTests
     public void AnAudiobookStubOfAnotherJellyMeshKeepsNoVersion(string path)
     {
         Assert.Empty(Map(path).Versions);
+
+        // The sync asks audiobooks for no Path of their own, so the one of the source is all there is.
+        Assert.Empty(Map(path, hasItemPath: false).Versions);
     }
 
     [Theory]
