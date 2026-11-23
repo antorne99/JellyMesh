@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -38,6 +39,9 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _paused = new();
     private readonly SemaphoreSlim _inMemory = new(PlaybackLimits.PhotoImagesInMemory, PlaybackLimits.PhotoImagesInMemory);
+    private readonly SemaphoreSlim _anonymous = new(
+        PlaybackLimits.PhotoImagesInMemory - PlaybackLimits.PhotoImagesForUsers,
+        PlaybackLimits.PhotoImagesInMemory - PlaybackLimits.PhotoImagesForUsers);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PhotoImageFilter"/> class.
@@ -88,15 +92,19 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
 
         var user = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User;
         context.Result = user is null || _stubs.Sees(user, itemId)
-            ? await ServeAsync(context, itemId).ConfigureAwait(false)
+            ? await ServeAsync(context, itemId, anonymous: user is null).ConfigureAwait(false)
             : new NotFoundResult();
     }
 
     /// <inheritdoc />
-    public void Dispose() => _inMemory.Dispose();
+    public void Dispose()
+    {
+        _inMemory.Dispose();
+        _anonymous.Dispose();
+    }
 
     // Reads the image from the server of the stub; a 404 for anything else, as Jellyfin answers for a missing image.
-    internal async Task<IActionResult> ServeAsync(ActionExecutingContext context, Guid itemId)
+    internal async Task<IActionResult> ServeAsync(ActionExecutingContext context, Guid itemId, bool anonymous)
     {
         if (!IsPrimary(context) || _stubs.FindFile(itemId) is not { Kind: StubKind.Photo } stub)
         {
@@ -107,10 +115,10 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
         var http = context.HttpContext;
         foreach (var source in stub.Sources.Where(source => stub.ServerId is not { } server || source.ServerId == server))
         {
-            using var image = await ReadAsync(source, size, http.RequestAborted).ConfigureAwait(false);
-            if (image is not null)
+            using var places = new HeldPlaces();
+            if (await ReadAsync(source, size, anonymous, places, http.RequestAborted).ConfigureAwait(false) is { } image)
             {
-                await WriteAsync(http, image.Content).ConfigureAwait(false);
+                await WriteAsync(http, image).ConfigureAwait(false);
                 return new EmptyResult();
             }
         }
@@ -174,49 +182,55 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
         }
     }
 
-    // Anyone can ask for an image, so the reads have places of their own and never take one of playback. The image also
-    // holds a place in memory, until it is disposed.
-    private async Task<HeldImage?> ReadAsync(StubSource source, RemotePhotoSize size, CancellationToken cancellationToken)
+    // Anyone can ask for an image, so the reads have places of their own and never take one of playback. The places of the
+    // image are held until its client has read it.
+    private async Task<ReadOnlyMemory<byte>?> ReadAsync(StubSource source, RemotePhotoSize size, bool anonymous, HeldPlaces places, CancellationToken cancellationToken)
     {
-        var gate = _gates.GetOrAdd(source.ServerId, _ => new SemaphoreSlim(PlaybackLimits.PhotoImagesPerServer, PlaybackLimits.PhotoImagesPerServer));
-        if (!await gate.WaitAsync(_queueWait, cancellationToken).ConfigureAwait(false))
+        using var call = new HeldPlaces();
+        if (!await TryEnterAsync(source.ServerId, anonymous, places, call, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
 
+        var read = await CallAsync(source, size, cancellationToken).ConfigureAwait(false);
+        if (read.IsSuccess && PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span, JellyfinRemoteClient.PhotoImageSide))
+        {
+            return read.Value.Content;
+        }
+
+        if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.AuthenticationFailed)
+        {
+            _paused[source.ServerId] = _clock.GetUtcNow() + PlaybackTimeouts.PhotoServerPause;
+        }
+
+        return null;
+    }
+
+    // Takes the places of a read. An anonymous one waits for its own first, where it keeps none from signed-in users.
+    private async Task<bool> TryEnterAsync(Guid serverId, bool anonymous, HeldPlaces image, HeldPlaces call, CancellationToken cancellationToken)
+    {
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        wait.CancelAfter(_queueWait);
         try
         {
-            if (IsPaused(source.ServerId) || !await _inMemory.WaitAsync(_queueWait, cancellationToken).ConfigureAwait(false))
+            if (anonymous)
             {
-                return null;
+                await image.EnterAsync(_anonymous, wait.Token).ConfigureAwait(false);
             }
 
-            HeldImage? held = null;
-            try
+            var gate = _gates.GetOrAdd(serverId, _ => new SemaphoreSlim(PlaybackLimits.PhotoImagesPerServer, PlaybackLimits.PhotoImagesPerServer));
+            await call.EnterAsync(gate, wait.Token).ConfigureAwait(false);
+            if (IsPaused(serverId))
             {
-                var read = await CallAsync(source, size, cancellationToken).ConfigureAwait(false);
-                if (read.IsSuccess && PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span, JellyfinRemoteClient.PhotoImageSide))
-                {
-                    held = new HeldImage(read.Value.Content, _inMemory);
-                }
-                else if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.AuthenticationFailed)
-                {
-                    _paused[source.ServerId] = _clock.GetUtcNow() + PlaybackTimeouts.PhotoServerPause;
-                }
+                return false;
+            }
 
-                return held;
-            }
-            finally
-            {
-                if (held is null)
-                {
-                    _inMemory.Release();
-                }
-            }
+            await image.EnterAsync(_inMemory, wait.Token).ConfigureAwait(false);
+            return true;
         }
-        finally
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            gate.Release();
+            return false;
         }
     }
 
@@ -239,19 +253,24 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
         }
     }
 
-    // An image with its place in memory.
-    private sealed class HeldImage : IDisposable
+    // The places a read holds, given back when it is disposed.
+    private sealed class HeldPlaces : IDisposable
     {
-        private readonly SemaphoreSlim _places;
+        private readonly Stack<SemaphoreSlim> _held = new();
 
-        public HeldImage(ReadOnlyMemory<byte> content, SemaphoreSlim places)
+        // Waits for a place and holds it.
+        public async Task EnterAsync(SemaphoreSlim places, CancellationToken cancellationToken)
         {
-            Content = content;
-            _places = places;
+            await places.WaitAsync(cancellationToken).ConfigureAwait(false);
+            _held.Push(places);
         }
 
-        public ReadOnlyMemory<byte> Content { get; }
-
-        public void Dispose() => _places.Release();
+        public void Dispose()
+        {
+            while (_held.TryPop(out var places))
+            {
+                places.Release();
+            }
+        }
     }
 }

@@ -60,7 +60,13 @@ public static class PlaybackLimits
     public const int PhotoImagesInMemory = 32;
 
     /// <summary>
-    /// The longest the read of a photo image waits for a place among <see cref="PhotoImagesPerServer"/> or
+    /// How many of <see cref="PhotoImagesInMemory"/> an anonymous read never takes, so that signed-in users still see their
+    /// photos. One server's reads at once, hence a page of photos keeps loading at full speed.
+    /// </summary>
+    public const int PhotoImagesForUsers = PhotoImagesPerServer;
+
+    /// <summary>
+    /// The longest the read of a photo image waits for all its places, among <see cref="PhotoImagesPerServer"/> and
     /// <see cref="PhotoImagesInMemory"/>.
     /// </summary>
     public static readonly TimeSpan PhotoImageQueueWait = TimeSpan.FromSeconds(10);

@@ -412,6 +412,8 @@ public class PhotoImageFilterTests
         AssertMissing(over);
         Assert.Equal(PlaybackLimits.PhotoImagesPerServer, _asked.Count);
 
+        // A read that gave up waiting keeps no place.
+        await Task.WhenAll(Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => RunAsync(filter, Request()))).WaitAsync(TimeSpan.FromSeconds(30));
         release.SetResult();
         await Task.WhenAll(tasks);
         Assert.All(running, AssertServed);
@@ -425,7 +427,7 @@ public class PhotoImageFilterTests
     public async Task Images_not_yet_read_by_their_clients_are_bounded_and_dropped_after_the_limit()
     {
         var filter = Filter(TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(3));
-        var slow = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => SlowRequest()).ToList();
+        var slow = Enumerable.Range(0, AnonymousPlaces).Select(_ => SlowRequest()).ToList();
         var tasks = new List<Task<bool>>();
         foreach (var (context, _) in slow)
         {
@@ -444,10 +446,80 @@ public class PhotoImageFilterTests
         AssertServed(after);
     }
 
-    private static (ActionExecutingContext Context, AbortRecord Lifetime) SlowRequest()
+    // Row 534: however many anonymous clients hold an image or wait for one, some places stay for signed-in users.
+    [Fact]
+    public async Task Anonymous_images_leave_some_places_to_signed_in_users()
+    {
+        using var gone = new CancellationTokenSource();
+        var filter = Filter();
+        var slow = Enumerable.Range(0, AnonymousPlaces).Select(_ => RunAsync(filter, SlowRequest(gone.Token).Context)).ToList();
+        var waiting = Enumerable.Range(0, PlaybackLimits.PhotoImagesPerServer * 2).Select(_ => Request()).ToList();
+        var waits = waiting.Select(request => RunAsync(filter, request)).ToList();
+        Assert.Equal(AnonymousPlaces, _asked.Count);
+
+        SignedIn(sees: true);
+        var signedIn = Request();
+        await RunAsync(filter, signedIn).WaitAsync(TimeSpan.FromSeconds(20));
+        AssertServed(signedIn);
+        Assert.All(waits, wait => Assert.False(wait.IsCompleted));
+
+        await gone.CancelAsync();
+        await Task.WhenAll(slow.Concat(waits)).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(waiting, AssertServed);
+    }
+
+    // Nothing is kept from signed-in users, and an anonymous read that finds no place keeps none.
+    [Fact]
+    public async Task Signed_in_users_can_hold_every_place()
+    {
+        using var gone = new CancellationTokenSource();
+        var filter = Filter(TimeSpan.FromMilliseconds(50));
+        SignedIn(sees: true);
+        var slow = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => RunAsync(filter, SlowRequest(gone.Token).Context)).ToList();
+        Assert.Equal(PlaybackLimits.PhotoImagesInMemory, _asked.Count);
+
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>())).ReturnsAsync(new AuthorizationInfo());
+        var over = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => Request()).ToList();
+        await Task.WhenAll(over.Select(request => RunAsync(filter, request))).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(over, AssertMissing);
+
+        await gone.CancelAsync();
+        await Task.WhenAll(slow).WaitAsync(TimeSpan.FromSeconds(30));
+        var after = Request();
+        await RunAsync(filter, after);
+        AssertServed(after);
+    }
+
+    // A client that goes away while its read waits for a place keeps none.
+    [Fact]
+    public async Task A_client_that_goes_away_while_it_waits_keeps_no_place()
+    {
+        using var gone = new CancellationTokenSource();
+        using var left = new CancellationTokenSource();
+        var filter = Filter();
+        var slow = Enumerable.Range(0, AnonymousPlaces).Select(_ => RunAsync(filter, SlowRequest(gone.Token).Context)).ToList();
+        var waits = Enumerable.Range(0, AnonymousPlaces).Select(_ => RunAsync(filter, SlowRequest(left.Token).Context)).ToList();
+
+        await left.CancelAsync();
+        foreach (var wait in waits)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait);
+        }
+
+        Assert.Equal(AnonymousPlaces, _asked.Count);
+        await gone.CancelAsync();
+        await Task.WhenAll(slow).WaitAsync(TimeSpan.FromSeconds(30));
+        var after = Request();
+        await RunAsync(filter, after);
+        AssertServed(after);
+    }
+
+    private static int AnonymousPlaces => PlaybackLimits.PhotoImagesInMemory - PlaybackLimits.PhotoImagesForUsers;
+
+    private static (ActionExecutingContext Context, AbortRecord Lifetime) SlowRequest(CancellationToken aborted = default)
     {
         var context = Request();
-        var lifetime = new AbortRecord();
+        var lifetime = new AbortRecord { RequestAborted = aborted };
         context.HttpContext.Features.Set<IHttpRequestLifetimeFeature>(lifetime);
         context.HttpContext.Response.Body = new UnreadStream();
         return (context, lifetime);
