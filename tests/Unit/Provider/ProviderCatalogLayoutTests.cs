@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Provider;
@@ -86,13 +87,86 @@ public sealed class ProviderCatalogLayoutTests
     [Theory]
     [InlineData("Book", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Libri/Title/Title.epub")]
     [InlineData("Audio", "/federata-other/f137a2dd21bbc1b99aa5c0f6bf02a805/Musica/Artist/Album/01 Track.strm")]
-    [InlineData("Movie", "/media/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film/Title (2001)/Title (2001).strm")]
     [InlineData("Photo", "/media/Video domestici/Trip/IMG_0001.jpg")]
     [InlineData("Book", "/media/Libri/Title/Title.pdf")]
     [InlineData("MusicVideo", "/media/Video musicali/Clip/Clip.mkv")]
     public void A_look_alike_path_outside_the_federated_folder_is_not_federated(string kind, string path)
     {
         Assert.False(_fixture.Catalog.IsFederated(Item(kind, path)));
+    }
+
+    [Theory]
+    [InlineData("Series", "/Serie/Show", CollectionTypeOptions.tvshows)]
+    [InlineData("Season", "/Serie/Show/Season 01", CollectionTypeOptions.tvshows)]
+    [InlineData("Episode", "/Serie/Show/Season 01/Show S01E01 - Server.strm", CollectionTypeOptions.tvshows)]
+    [InlineData("Series", "/Serie", CollectionTypeOptions.mixed)]
+    [InlineData("Movie", "/Film/Title (2001)", CollectionTypeOptions.movies)]
+    [InlineData("Movie", "/Film/Title (2001)/Title (2001) - Server.strm", CollectionTypeOptions.mixed)]
+    [InlineData("Folder", "/Film", CollectionTypeOptions.homevideos)]
+    [InlineData("Folder", "/Film/Title (2001)", CollectionTypeOptions.homevideos)]
+    [InlineData("Video", "/Film/Title (2001)/extras/Clip.mkv", CollectionTypeOptions.homevideos)]
+    public void A_title_of_the_0_5_layout_left_by_a_moved_or_cleared_federated_folder_never_reaches_a_peer(string kind, string path, CollectionTypeOptions library)
+    {
+        foreach (var root in new[] { "/nuova", string.Empty })
+        {
+            _fixture.Store.Configuration.FederatedFolderPath = root;
+
+            Assert.False(IsVisible(kind, "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e" + path, library));
+            Assert.True(IsVisible(kind, "/media/Vecchia" + path, library));
+        }
+    }
+
+    [Fact]
+    public void A_series_reached_through_a_link_to_an_old_0_5_folder_never_reaches_a_peer()
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-old-05");
+        try
+        {
+            var series = Directory.CreateDirectory(Path.Combine(temp.FullName, "vecchia", "0f8fad5b-d9cb-469f-a165-70867728950e", "Serie"));
+            Directory.CreateDirectory(Path.Combine(series.FullName, "Show"));
+            var alias = Path.Combine(temp.FullName, "alias");
+            Directory.CreateSymbolicLink(alias, series.FullName);
+            _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+            Assert.False(IsVisible("Series", Path.Combine(alias, "Show"), CollectionTypeOptions.tvshows));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Theory]
+    [InlineData("Series", "/vecchia/Serie/Show", CollectionTypeOptions.tvshows)]
+    [InlineData("Movie", "/vecchia/Film/Title (2001)/Title (2001).mkv", CollectionTypeOptions.movies)]
+    [InlineData("Series", "/media/Serie/0f8fad5b-d9cb-469f-a165-70867728950e/Show", CollectionTypeOptions.tvshows)]
+    [InlineData("Movie", "/media/Film/0f8fad5b-d9cb-469f-a165-70867728950e/Title (2001).mkv", CollectionTypeOptions.movies)]
+    [InlineData("Series", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Show/Serie", CollectionTypeOptions.tvshows)]
+    [InlineData("Series", "/media/0f8fad5bd9cb469fa16570867728950e/Serie/Show", CollectionTypeOptions.tvshows)]
+    [InlineData("Series", "/media/{0f8fad5b-d9cb-469f-a165-70867728950e}/Serie/Show", CollectionTypeOptions.tvshows)]
+    [InlineData("Series", "/media/NAS 0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show", CollectionTypeOptions.tvshows)]
+    [InlineData("Movie", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Filmati/Title (2001).mkv", CollectionTypeOptions.movies)]
+    [InlineData("Movie", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Film 2001/Title (2001).mkv", CollectionTypeOptions.movies)]
+    [InlineData("Movie", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Title (2001).mkv", CollectionTypeOptions.movies)]
+    [InlineData("Movie", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Film.mkv", CollectionTypeOptions.movies)]
+    [InlineData("Audio", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Musica/Artist/01 Track.flac", CollectionTypeOptions.music)]
+    [InlineData("MusicVideo", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Video musicali/Clip.mkv", CollectionTypeOptions.musicvideos)]
+    [InlineData("Video", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Video domestici/Beach.mkv", CollectionTypeOptions.homevideos)]
+    [InlineData("Book", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Libri/Title/Title.epub", CollectionTypeOptions.books)]
+    public void A_look_alike_of_the_0_5_layout_still_reaches_a_peer(string kind, string path, CollectionTypeOptions library)
+    {
+        foreach (var root in new[] { "/nuova", string.Empty })
+        {
+            _fixture.Store.Configuration.FederatedFolderPath = root;
+
+            Assert.True(IsVisible(kind, path, library));
+        }
+    }
+
+    [Fact]
+    public void A_real_film_in_the_film_folder_of_a_folder_named_by_a_guid_is_the_accepted_false_positive()
+    {
+        Assert.False(IsVisible("Movie", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Film/Title (2001)/Title (2001).mkv", CollectionTypeOptions.movies));
     }
 
     [Fact]
@@ -149,6 +223,15 @@ public sealed class ProviderCatalogLayoutTests
         Assert.Equal(["Mixed", "LookAlike"], names);
     }
 
+    // Whether a peer finds an item of a library of a type that is shared with it.
+    private bool IsVisible(string kind, string path, CollectionTypeOptions library)
+    {
+        var id = Guid.NewGuid();
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, library, "/media");
+        _fixture.AddItem(id, Item(kind, path), ProviderFixture.SharedLibrary);
+        return _fixture.Catalog.FindVisible(_fixture.PeerCaller, id) is not null;
+    }
+
     private static VirtualFolderInfo Library(string name, CollectionTypeOptions type, params string[] locations) =>
         new() { Name = name, ItemId = Guid.NewGuid().ToString(), CollectionType = type, Locations = locations };
 
@@ -156,6 +239,7 @@ public sealed class ProviderCatalogLayoutTests
     private static BaseItem Item(string kind, string path) => kind switch
     {
         "Movie" => new Movie { Path = path },
+        "Folder" => new Folder { Path = path },
         "Series" => new Series { Path = path },
         "Season" => new Season { Path = path },
         "Episode" => new Episode { Path = path },

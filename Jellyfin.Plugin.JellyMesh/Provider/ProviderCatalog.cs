@@ -400,15 +400,16 @@ public sealed class ProviderCatalog
         return members;
     }
 
-    // Looks for {server guid}/{library id}/{type folder} anywhere in the path, as the plugin writes the folder of a server.
+    // Looks for the folder of a server anywhere in the path: {server guid}/{library id}/{type folder}, or
+    // {server guid}/{type folder} of the 0.5 layout, which held only films and series (decision 513).
     private static bool HasServerFolderLayout(string path)
     {
         var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i + 2 < parts.Length; i++)
+        for (var i = 0; i + 1 < parts.Length; i++)
         {
             if (Guid.TryParseExact(parts[i], "D", out _)
-                && FederatedPaths.IsLibraryId(parts[i + 1])
-                && TypeFolder.Written.Any(type => string.Equals(type.Name, parts[i + 2], PathIdentity.Comparison)))
+                && (IsAny(TypeFolder.Older, parts[i + 1])
+                    || (i + 2 < parts.Length && FederatedPaths.IsLibraryId(parts[i + 1]) && IsAny(TypeFolder.Written, parts[i + 2]))))
             {
                 return true;
             }
@@ -416,6 +417,9 @@ public sealed class ProviderCatalog
 
         return false;
     }
+
+    private static bool IsAny(IReadOnlyList<TypeFolder> types, string? name) =>
+        types.Any(type => string.Equals(type.Name, name, PathIdentity.Comparison));
 
     // The folder of a server's library, {server guid}/{library id}, or the folder of a server holding such folders.
     private static bool IsServerFolder(string path)
@@ -436,7 +440,7 @@ public sealed class ProviderCatalog
         {
             return Directory.EnumerateDirectories(path)
                 .Select(Path.GetFileName)
-                .Any(name => FederatedPaths.IsLibraryId(name) || TypeFolder.Written.Any(type => string.Equals(type.Name, name, PathIdentity.Comparison)));
+                .Any(name => FederatedPaths.IsLibraryId(name) || IsAny(TypeFolder.Written, name));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
         {
