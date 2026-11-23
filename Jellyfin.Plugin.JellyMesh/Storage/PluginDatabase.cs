@@ -946,7 +946,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     continue;
                 }
 
-                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the server list", damaged, copy.CreatedAt);
+                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the servers and peers", damaged, copy.CreatedAt);
                 return Complete(health, new RecoveryNote(recoveredAt, damaged, copy.CreatedAt));
             }
 
@@ -958,7 +958,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return Unavailable("The damaged database was set aside, and no copy or empty database can take its place yet", exception);
         }
 
-        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty", damaged);
+        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty. Check the servers and peers", damaged);
         return Complete(OpenFile(), new RecoveryNote(recoveredAt, damaged, null));
     }
 

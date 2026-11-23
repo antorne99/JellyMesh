@@ -25,6 +25,8 @@ public sealed class DamageOnAccessTests : IDisposable
 
     private readonly FixedClock _clock = new(new DateTimeOffset(2026, 11, 23, 3, 0, 0, TimeSpan.Zero));
 
+    private readonly CapturingLogger<PluginDatabase> _logger = new();
+
     public DamageOnAccessTests() => Directory.CreateDirectory(Folder);
 
     // Under the temp folder, not the bind mount: WAL needs shared memory a host mount may not give.
@@ -48,7 +50,7 @@ public sealed class DamageOnAccessTests : IDisposable
 
     private PluginDatabase Open(IKeyFileGuard? guard = null, IReadOnlyList<SchemaMigration>? migrations = null, LegacyImport? legacy = null)
     {
-        var database = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), guard ?? KeyFileGuards.ForThisSystem(), migrations ?? SchemaMigrations.All, 1, _clock, legacy);
+        var database = new PluginDatabase(Folder, _logger, guard ?? KeyFileGuards.ForThisSystem(), migrations ?? SchemaMigrations.All, 1, _clock, legacy);
         _opened.Add(database);
         return database;
     }
@@ -618,6 +620,24 @@ public sealed class DamageOnAccessTests : IDisposable
     }
 
     private string[] Copies() => Directory.GetFiles(Folder, PluginDatabase.FileName + ".backup-*").Order(StringComparer.Ordinal).ToArray();
+
+    // Row 526: the log asks for both lists, as the page does, after a copy and after an empty restart.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ARestartAsksToCheckServersAndPeers(bool withACopy)
+    {
+        var database = withACopy ? await WithACopyAsync() : Open();
+        _ = database.Health;
+        database.Dispose();
+        File.Delete(DatabasePath + "-wal");
+        File.Delete(DatabasePath + "-shm");
+        await File.WriteAllTextAsync(DatabasePath, new string('x', 8192));
+
+        Assert.Equal(StoreHealth.Healthy, Open().Health);
+
+        Assert.Single(_logger.Lines, line => line.Contains(withACopy ? "from the copy" : "restarted empty", StringComparison.Ordinal) && line.Contains("Check the servers and peers", StringComparison.Ordinal));
+    }
 
     // Cannot write the recovery note while it fails.
     private sealed class NoteFailingGuard : IKeyFileGuard

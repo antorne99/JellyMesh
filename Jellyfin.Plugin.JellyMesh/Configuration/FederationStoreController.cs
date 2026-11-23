@@ -53,7 +53,7 @@ public class FederationStoreController : ControllerBase
     }
 
     /// <summary>
-    /// Takes the banner of the last restore off the page, once the admin has checked the server list.
+    /// Takes the banner of the last restore off the page, once the admin has checked the servers and peers.
     /// </summary>
     /// <returns>Nothing.</returns>
     [HttpPost("Store/Recovery/Dismiss")]

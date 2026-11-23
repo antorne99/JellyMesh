@@ -3771,14 +3771,24 @@ def store_notices(s, width):
     page = s.open("fresh", width, route=routes)
     notice = page.locator(u.STORE)
     check(name + " shows the restore", until(page, lambda: "from the nightly copy" in notice.inner_text()), notice.inner_text())
-    check(name + " asks to check the servers", "check the list of servers" in notice.inner_text(), notice.inner_text())
+    check(name + " asks to check the servers and the connected servers", "connected servers of the copy have access again: check both lists" in notice.inner_text(), notice.inner_text())
     migrated = page.locator(u.MIGRATED)
     check(name + " says until when the old files stay", migrated.is_visible() and "migrated-0.5" in migrated.inner_text(), migrated.inner_text())
     healthy(page, name)
     u.shot(page, f"store-restore-{width}")
     store[0] = dict(store[0], Recovery=None)
-    notice.get_by_role("button", name="I checked the servers", exact=True).click()
+    notice.get_by_role("button", name="I checked both lists", exact=True).click()
     check(name + " the restore goes once checked", until(page, lambda: notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": None, "MigratedKeptUntil": None,
+                "Recovery": {"RecoveredAt": "2026-11-18T03:05:00Z", "DamagedFile": "jellymesh.db.damaged-20261118030500", "CopyDate": None}}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " shows the empty restart", until(page, lambda: "started with an empty one" in notice.inner_text()), notice.inner_text())
+    check(name + " asks to check both lists after an empty restart", "the lists of servers and connected servers" in notice.inner_text(), notice.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-empty-{width}")
     u.close(page)
 
     store[0] = {"State": "Healthy", "Reason": "Until when the files of the older version are kept cannot be read: /config/data/migrated-0.5 is denied",

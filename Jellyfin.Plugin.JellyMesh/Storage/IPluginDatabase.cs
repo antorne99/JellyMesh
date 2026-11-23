@@ -28,7 +28,7 @@ public interface IPluginDatabase
     StoreRecovery? Recovery { get; }
 
     /// <summary>
-    /// Forgets the last recovery once the admin has checked the server list.
+    /// Forgets the last recovery once the admin has checked the servers and peers.
     /// </summary>
     void DismissRecovery();
 
