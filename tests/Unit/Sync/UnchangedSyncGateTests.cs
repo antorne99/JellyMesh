@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -62,6 +63,7 @@ public sealed class UnchangedSyncGateTests : IDisposable
         "a server's catalog changes",
         "a server is added",
         "a server's libraries change",
+        "a server's library mode changes",
         "metadata protection changes",
         "collections change",
         "the federated folder changes",
@@ -172,6 +174,9 @@ public sealed class UnchangedSyncGateTests : IDisposable
                 break;
             case "a server's libraries change":
                 _fixture.Registry.SetImportedLibraries(server.Id, [TestLibraries.Films, TestLibraries.Shows]);
+                break;
+            case "a server's library mode changes":
+                _fixture.Store.Configuration.Servers[0].LibraryMode = LibraryMode.ByRemoteLibrary;
                 break;
             case "metadata protection changes":
                 _fixture.Store.Configuration.MetadataProtection = !_fixture.Store.Configuration.MetadataProtection;
