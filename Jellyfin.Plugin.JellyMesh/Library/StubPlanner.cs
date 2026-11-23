@@ -80,7 +80,7 @@ public static class StubPlanner
             }
         }
 
-        var seriesWorks = seriesPlans.Values.Select(plan => WithSeasons(input, plan, catalog)).ToList();
+        var seriesWorks = SeriesWorks(input, seriesPlans.Values, catalog);
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = flat.Where(stub => !matcher.IsClaimed(stub)).ToList();
 
@@ -172,7 +172,7 @@ public static class StubPlanner
                     }
                 }
 
-                seriesWorks.AddRange(seriesPlans.Values.Select(plan => WithSeasons(input, plan, catalog)));
+                seriesWorks.AddRange(SeriesWorks(input, seriesPlans.Values, catalog));
                 works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
                 claimed.UnionWith(part.Stubs.Where(matcher.IsClaimed).Select(stub => stub.Id));
                 merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
@@ -580,6 +580,8 @@ public static class StubPlanner
         var relative = stub?.RelativePath ?? FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label);
         var stem = Path.ChangeExtension(relative, null);
 
+        series.HasStubs |= stub?.SeriesStubId is null || string.Equals(stub.SeriesStubId, series.Entry.Id, StringComparison.Ordinal);
+
         // A stub that stays in the folder of another season number gets no season files there.
         var folder = Path.GetDirectoryName(relative)!;
         if (string.Equals(Path.GetFileName(folder), FederatedPaths.SeasonFolder(season), StringComparison.Ordinal))
@@ -629,8 +631,7 @@ public static class StubPlanner
         }
 
         var known = SeriesItems(scope.Contents[workKey], catalog);
-        var stub = scope.Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
-            ?? scope.Existing.FirstOrDefault(entry => entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
+        var stub = scope.Claim(workKey, known);
 
         // Stay with the remote series already in use, so that the metadata does not flip between servers.
         var source = known.Find(item => stub?.Sources.Any(entry => entry.ServerId == item.ServerId && entry.ItemId == item.Item.ItemId) == true);
@@ -675,9 +676,16 @@ public static class StubPlanner
         return plan;
     }
 
-    // One season work per season folder that gets episode work. A season that has none now is forgotten, so that it is
-    // written again if it comes back. A series merged with a local one shows its seasons, so it gets none (Q248).
-    private static SeriesWork WithSeasons(StubPlanInput input, SeriesPlan plan, IndexItemLookup catalog)
+    // The work of each series. A new one whose stubs all stay in the folder of another series gets none.
+    private static List<SeriesWork> SeriesWorks(StubPlanInput input, IReadOnlyCollection<SeriesPlan> plans, IndexItemLookup catalog)
+    {
+        var folders = plans.Select(plan => plan.Entry.RelativePath).ToHashSet(StringComparer.Ordinal);
+        return plans.Where(plan => plan.HasStubs || !plan.Work.IsNew).Select(plan => WithSeasons(input, plan, folders, catalog)).ToList();
+    }
+
+    // One season work per season folder that gets episode work, in no folder of another series of the plan. A season that has
+    // none now is forgotten, so that it is written again. A series merged with a local one gets none (Q248).
+    private static SeriesWork WithSeasons(StubPlanInput input, SeriesPlan plan, HashSet<string> seriesFolders, IndexItemLookup catalog)
     {
         if (plan.HasLocal)
         {
@@ -693,6 +701,12 @@ public static class StubPlanner
         var seasons = new List<SeasonWork>();
         foreach (var folder in plan.Episodes.GroupBy(episode => episode.Folder, StringComparer.Ordinal).OrderBy(folder => folder.Key, StringComparer.Ordinal))
         {
+            var series = Path.GetDirectoryName(folder.Key)!;
+            if (!string.Equals(series, plan.Entry.RelativePath, StringComparison.Ordinal) && seriesFolders.Contains(series))
+            {
+                continue;
+            }
+
             var number = folder.First().Season;
             if (SeasonOf(plan, folder, number, catalog) is not { } found)
             {
@@ -869,6 +883,9 @@ public static class StubPlanner
     private sealed record SeriesPlan(SeriesStub Entry, string FileName, SeriesWork Work, (Guid ServerId, string ItemId)? Source, bool HasLocal)
     {
         public List<SeasonEpisode> Episodes { get; } = [];
+
+        // Whether a stub has this series as its own.
+        public bool HasStubs { get; set; }
     }
 
     private sealed record SeasonEpisode(string Folder, int Season, Guid ServerId, IndexedItem Episode);
@@ -907,7 +924,25 @@ public static class StubPlanner
         IReadOnlyList<SeriesStub> Existing,
         ILookup<string, ResolvedContent> Contents,
         Func<IndexedItem, IndexedItem, string?, int?, string, string> NewFolder,
-        Func<string, LocalSeries?> LocalSeriesOf);
+        Func<string, LocalSeries?> LocalSeriesOf)
+    {
+        private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
+
+        // Finds the series stub of a work by its key, then by a remote series among the stubs no other work has.
+        public SeriesStub? Claim(string workKey, List<(Guid ServerId, IndexedItem Item)> known)
+        {
+            var stub = Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
+                ?? Existing.FirstOrDefault(entry => !Contents.Contains(entry.WorkKey)
+                    && !_claimed.Contains(entry.Id)
+                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
+            if (stub is not null)
+            {
+                _claimed.Add(stub.Id);
+            }
+
+            return stub;
+        }
+    }
 
     /// <summary>
     /// Keeps folder names unique. Two different titles can reach the same name, with a different year missing or after
