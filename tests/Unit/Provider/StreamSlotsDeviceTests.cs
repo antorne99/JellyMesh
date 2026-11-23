@@ -278,6 +278,8 @@ public class StreamSlotsDeviceTests
     public void Coming_down_to_a_lower_limit_cuts_every_request_of_the_devices_that_go()
     {
         var cut = new List<string>();
+        Opens("phone", Phone, 2);
+        Opens("tablet", Tablet, 2);
         using var first = Reads("phone", Phone, 2, cut: () => cut.Add("phone"));
         using var second = Reads("tablet", Tablet, 2, cut: () => cut.Add("tablet"));
         using var third = Reads(null, Tablet, 2, cut: () => cut.Add("tablet file"));
@@ -392,6 +394,40 @@ public class StreamSlotsDeviceTests
         Assert.False(ReadsOnce("one", null));
         Assert.True(ReadsOnce("one", null, 2));
         Assert.Equal(2, _slots.Count(_peer));
+    }
+
+    // Stock serves the job of a play session whatever item the request names.
+    [Fact]
+    public void A_play_session_of_another_item_never_shares_the_slot_of_a_device()
+    {
+        Opens("track", Phone);
+        Opens("film", null, 2);
+        _slots.Release(_peer, "film");
+
+        Assert.False(ReadsOnce("film", Phone, item: _next));
+        Assert.True(ReadsOnce("film", Phone, 2, _next));
+        Assert.Equal(2, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_play_session_that_once_read_another_item_never_shares_the_slot_of_a_device_again()
+    {
+        Opens("track", Phone);
+        Opens("next", Phone);
+        Assert.True(ReadsOnce("next", null, 2, _next));
+        _slots.Release(_peer, "next");
+
+        Assert.False(ReadsOnce("next", Phone));
+        Assert.True(ReadsOnce("next", Phone, 2));
+        Assert.Equal(2, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_play_session_the_peer_did_not_open_never_shares_the_slot_of_a_device()
+    {
+        Opens("track", Phone);
+
+        Assert.False(ReadsOnce("unknown", Phone));
     }
 
     [Fact]

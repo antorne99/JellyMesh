@@ -958,8 +958,8 @@ public class PeerGuardFilterTests
     [Fact]
     public async Task The_tracks_of_a_device_stream_in_one_slot()
     {
-        _fixture.Own("playing");
-        _fixture.Own("next");
+        _fixture.Own("playing", item: ProviderFixture.SharedTrack);
+        _fixture.Own("next", item: ProviderFixture.SharedTrack);
 
         Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=playing"));
         Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=next"));
@@ -970,8 +970,8 @@ public class PeerGuardFilterTests
     [Fact]
     public async Task A_track_is_grouped_on_the_hls_routes_too()
     {
-        _fixture.Own("playing");
-        _fixture.Own("next");
+        _fixture.Own("playing", item: ProviderFixture.SharedTrack);
+        _fixture.Own("next", item: ProviderFixture.SharedTrack);
         var segment = ProviderFixture.Stock("DynamicHls", "GetHlsAudioSegment");
 
         var (_, first) = await RunAsync(segment, "GET", ProviderFixture.SharedTrack, "?PlaySessionId=playing", device: DeviceOne);
@@ -997,12 +997,44 @@ public class PeerGuardFilterTests
     [Fact]
     public async Task A_film_read_under_the_play_session_of_a_track_counts_on_its_own()
     {
-        _fixture.Own("playing");
-        _fixture.Own("next");
+        _fixture.Own("playing", item: ProviderFixture.SharedTrack);
+        _fixture.Own("next", item: ProviderFixture.SharedTrack);
         Assert.True(await FileAsync(DeviceOne, query: "?PlaySessionId=playing"));
         Assert.True(await FileAsync(DeviceOne, query: "?PlaySessionId=next"));
 
         Assert.False(await FileAsync(DeviceOne, ProviderFixture.SharedItem, "?PlaySessionId=next"));
+        Assert.Equal(1, Slots);
+    }
+
+    // Stock serves the job of a play session whatever item the route names.
+    [Theory]
+    [InlineData("Videos", "GetVideoStream", "?static=true&PlaySessionId=")]
+    [InlineData("DynamicHls", "GetHlsAudioSegment", "?PlaySessionId=")]
+    public async Task The_play_session_of_a_film_on_the_route_of_a_track_counts_on_its_own(string controller, string action, string query)
+    {
+        _fixture.Own("film", item: ProviderFixture.SharedItem);
+        _fixture.Own("other film", item: ProviderFixture.SharedItem);
+        var route = ProviderFixture.Stock(controller, action);
+
+        var (_, first) = await RunAsync(route, "GET", ProviderFixture.SharedTrack, query + "film", device: DeviceOne);
+        var (_, second) = await RunAsync(route, "GET", ProviderFixture.SharedTrack, query + "other%20film", device: DeviceOne);
+
+        Assert.True(first);
+        Assert.False(second);
+        Assert.Equal(1, Slots);
+    }
+
+    [Theory]
+    [InlineData("track")]
+    [InlineData("TRACK")]
+    public async Task The_play_session_of_a_track_that_read_a_film_counts_on_its_own_from_then_on(string named)
+    {
+        _fixture.Own("track", item: ProviderFixture.SharedTrack);
+        Assert.True(await FileAsync(default, ProviderFixture.SharedItem, "?PlaySessionId=" + named));
+        _fixture.Slots.Release(_fixture.Peer.Id, named);
+
+        Assert.True(await FileAsync(DeviceOne, query: "?PlaySessionId=track"));
+        Assert.False(await FileAsync(DeviceOne));
         Assert.Equal(1, Slots);
     }
 

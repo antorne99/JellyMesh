@@ -105,7 +105,7 @@ public sealed class StreamSlots
             }
         }
 
-        _owners.Add(peerId, playSessionId, null, devices);
+        _owners.Add(peerId, playSessionId, itemId, devices);
     }
 
     /// <summary>
@@ -168,6 +168,13 @@ public sealed class StreamSlots
     {
         lock (_lock)
         {
+            // Stock serves the job of a play session whatever item a request names, so one that ever played another item
+            // shares the slot of no device.
+            if (playSessionId is not null && !_owners.KeepsTo(peerId, playSessionId, itemId))
+            {
+                device = null;
+            }
+
             var slots = SlotsOf(peerId);
             var key = playSessionId ?? (device is null ? Guid.NewGuid().ToString("N") : ReadKey(device, itemId));
             if (slots.TryGetValue(key, out var slot))
