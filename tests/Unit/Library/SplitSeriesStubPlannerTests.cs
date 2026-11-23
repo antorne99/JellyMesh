@@ -123,6 +123,10 @@ public class SplitSeriesStubPlannerTests
         => AssertSplits([Series("s1"), Series("s2")], [Series("s1", year: null), Series("s2", year: null)]);
 
     [Fact]
+    public void AnotherName()
+        => AssertSplits([Series("s1"), Series("s2")], [Series("s1"), Series("s2", "Other show")]);
+
+    [Fact]
     public void AnotherProviderIdInTheFlatLayout()
     {
         RemoteItem[] episodes = [Episode("s1", 1), Episode("s2", 1)];
