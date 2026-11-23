@@ -402,6 +402,29 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Empty(Directory.GetFiles(Folder, "*.partial"));
     }
 
+    // The table of the migration mark reads a page of an index, as after a write of the disk to the wrong place.
+    [Fact]
+    public async Task ADamageFoundByTheMigrationOfTheOlderDataRestartsFromTheLatestCopy()
+    {
+        (await WithACopyAsync()).Dispose();
+        var spoiled = false;
+        var step = new SchemaMigration(SchemaMigrations.Latest + 1, (connection, transaction) =>
+        {
+            if (!spoiled)
+            {
+                spoiled = true;
+                Scalar(connection, "PRAGMA writable_schema = ON; UPDATE sqlite_master SET rootpage = (SELECT rootpage FROM sqlite_master WHERE type = 'index' LIMIT 1) WHERE name = 'legacy_import'; PRAGMA writable_schema = RESET;", transaction);
+            }
+        });
+
+        var database = Open(migrations: [.. SchemaMigrations.All, step], legacy: new LegacyImport(Folder, null, new CapturingLogger<LegacyImport>()));
+
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal("copied", await ItemsAsync(database));
+        Assert.Single(SetAside());
+        Assert.NotNull(database.Recovery);
+    }
+
     private string[] Copies() => Directory.GetFiles(Folder, PluginDatabase.FileName + ".backup-*").Order(StringComparer.Ordinal).ToArray();
 
     // Cannot write the recovery note while it fails.

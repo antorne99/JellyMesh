@@ -694,12 +694,12 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             health = health.State == StoreState.Damaged ? Recover(health) : health;
         }
 
-        return ImportLegacy(health);
+        return ImportLegacy(health, recovered: false);
     }
 
     // The data of 0.4 and 0.5 goes in before any service sees the store healthy; until it does, the store stays suspended
     // and the next open tries again, with every old file where it was (row 426).
-    private StoreHealth ImportLegacy(StoreHealth health)
+    private StoreHealth ImportLegacy(StoreHealth health, bool recovered)
     {
         if (health.Suspended || _legacy is null || _writer is null)
         {
@@ -710,6 +710,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         {
             _legacy.Run(_writer, _time.GetUtcNow());
             return health;
+        }
+        catch (SqliteException exception) when (IsDamage(exception) && !recovered)
+        {
+            _writer.Dispose();
+            _writer = null;
+            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            return ImportLegacy(Recover(new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception))), recovered: true);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
