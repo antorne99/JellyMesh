@@ -45,8 +45,8 @@ public static class CatalogItemMapper
                 ServerId = serverId,
                 ItemId = item.ItemId,
                 Kind = item.Kind == IndexedItemKind.Movie ? ContentKind.Movie : ContentKind.MusicVideo,
-                Artists = item.Artists ?? [],
-                Title = item.Name,
+                Artists = ArtistsOf(item.Artists ?? []),
+                Title = TitleOf(item.Name),
                 Year = item.ProductionYear,
                 Ids = ContentIds.FromProviderIds(item.ProviderIds),
                 Metadata = new ComparableMetadata
@@ -69,7 +69,7 @@ public static class CatalogItemMapper
             ItemId = item.ItemId,
             Kind = ContentKind.Episode,
             SeriesId = item.SeriesId,
-            Title = parent?.Name ?? item.SeriesName,
+            Title = TitleOf(parent?.Name ?? item.SeriesName),
             Year = parent?.ProductionYear,
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
             SeasonNumber = item.ParentIndexNumber,
@@ -92,6 +92,12 @@ public static class CatalogItemMapper
         var isSdr = string.Equals(version.VideoRange, SdrRange, StringComparison.OrdinalIgnoreCase);
         return new SourceQuality(version.Height, isHdr, version.BitRate, version.Codec) { IsRangeKnown = isHdr || isSdr };
     }
+
+    // A name that may have been cut is no title to match by, so that the item matches by its IDs only (row 529).
+    private static string? TitleOf(string? name) => RemoteName.MayBeCut(name) ? null : name;
+
+    // Gets no artist at all when one of them may have been cut, as TitleOf.
+    private static IReadOnlyList<string> ArtistsOf(IReadOnlyList<string> artists) => artists.Any(RemoteName.MayBeCut) ? [] : artists;
 
     private static MediaVersion ToMediaVersion(IndexedVersion version) => new(version.MediaSourceId, QualityOf(version));
 }

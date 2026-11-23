@@ -43,7 +43,7 @@ public static class RemoteItemMapper
             Kind = kind,
             LibraryId = libraryId,
             LastSeenUtc = seenUtc,
-            Name = item.Name,
+            Name = RemoteName.Cut(item.Name),
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines ?? [],
@@ -67,9 +67,9 @@ public static class RemoteItemMapper
             IndexNumberEnd = item.IndexNumberEnd,
             ParentIndexNumber = item.ParentIndexNumber,
             SeriesId = item.SeriesId,
-            SeriesName = item.SeriesName,
+            SeriesName = RemoteName.Cut(item.SeriesName),
             SeasonId = item.SeasonId,
-            SeasonName = item.SeasonName,
+            SeasonName = RemoteName.Cut(item.SeasonName),
             ImageTags = item.ImageTags ?? new Dictionary<string, string>(),
             BackdropImageTags = item.BackdropImageTags ?? [],
             Chapters = item.Chapters?.Select(chapter => new IndexedChapter(chapter.Name, chapter.StartPositionTicks)).ToList() ?? [],
@@ -93,12 +93,12 @@ public static class RemoteItemMapper
     private static IndexedItem WithNewTypeFields(IndexedItem entry, RemoteItem item) => entry with
     {
         ParentId = item.ParentId,
-        Album = item.Album,
+        Album = RemoteName.Cut(item.Album),
         AlbumId = item.AlbumId,
         AlbumPrimaryImageTag = item.AlbumPrimaryImageTag,
-        Artists = NullIfEmpty(item.Artists?.OfType<string>().ToList()),
-        AlbumArtists = NullIfEmpty(item.AlbumArtists?.Select(artist => artist.Name).OfType<string>().ToList())
-            ?? (string.IsNullOrEmpty(item.AlbumArtist) ? null : [item.AlbumArtist]),
+        Artists = NullIfEmpty(item.Artists?.OfType<string>().Select(artist => RemoteName.Cut(artist)).ToList()),
+        AlbumArtists = NullIfEmpty(item.AlbumArtists?.Select(artist => RemoteName.Cut(artist.Name)).OfType<string>().ToList())
+            ?? (string.IsNullOrEmpty(item.AlbumArtist) ? null : [RemoteName.Cut(item.AlbumArtist)]),
         HasLyrics = item.HasLyrics,
         Extension = entry.Kind switch
         {
