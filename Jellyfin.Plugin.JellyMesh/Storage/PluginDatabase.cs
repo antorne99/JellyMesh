@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -143,6 +144,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     private string RecoveryPath => Path.Combine(_folder, StoreBackups.RecoveryFileName);
 
+    private string RecoveriesPath => Path.Combine(_folder, StoreBackups.RecoveriesFileName);
+
     private int Latest => _migrations.Count;
 
     /// <inheritdoc />
@@ -162,7 +165,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 }
             }
 
-            return Reopen();
+            return Reopen(retried: true);
         }
         finally
         {
@@ -230,6 +233,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         {
             _ = Writer();
             DeleteExpiredDamaged();
+            PruneDamaged();
             return true;
         },
         cancellationToken);
@@ -391,9 +395,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // Opens the file and takes its health, leaving no writer behind a store closed meanwhile; called with the gate held.
-    private StoreHealth Reopen()
+    private StoreHealth Reopen(bool retried = false)
     {
-        var health = SetHealth(Open());
+        var health = SetHealth(Open(retried));
         if (_disposed)
         {
             _writer?.Dispose();
@@ -644,6 +648,22 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
+    // Overwrites and deletes all but the last damaged files set aside (row 525). The one the page still names stays.
+    private void PruneDamaged()
+    {
+        try
+        {
+            foreach (var file in StoreBackups.DamagedToPrune(_folder, Volatile.Read(ref _note)?.DamagedFile))
+            {
+                TryErase(file, "damaged file");
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("The damaged JellyMesh database files cannot be listed: {Error}", exception.Message);
+        }
+    }
+
     // The date in the name, or for a date ahead of the clock the file's write time, set to now the first time it is ahead too.
     // A link is never stamped, which would write through it, so with a date ahead it goes at once.
     private static DateTimeOffset DamagedSince(StoreBackup file, DateTimeOffset now)
@@ -708,7 +728,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held. A file an access
     // read as damaged is not opened again, since the check at open may not see that damage.
-    private StoreHealth Open()
+    private StoreHealth Open(bool retried)
     {
         if (_disposed)
         {
@@ -746,15 +766,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         else
         {
             health = Volatile.Read(ref _damage) ?? OpenFile();
-            health = health.State == StoreState.Damaged ? Recover(health) : health;
+            health = health.State == StoreState.Damaged ? Recover(health, retried) : health;
         }
 
-        return ImportLegacy(health, recovered: false);
+        return ImportLegacy(health, retried, recovered: false);
     }
 
     // The data of 0.4 and 0.5 goes in before any service sees the store healthy; until it does, the store stays suspended
     // and the next open tries again, with every old file where it was (row 426).
-    private StoreHealth ImportLegacy(StoreHealth health, bool recovered)
+    private StoreHealth ImportLegacy(StoreHealth health, bool retried, bool recovered)
     {
         if (health.Suspended || _legacy is null || _writer is null)
         {
@@ -771,7 +791,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             _writer.Dispose();
             _writer = null;
             _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
-            return ImportLegacy(Recover(new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception))), recovered: true);
+            return ImportLegacy(Recover(new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception)), retried), retried, recovered: true);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -847,10 +867,30 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     // Writes the note, then sets the damaged file aside with its logs and replaces it (row 427). The note comes first, so a
     // recovery cut short at any point goes on at the next open; without it, or when the file cannot be set aside, nothing
-    // moves, nothing new is made and the store stays damaged.
-    private StoreHealth Recover(StoreHealth damage)
+    // moves, nothing new is made and the store stays damaged. Past the limit of a day it waits for Retry (row 525).
+    private StoreHealth Recover(StoreHealth damage, bool retried)
     {
         var now = _time.GetUtcNow();
+        IReadOnlyList<DateTimeOffset> earlier = [];
+        try
+        {
+            earlier = RecentRecoveries(now);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The times of the JellyMesh database recoveries cannot be read. Without a retry, sync and remote playback stay suspended");
+            if (!retried)
+            {
+                return damage with { Reason = damage.Reason + " The times of its recoveries cannot be read: " + ReasonOf(exception) };
+            }
+        }
+
+        if (!retried && earlier.Count >= StoreBackups.RecoveryLimit)
+        {
+            _logger.LogWarning("The JellyMesh database was recovered {Count} times in 24 hours, so it stays damaged until a retry. Sync and remote playback stay suspended", earlier.Count);
+            return damage with { Reason = damage.Reason + $" It was recovered {earlier.Count} times in 24 hours, so it stays damaged until a retry." };
+        }
+
         var target = StoreBackups.DamagedPath(_folder, now);
         var damaged = Path.GetFileName(target);
         try
@@ -863,8 +903,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return damage with { Reason = damage.Reason + " The recovery note cannot be written: " + ReasonOf(exception) };
         }
 
+        var failure = " The times of its recoveries cannot be written: ";
         try
         {
+            WriteWhole(RecoveriesPath, earlier.TakeLast(StoreBackups.RecoveryLimit - 1).Append(now).ToList());
+            failure = " It cannot be set aside: ";
             SetAside(target);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -872,7 +915,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             TryDeleteNote();
             Volatile.Write(ref _note, null);
             _logger.LogWarning(exception, "The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended");
-            return damage with { Reason = damage.Reason + " It cannot be set aside: " + ReasonOf(exception) };
+            return damage with { Reason = damage.Reason + failure + ReasonOf(exception) };
         }
 
         Volatile.Write(ref _damage, null);
@@ -926,6 +969,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         try
         {
             WriteNote(note);
+            if (!health.Suspended)
+            {
+                PruneDamaged();
+            }
+
             return health;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -1010,21 +1058,41 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Keeps the recovery for the page in a private file, so it outlives a restart. It is written aside, flushed and moved over
-    // the old note, so the note on disk is always whole.
+    // Keeps the recovery for the page in a private file, so it outlives a restart.
     private void WriteNote(RecoveryNote note)
     {
-        var temporary = RecoveryPath + ".tmp";
+        WriteWhole(RecoveryPath, note);
+        Volatile.Write(ref _note, note);
+    }
+
+    // The recoveries of the last 24 hours, kept next to the database since they outlive it. A time ahead of the clock, which
+    // may have been set back, counts for a day too.
+    private List<DateTimeOffset> RecentRecoveries(DateTimeOffset now)
+    {
+        if (!File.Exists(RecoveriesPath))
+        {
+            return [];
+        }
+
+        using var stream = new FileStream(RecoveriesPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var times = JsonSerializer.Deserialize<List<DateTimeOffset>>(stream) ?? throw new JsonException("The times are missing.");
+        return times.Where(time => (now - time).Duration() < StoreBackups.RecoveryWindow).ToList();
+    }
+
+    // Writes a private file aside, flushes it and moves it over the old one, so the file on disk is always whole.
+    private void WriteWhole<T>(string path, T value)
+    {
+        var temporary = path + ".tmp";
         try
         {
             File.Delete(temporary);
             using (var stream = _guard.CreatePrivate(temporary))
             {
-                JsonSerializer.Serialize(stream, note);
+                JsonSerializer.Serialize(stream, value);
                 stream.Flush(true);
             }
 
-            File.Move(temporary, RecoveryPath, overwrite: true);
+            File.Move(temporary, path, overwrite: true);
         }
         catch
         {
@@ -1034,13 +1102,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogDebug(exception, "A temporary JellyMesh recovery note cannot be deleted");
+                _logger.LogDebug(exception, "A temporary JellyMesh recovery file cannot be deleted");
             }
 
             throw;
         }
-
-        Volatile.Write(ref _note, note);
     }
 
     private void TryDeleteNote()
