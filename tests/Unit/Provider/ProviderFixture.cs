@@ -43,7 +43,7 @@ internal sealed class ProviderFixture
             .ReturnsAsync(() => new AuthorizationInfo { User = Caller, DeviceId = CallerDevice });
 
         Directory = new PeerDirectory(Store, Authorization.Object);
-        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store, CatalogLogger);
+        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store, CatalogLogger, Clock);
 
         AddItem(SharedItem, new Movie { Path = "/media/film/a.mkv" }, SharedLibrary);
         AddItem(PrivateItem, new Movie { Path = "/other/film/b.mkv" }, PrivateLibrary);

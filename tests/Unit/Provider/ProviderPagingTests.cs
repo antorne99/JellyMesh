@@ -265,6 +265,42 @@ public sealed class ProviderPagingTests : IDisposable
     }
 
     [Fact]
+    public async Task Reads_one_after_the_other_look_up_the_hidden_films_once()
+    {
+        WithLocations("/media");
+        Add(Real + "/A.mkv");
+        Add(Hidden + "/Title/Title.mkv");
+        await ReadAsync();
+        _provider.Clock.Advance(HiddenItems.CheckInterval);
+        _provider.Library.Invocations.Clear();
+
+        ReadPage();
+        ReadPage();
+
+        _provider.Library.Verify(manager => manager.GetItemById(It.IsAny<Guid>()), Times.Once);
+    }
+
+    [Fact]
+    public void A_read_that_meets_a_hidden_film_during_a_search_does_not_search_and_sends_none()
+    {
+        WithLocations("/media");
+        var real = Add(Real + "/A.mkv");
+        Add(Hidden + "/Title/Title.mkv");
+        var inside = new List<ProviderItemsResponse>();
+        _provider.Library.Setup(manager => manager.GetItemsResult(It.Is<InternalItemsQuery>(query => query.Limit > RemoteCatalogReader.PageSize))).Returns<InternalItemsQuery>(query =>
+        {
+            Add(Hidden + "/Other/Other.mkv");
+            inside.Add(ReadPage());
+            return new QueryResult<BaseItem>(query.StartIndex, 0, []);
+        });
+
+        ReadPage();
+
+        Assert.Equal([real.Id], Assert.Single(inside).Items.Select(item => item.Id));
+        Assert.Equal(1, ReadPage().TotalRecordCount);
+    }
+
+    [Fact]
     public async Task A_film_no_longer_hidden_is_sent_by_the_next_read()
     {
         WithLocations("/media");
@@ -274,6 +310,7 @@ public sealed class ProviderPagingTests : IDisposable
         Assert.Single((await ReadAsync()).Value!);
 
         stub.ShortcutPath = null;
+        _provider.Clock.Advance(HiddenItems.CheckInterval);
 
         Assert.Equal(2, ReadPage().TotalRecordCount);
     }
@@ -287,6 +324,7 @@ public sealed class ProviderPagingTests : IDisposable
         var left = Add(Hidden + "/Left/Left.mkv");
         await ReadAsync();
         _items.Remove(gone);
+        _provider.Clock.Advance(HiddenItems.CheckInterval);
         ReadPage();
         _provider.Library.Invocations.Clear();
         ReadPage();
