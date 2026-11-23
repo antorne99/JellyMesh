@@ -127,6 +127,10 @@ public class SplitSeriesStubPlannerTests
         => AssertSplits([Series("s1"), Series("s2")], [Series("s1", year: null), Series("s2", year: null)]);
 
     [Fact]
+    public void AnotherName()
+        => AssertSplits([Series("s1"), Series("s2")], [Series("s1"), Series("s2", "Other show")]);
+
+    [Fact]
     public void ALongName()
         => AssertSplits([Series("s1"), Series("s2")], [Series("s1", _longName), Series("s2", _longName)]);
 

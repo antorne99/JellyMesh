@@ -51,29 +51,14 @@ public sealed class StubMatcher
     {
         ArgumentNullException.ThrowIfNull(content);
 
-        if (_byKey.TryGetValue(content.Identity.Key, out var stub) && _claimed.Add(stub.Id))
-        {
-            return stub;
-        }
-
-        foreach (var item in content.RemoteItems)
-        {
-            foreach (var holder in _byItem.GetValueOrDefault((item.ServerId, item.ItemId)) ?? [])
-            {
-                if (_claimed.Add(holder.Id))
-                {
-                    return holder;
-                }
-            }
-        }
-
-        return null;
+        return ClaimByKey(content) ?? ClaimByItem(content);
     }
 
     /// <summary>
     /// Claims the stubs of a whole catalog. Contents with a winner choose first, because a stub that can still serve one
-    /// must not go just because another content sharing its remote item turned local. Then every stub left whose remote
-    /// item now belongs to a content with a stub is merged into that stub: two copies that became one title.
+    /// must not go just because another content sharing its remote item turned local. A stub goes to the content of its own
+    /// key before one that shares an item. Then every stub left whose remote item now belongs to a content with a stub is
+    /// merged into that stub: two copies that became one title.
     /// </summary>
     /// <param name="contents">The contents.</param>
     /// <returns>One claim per content, those with a winner first.</returns>
@@ -81,10 +66,8 @@ public sealed class StubMatcher
     {
         ArgumentNullException.ThrowIfNull(contents);
 
-        var claims = contents
-            .OrderBy(content => content.IsLocal)
-            .Select(content => new StubClaim(content, Claim(content)))
-            .ToList();
+        var byLocal = contents.ToLookup(content => content.IsLocal);
+        List<StubClaim> claims = [.. ClaimEach(byLocal[false]), .. ClaimEach(byLocal[true])];
 
         var owners = new Dictionary<(Guid ServerId, string ItemId), int>();
         for (var index = 0; index < claims.Count; index++)
@@ -123,5 +106,31 @@ public sealed class StubMatcher
     {
         ArgumentNullException.ThrowIfNull(stub);
         return _claimed.Contains(stub.Id);
+    }
+
+    // Claims the stubs of some contents by key, then by item for those left without one.
+    private List<StubClaim> ClaimEach(IEnumerable<ResolvedContent> contents)
+    {
+        var claims = contents.Select(content => new StubClaim(content, ClaimByKey(content))).ToList();
+        return claims.Select(claim => claim.Stub is null ? claim with { Stub = ClaimByItem(claim.Content) } : claim).ToList();
+    }
+
+    private StubEntry? ClaimByKey(ResolvedContent content)
+        => _byKey.TryGetValue(content.Identity.Key, out var stub) && _claimed.Add(stub.Id) ? stub : null;
+
+    private StubEntry? ClaimByItem(ResolvedContent content)
+    {
+        foreach (var item in content.RemoteItems)
+        {
+            foreach (var holder in _byItem.GetValueOrDefault((item.ServerId, item.ItemId)) ?? [])
+            {
+                if (_claimed.Add(holder.Id))
+                {
+                    return holder;
+                }
+            }
+        }
+
+        return null;
     }
 }
