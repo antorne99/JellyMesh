@@ -55,7 +55,13 @@ public static class PlaybackLimits
     public const int PhotoImagesPerServer = 8;
 
     /// <summary>
-    /// The longest the read of a photo image waits for a place among <see cref="PhotoImagesPerServer"/>.
+    /// The most images of photos in memory at once, of all servers, each until its client has read it.
+    /// </summary>
+    public const int PhotoImagesInMemory = 32;
+
+    /// <summary>
+    /// The longest the read of a photo image waits for a place among <see cref="PhotoImagesPerServer"/> or
+    /// <see cref="PhotoImagesInMemory"/>.
     /// </summary>
     public static readonly TimeSpan PhotoImageQueueWait = TimeSpan.FromSeconds(10);
 

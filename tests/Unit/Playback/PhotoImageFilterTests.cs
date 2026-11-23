@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -14,6 +15,7 @@ using MediaBrowser.Controller.Net;
 using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -37,6 +39,7 @@ public class PhotoImageFilterTests
     private readonly Mock<IAuthorizationContext> _authorization = new();
     private readonly Mock<IJellyfinRemoteClient> _client = new();
     private readonly FakeRegistry _registry = new();
+    private readonly ManualClock _clock = new();
     private readonly InMemoryConfigurationStore _store = new();
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly List<(string ItemId, RemotePhotoSize Size)> _asked = [];
@@ -85,16 +88,17 @@ public class PhotoImageFilterTests
         }
     }
 
-    private PhotoImageFilter Filter(TimeSpan? queueWait = null)
+    private PhotoImageFilter Filter(TimeSpan? queueWait = null, TimeSpan? writeLimit = null)
     {
         var lookup = new StubLookup(_library.Object, _stubs.Object, _store);
-        return new PhotoImageFilter(lookup, _authorization.Object, _registry, _client.Object, _store, queueWait ?? TimeSpan.FromSeconds(30));
+        return new PhotoImageFilter(lookup, _authorization.Object, _registry, _client.Object, _store, _clock, queueWait ?? TimeSpan.FromSeconds(30), writeLimit ?? TimeSpan.FromSeconds(30));
     }
 
     private static ActionExecutingContext Request(string action = "GetItemImage", string method = "GET", string controller = "Image", params (string Key, object? Value)[] arguments)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = method;
+        http.Response.Body = new MemoryStream();
         var values = new Dictionary<string, object?> { ["itemId"] = _itemId, ["imageType"] = ImageType.Primary };
         foreach (var (key, value) in arguments)
         {
@@ -116,14 +120,23 @@ public class PhotoImageFilterTests
         return passed;
     }
 
+    private static void AssertServed(ActionExecutingContext context)
+    {
+        Assert.IsType<EmptyResult>(context.Result);
+        Assert.Equal("image/jpeg", context.HttpContext.Response.ContentType);
+        Assert.Equal(_jpeg, BodyOf(context));
+    }
+
+    private static byte[] BodyOf(ActionExecutingContext context) => ((MemoryStream)context.HttpContext.Response.Body).ToArray();
+
     private static void AssertMissing(ActionExecutingContext context)
     {
         Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result, exactMatch: false).StatusCode);
+        Assert.Empty(context.HttpContext.Response.Headers);
     }
 
     [Theory]
     [InlineData("GetItemImage", "GET")]
-    [InlineData("GetItemImage", "HEAD")]
     [InlineData("GetItemImageByIndex", "GET")]
     [InlineData("GetItemImage2", "GET")]
     [InlineData("AnImageReadOfALaterVersion", "GET")]
@@ -133,10 +146,20 @@ public class PhotoImageFilterTests
 
         Assert.False(await RunAsync(Filter(), context));
 
-        var result = Assert.IsType<FileContentResult>(context.Result);
-        Assert.Equal(_jpeg, result.FileContents);
-        Assert.Equal("image/jpeg", result.ContentType);
+        AssertServed(context);
         Assert.Equal("remote-item", Assert.Single(_asked).ItemId);
+    }
+
+    [Fact]
+    public async Task A_head_request_has_the_length_and_no_body()
+    {
+        var context = Request(method: "HEAD");
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        Assert.IsType<EmptyResult>(context.Result);
+        Assert.Equal(_jpeg.Length, context.HttpContext.Response.ContentLength);
+        Assert.Empty(BodyOf(context));
     }
 
     [Fact]
@@ -150,7 +173,7 @@ public class PhotoImageFilterTests
         Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
         Assert.Equal("attachment", headers.ContentDisposition.ToString());
         Assert.Equal("private, no-cache", headers.CacheControl.ToString());
-        Assert.Equal(3, headers.Count);
+        Assert.Equal(["Cache-Control", "Content-Disposition", "Content-Length", "Content-Type", "X-Content-Type-Options"], headers.Keys.Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -161,7 +184,7 @@ public class PhotoImageFilterTests
 
         Assert.False(await RunAsync(Filter(), context));
 
-        Assert.IsType<FileContentResult>(context.Result);
+        AssertServed(context);
     }
 
     // Row 458: as the stock route, which hides from a signed-in user what they do not see.
@@ -225,7 +248,6 @@ public class PhotoImageFilterTests
         Assert.False(await RunAsync(Filter(), context));
 
         AssertMissing(context);
-        Assert.Empty(context.HttpContext.Response.Headers);
     }
 
     [Fact]
@@ -287,7 +309,7 @@ public class PhotoImageFilterTests
 
         Assert.False(await RunAsync(Filter(), context));
 
-        Assert.IsType<FileContentResult>(context.Result);
+        AssertServed(context);
     }
 
     [Fact]
@@ -392,10 +414,83 @@ public class PhotoImageFilterTests
 
         release.SetResult();
         await Task.WhenAll(tasks);
-        Assert.All(running, request => Assert.IsType<FileContentResult>(request.Result));
+        Assert.All(running, AssertServed);
         var after = Request();
         await RunAsync(filter, after);
-        Assert.IsType<FileContentResult>(after.Result);
+        AssertServed(after);
+    }
+
+    // An anonymous client that reads slowly must not pile images up in memory, and is dropped in the end.
+    [Fact]
+    public async Task Images_not_yet_read_by_their_clients_are_bounded_and_dropped_after_the_limit()
+    {
+        var filter = Filter(TimeSpan.FromMilliseconds(50), TimeSpan.FromSeconds(3));
+        var slow = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => SlowRequest()).ToList();
+        var tasks = new List<Task<bool>>();
+        foreach (var (context, _) in slow)
+        {
+            tasks.Add(RunAsync(filter, context));
+        }
+
+        Assert.All(slow, request => Assert.False(request.Lifetime.Aborted));
+        var over = Request();
+        await RunAsync(filter, over).WaitAsync(TimeSpan.FromSeconds(30));
+        AssertMissing(over);
+
+        await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(slow, request => Assert.True(request.Lifetime.Aborted));
+        var after = Request();
+        await RunAsync(filter, after);
+        AssertServed(after);
+    }
+
+    private static (ActionExecutingContext Context, AbortRecord Lifetime) SlowRequest()
+    {
+        var context = Request();
+        var lifetime = new AbortRecord();
+        context.HttpContext.Features.Set<IHttpRequestLifetimeFeature>(lifetime);
+        context.HttpContext.Response.Body = new UnreadStream();
+        return (context, lifetime);
+    }
+
+    private sealed class AbortRecord : IHttpRequestLifetimeFeature
+    {
+        public bool Aborted { get; private set; }
+
+        public CancellationToken RequestAborted { get; set; }
+
+        public void Abort() => Aborted = true;
+    }
+
+    // A client that never reads: a write waits until it is cancelled.
+    private sealed class UnreadStream : MemoryStream
+    {
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+            => await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+
+    // A server that does not answer or refuses the login is not asked again for each photo of a page.
+    [Theory]
+    [InlineData(RemoteFailure.Unreachable, 1)]
+    [InlineData(RemoteFailure.Timeout, 1)]
+    [InlineData(RemoteFailure.AuthenticationFailed, 1)]
+    [InlineData(RemoteFailure.ServerError, 2)]
+    [InlineData(RemoteFailure.InvalidResponse, 2)]
+    public async Task After_a_failure_of_the_server_its_images_pause(RemoteFailure failure, int calls)
+    {
+        var filter = Filter();
+        _answer = _ => Task.FromResult(RemoteResult.Fail<RemoteImage>(failure));
+        await RunAsync(filter, Request());
+        var second = Request();
+        await RunAsync(filter, second);
+        AssertMissing(second);
+        Assert.Equal(calls, _asked.Count);
+
+        _clock.Advance(PlaybackTimeouts.PhotoServerPause);
+        _answer = _ => Task.FromResult(Image(_jpeg));
+        var third = Request();
+        await RunAsync(filter, third);
+        AssertServed(third);
     }
 
     [Fact]
