@@ -14,8 +14,8 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// transcode, so a consumer that vanishes leaves nothing behind. A request that ends badly with nothing else running leaves it only
 /// <see cref="AbandonGrace"/>. A slot whose transcode has to be closed stays counted until <see cref="Closed"/>, so that a
 /// new stream never runs next to the ffmpeg of the old one, and one revoked or cut never comes back before that. The audio
-/// streams of one device of the consumer count as one, however many they are (row 511). In memory on purpose: a restart
-/// ends the streams too.
+/// streams of one device of the consumer count as one, however many they are (row 511), and its reads with no play session
+/// share one slot (row 533). In memory on purpose: a restart ends the streams too.
 /// </summary>
 public sealed class StreamSlots
 {
@@ -176,7 +176,7 @@ public sealed class StreamSlots
             }
 
             var slots = SlotsOf(peerId);
-            var key = playSessionId ?? (device is null ? Guid.NewGuid().ToString("N") : ReadKey(device, itemId));
+            var key = playSessionId ?? (device is null ? Guid.NewGuid().ToString("N") : ReadKey(device));
             if (slots.TryGetValue(key, out var slot))
             {
                 // A stream back while its transcode waits to be closed keeps both, if the open slots leave it room. One
@@ -286,7 +286,11 @@ public sealed class StreamSlots
             var slots = SlotsOf(peerId);
             foreach (var (key, slot) in slots.Where(pair => lost.Contains(pair.Value.ItemId)).ToList())
             {
-                End(peerId, slots, key, slot);
+                // The read slot of a device stays for what it still reads of the rest.
+                if (!slot.IsRead || !RunningOf(peerId).Any(request => request.SlotKey == key && !lost.Contains(request.ItemId)))
+                {
+                    End(peerId, slots, key, slot);
+                }
             }
 
             cut = RunningOf(peerId).Where(request => lost.Contains(request.ItemId)).ToList();
@@ -421,8 +425,8 @@ public sealed class StreamSlots
             || CountOf(held) < limit;
     }
 
-    // No play session has a name like this one.
-    private static string ReadKey(string device, Guid itemId) => device + ":" + itemId.ToString("N");
+    // The one slot of what a device reads with no play session, whose name is like no play session's.
+    private static string ReadKey(string device) => device + ":";
 
     // Expired slots go whenever the peer is looked at, so that no timer is needed. After a lost connection their transcodes
     // go too, and the slot waits for that. After the idle time that is a setting, read here, because stock has a timer of
@@ -492,9 +496,13 @@ public sealed class StreamSlots
 
             // The last request to end decides: until then the stream is alive.
             slot.Abandoned = request.IsAbandoned;
-            if (slot.IsRead && slot.Device is null)
+            if (slot.IsRead)
             {
-                SlotsOf(peerId).Remove(key);
+                slot.ItemId = request.ItemId;
+                if (slot.Device is null)
+                {
+                    SlotsOf(peerId).Remove(key);
+                }
             }
         }
     }
@@ -518,7 +526,8 @@ public sealed class StreamSlots
         // Whose audio streams share one slot, null for a stream that counts on its own.
         public string? Device { get; set; }
 
-        public Guid ItemId { get; }
+        // What the read slot of a device read last, for any other the item it was opened for.
+        public Guid ItemId { get; set; }
 
         public bool Abandoned { get; set; }
 

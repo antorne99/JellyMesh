@@ -255,6 +255,97 @@ public class StreamSlotsDeviceTests
         Assert.Equal(1, _slots.Count(_peer));
     }
 
+    // However many tracks a device reads, it holds one slot for them (row 533).
+    [Fact]
+    public void The_last_read_of_a_device_to_end_decides_how_long_its_slot_stays()
+    {
+        Assert.True(ReadsOnce(null, Phone));
+        using (var next = Reads(null, Phone, item: _next))
+        {
+            next!.Abandon();
+        }
+
+        _clock.Advance(StreamSlots.AbandonGrace);
+        Assert.Equal(0, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void A_lost_connection_leaves_the_slot_of_a_device_with_another_read_running()
+    {
+        using (Reads(null, Phone))
+        {
+            using (var next = Reads(null, Phone, item: _next))
+            {
+                next!.Abandon();
+            }
+
+            _clock.Advance(StreamSlots.IdleTimeout);
+            Assert.Equal(1, _slots.Count(_peer));
+        }
+
+        _clock.Advance(StreamSlots.IdleTimeout - TimeSpan.FromMilliseconds(1));
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    public void Revoking_frees_the_idle_slot_of_a_device_by_what_it_read_last(bool lastLost, int left)
+    {
+        Assert.True(ReadsOnce(null, Phone));
+        Assert.True(ReadsOnce(null, Phone, item: _next));
+
+        _slots.Revoke(_peer, item => item.Equals(lastLost ? _track : _next));
+
+        Assert.Equal(left, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Revoking_the_first_read_of_a_device_leaves_the_slot_to_the_other()
+    {
+        var cut = new List<string>();
+        using (var lost = Reads(null, Phone, item: _next, cut: () => cut.Add("lost")))
+        using (Reads(null, Phone, item: _track, cut: () => cut.Add("kept")))
+        {
+            _slots.Revoke(_peer, item => item.Equals(_track));
+            lost!.Dispose();
+
+            Assert.Equal(["lost"], cut);
+            Assert.Equal(1, _slots.Count(_peer));
+        }
+
+        _slots.Revoke(_peer, item => item.Equals(_track));
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Revoking_leaves_the_slot_of_a_device_that_still_reads_something_else()
+    {
+        var cut = new List<string>();
+        using var kept = Reads(null, Phone, item: _track, cut: () => cut.Add("kept"));
+        Assert.True(ReadsOnce(null, Phone, item: _next));
+
+        _slots.Revoke(_peer, item => item.Equals(_track));
+
+        Assert.Empty(cut);
+        Assert.Equal(1, _slots.Count(_peer));
+    }
+
+    [Fact]
+    public void Coming_down_to_a_lower_limit_cuts_every_read_of_a_device()
+    {
+        var cut = new List<string>();
+        using var film = Reads(null, null, 2);
+        using var first = Reads(null, Phone, 2, _track, () => cut.Add("first"));
+        using var second = Reads(null, Phone, 2, _next, () => cut.Add("second"));
+
+        _slots.CutToLimit(_peer, 1);
+
+        Assert.Equal(["first", "second"], cut.Order(StringComparer.Ordinal));
+        Assert.Equal(1, _slots.Count(_peer));
+        Assert.Empty(_slots.TakeClosing());
+    }
+
     [Fact]
     public void Coming_down_to_a_lower_limit_ends_whole_devices_and_keeps_the_oldest()
     {
