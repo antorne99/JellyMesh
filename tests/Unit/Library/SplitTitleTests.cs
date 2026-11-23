@@ -505,6 +505,55 @@ public sealed class SplitTitleTests : IDisposable
         Assert.False(Row(_anna, PathOf(StubOf(9, null))).Played);
     }
 
+    // Row 537: reunited, the state goes to all the episodes covered.
+    [Fact]
+    public async Task AStubOfTwoEpisodesThatJoinsGivesItsStateToEachOfThem()
+    {
+        await JoinDoubleAsync(480, "b1", "b2");
+
+        Assert.Equal(2, Stubs.Count);
+        AssertFull(Row(_anna, PathOf(StubOf(1, null))));
+        AssertFull(Row(_anna, PathOf(StubOf(2, null))));
+    }
+
+    [Fact]
+    public async Task AStubOfTwoEpisodesThatJoinsTheStubOfOneGivesItsStateToBoth()
+    {
+        await JoinDoubleAsync(480, "b1");
+
+        Assert.Equal(2, Stubs.Count);
+        AssertFull(Row(_anna, PathOf(StubOf(1, null))));
+        AssertFull(Row(_anna, PathOf(StubOf(2, null))));
+    }
+
+    [Fact]
+    public async Task TheStubsOfTwoEpisodesThatJoinAStubOfBothLeave()
+    {
+        var old = await JoinDoubleAsync(2160, "b1", "b2");
+
+        var kept = Assert.Single(Stubs);
+        Assert.Equal(old.Id, kept.Id);
+        Assert.Equal((1, 2), (kept.EpisodeNumber, kept.EpisodeNumberEnd));
+        AssertFull(Row(_anna, PathOf(kept)));
+    }
+
+    [Fact]
+    public async Task AStubOfTwoEpisodesWaitsForTheItemOfEach()
+    {
+        var old = await JoinDoubleAsync(480, ["b1", "b2"], scan: false);
+        AddItems();
+        var second = PathOf(StubOf(2, null));
+        Assert.True(_items.Remove(second, out var item));
+
+        await CleanAsync();
+        Assert.Contains(Stubs, stub => stub.Id == old.Id);
+
+        _items[second] = item!;
+        await CleanAsync();
+        Assert.DoesNotContain(Stubs, stub => stub.Id == old.Id);
+        AssertFull(Row(_anna, second));
+    }
+
     private static UserItemData Full() => new()
     {
         Key = "k",
@@ -542,6 +591,28 @@ public sealed class SplitTitleTests : IDisposable
         }
 
         _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source(id, height, 500_000)] });
+    }
+
+    private Task<StubEntry> JoinDoubleAsync(int height, params string[] singles) => JoinDoubleAsync(height, singles, true);
+
+    // A file of two episodes in one local library and files of one in another, then both in one. Gives the stub of the two.
+    private async Task<StubEntry> JoinDoubleAsync(int height, string[] singles, bool scan)
+    {
+        await AddSeriesAsync(singles.Select((id, index) => (id, TestLibraries.ShowsB, 1, index + 1)).ToArray());
+        AddDouble("x", TestLibraries.Shows, height);
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = StubOf(1, 2);
+        Give(_anna, PathOf(old), Full());
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        if (scan)
+        {
+            await ScanAsync();
+        }
+
+        return old;
     }
 
     private VirtualFolderInfo Local(string name, TypeFolder type, params string[] libraries) => new()

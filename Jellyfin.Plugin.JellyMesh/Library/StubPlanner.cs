@@ -104,7 +104,7 @@ public static class StubPlanner
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
         return new StubPlan(input.State with { Stubs = stubs, Series = series, RemovedServers = marks }, works, seriesWorks, removals, HeldLibraries(input, held), unplaceable)
         {
-            MergedStubs = claims.Sum(claim => claim.Merged.Count),
+            MergedStubs = claims.SelectMany(claim => claim.Merged).Distinct().Count(),
             Unconfigured = unconfigured
         };
     }

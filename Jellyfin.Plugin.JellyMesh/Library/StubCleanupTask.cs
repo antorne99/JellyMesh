@@ -260,18 +260,18 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             return state;
         }
 
-        foreach (var claim in StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs, placement.KeyOf))
+        var merges = StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs, placement.KeyOf)
+            .SelectMany(claim => claim.Merged.Select(merged => (Merged: merged, Into: claim.Stub!)))
+            .GroupBy(merge => merge.Merged.Id, StringComparer.Ordinal);
+        foreach (var merge in merges)
         {
-            if (claim.Stub is not { } stub)
-            {
-                continue;
-            }
-
+            var merged = merge.First().Merged;
+            var into = merge.Select(entry => entry.Into).ToList();
             try
             {
-                foreach (var merged in claim.Merged.Where(merged => IsTakenOver(merged, stub)))
+                if (into.TrueForAll(stub => IsTakenOver(merged, stub)))
                 {
-                    state = await MergeAsync(root, state, merged, stub, users, cancellationToken).ConfigureAwait(false);
+                    state = await MergeAsync(root, state, merged, into, users, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -300,14 +300,21 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
     // Whether a sync already gave a copy of a merged stub to the one that stays: a library that changed since merges nothing.
     private static bool IsTakenOver(StubEntry merged, StubEntry into) => merged.Sources.Any(source =>
-        into.Sources.Any(other => other.ServerId == source.ServerId && string.Equals(other.ItemId, source.ItemId, StringComparison.Ordinal)));
+        into.Sources.Any(other => other.ServerId == source.ServerId && string.Equals(other.ItemId, source.ItemId, StringComparison.Ordinal))
+        || (into.ServerId == source.ServerId && into.PartCopies.Contains(source.ItemId, StringComparer.Ordinal)));
 
-    private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
+    private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, List<StubEntry> into, List<User> users, CancellationToken cancellationToken)
     {
-        // Without its item, which only a scan makes, the survivor cannot receive anything yet.
-        if (_library.FindByPath(FederatedPaths.Resolve(root, into.RelativePath), false) is not { } survivor)
+        // Without its item, which only a scan makes, a survivor cannot receive anything yet.
+        var survivors = new List<BaseItem>();
+        foreach (var entry in into)
         {
-            return state;
+            if (_library.FindByPath(FederatedPaths.Resolve(root, entry.RelativePath), false) is not { } survivor)
+            {
+                return state;
+            }
+
+            survivors.Add(survivor);
         }
 
         // A stub that cannot leave its version group, also at the old path of a pending server rename, stays for the next
@@ -319,10 +326,17 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         if (_library.FindByPath(FederatedPaths.Resolve(root, stub.RelativePath), false) is { } stubItem)
         {
-            HandOver(users, stubItem, survivor, WatchStateMerge.Merge, cancellationToken);
+            foreach (var survivor in survivors)
+            {
+                HandOver(users, stubItem, survivor, WatchStateMerge.Merge, cancellationToken);
+            }
         }
 
-        HandOverSeries(root, state, stub, into, users, cancellationToken);
+        foreach (var entry in into.DistinctBy(entry => entry.SeriesStubId))
+        {
+            HandOverSeries(root, state, stub, entry, users, cancellationToken);
+        }
+
         return _remover.Remove(root, state, stub);
     }
 
