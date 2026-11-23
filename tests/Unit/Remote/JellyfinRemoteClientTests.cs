@@ -123,9 +123,12 @@ public class JellyfinRemoteClientTests
     // Whatever the client asks for, the answer is a re-encoded JPEG of a bounded size.
     [Theory]
     [InlineData(null, null, null, null, null, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
-    [InlineData(1920, 1080, null, null, null, null, 60, "?maxWidth=1920&maxHeight=1080&quality=60&format=Jpg")]
-    [InlineData(null, 300, 400, 500, 600, 700, 100, "?maxWidth=4096&maxHeight=300&quality=80&format=Jpg&width=400&height=500&fillWidth=600&fillHeight=700")]
-    [InlineData(100000, 100000, 100000, 100000, 100000, 100000, int.MaxValue, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&width=4096&height=4096&fillWidth=4096&fillHeight=4096")]
+    [InlineData(1920, 1080, null, null, null, null, 60, "?maxWidth=1920&maxHeight=1280&quality=60&format=Jpg")]
+    [InlineData(null, null, 400, 300, null, null, null, "?maxWidth=640&maxHeight=320&quality=80&format=Jpg")]
+    [InlineData(2000, 500, 1000, 900, null, null, null, "?maxWidth=1280&maxHeight=640&quality=80&format=Jpg")]
+    [InlineData(null, null, null, null, 300, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=320")]
+    [InlineData(null, 300, 400, 500, 600, 700, 100, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=640&fillHeight=960")]
+    [InlineData(100000, 100000, 100000, 100000, 100000, 100000, int.MaxValue, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=4096&fillHeight=4096")]
     [InlineData(0, -1, 0, -1, 0, int.MinValue, 0, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
     public async Task APhotoImageIsAskedReEncodedAndBoundedWithTheSessionInTheHeaderOnly(int? maxWidth, int? maxHeight, int? width, int? height, int? fillWidth, int? fillHeight, int? quality, string query)
     {
@@ -140,6 +143,29 @@ public class JellyfinRemoteClientTests
         Assert.Equal(query, request.Uri.Query);
         Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    // Any side a caller asks is one of a few, so that it cannot make the remote encode a photo in every size (row 534).
+    [Theory]
+    [InlineData(1, 160)]
+    [InlineData(160, 160)]
+    [InlineData(161, 320)]
+    [InlineData(321, 640)]
+    [InlineData(640, 640)]
+    [InlineData(641, 960)]
+    [InlineData(961, 1280)]
+    [InlineData(1281, 1920)]
+    [InlineData(1921, 2560)]
+    [InlineData(2561, 4096)]
+    [InlineData(4096, 4096)]
+    [InlineData(4097, 4096)]
+    public async Task TheSideOfAPhotoImageIsRoundedUpToAStep(int asked, int step)
+    {
+        var handler = PhotoImageHandler();
+
+        await ClientFor(handler).GetPhotoImageAsync(_endpoint, _session, "item", new RemotePhotoSize { MaxWidth = asked }, CancellationToken.None);
+
+        Assert.StartsWith($"?maxWidth={step}&", Assert.Single(handler.Requests).Uri.Query, StringComparison.Ordinal);
     }
 
     // A served image is held in memory and a thumbnail on disk, so each has a limit of its own.

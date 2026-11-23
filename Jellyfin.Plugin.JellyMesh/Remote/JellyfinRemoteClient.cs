@@ -89,6 +89,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers,ParentId,Width,Height";
 
     // Waits before each new try of a sync read, and the longest wait a Retry-After can ask for (decision 47).
+    // Each in pixels, the longest being the limit of the side of a photo image.
+    private static readonly int[] _photoImageSides = [160, 320, PhotoThumbnailSide, 960, 1280, 1920, 2560, PhotoImageSide];
     private static readonly TimeSpan[] _retryWaits = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
     private static readonly TimeSpan _maxRetryAfter = TimeSpan.FromSeconds(10);
 
@@ -348,17 +350,18 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
+        // A box to fill is asked alone; an exact size, as the largest one, so that rounding a side never distorts the photo.
+        var (fillWidth, fillHeight) = (StepOf(size.FillWidth), StepOf(size.FillHeight));
+        var fills = fillWidth is not null || fillHeight is not null;
+        var maxWidth = fills ? PhotoImageSide : SmallerStep(size.MaxWidth, size.Width);
+        var maxHeight = fills ? PhotoImageSide : SmallerStep(size.MaxHeight, size.Height);
+
         // Below quality 90 Jellyfin never sends the original file, so the photo's own EXIF is not copied.
         var path = string.Create(
             CultureInfo.InvariantCulture,
-            $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={BoundedSide(size.MaxWidth) ?? PhotoImageSide}&maxHeight={BoundedSide(size.MaxHeight) ?? PhotoImageSide}&quality={Bounded(size.Quality, PhotoImageQuality) ?? PhotoImageQuality}&format=Jpg");
-        foreach (var (name, value) in new[] { ("width", size.Width), ("height", size.Height), ("fillWidth", size.FillWidth), ("fillHeight", size.FillHeight) })
-        {
-            if (BoundedSide(value) is { } side)
-            {
-                path += string.Create(CultureInfo.InvariantCulture, $"&{name}={side}");
-            }
-        }
+            $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={maxWidth}&maxHeight={maxHeight}&quality={BoundedQuality(size.Quality)}&format=Jpg");
+        path += fillWidth is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $"&fillWidth={fillWidth}");
+        path += fillHeight is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $"&fillHeight={fillHeight}");
 
         var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, maxBytes).ConfigureAwait(false);
         if (!response.IsSuccess)
@@ -371,10 +374,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
     }
 
-    private static int? BoundedSide(int? side) => Bounded(side, PhotoImageSide);
+    // The first step not below an asked side, the last one for a longer side, null for none (row 534).
+    private static int? StepOf(int? side)
+        => side is > 0 ? _photoImageSides.FirstOrDefault(step => step >= side, PhotoImageSide) : null;
 
-    // A positive value up to a limit, null for none.
-    private static int? Bounded(int? value, int limit) => value is > 0 ? Math.Min(value.Value, limit) : null;
+    // The smaller step of two asked sides, the last one for none.
+    private static int SmallerStep(int? side, int? other)
+        => Math.Min(StepOf(side) ?? PhotoImageSide, StepOf(other) ?? PhotoImageSide);
+
+    private static int BoundedQuality(int? quality)
+        => quality is > 0 ? Math.Min(quality.Value, PhotoImageQuality) : PhotoImageQuality;
 
     // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
     private async Task<RemoteResult<RemoteItemPage>> ReadBriefPageAsync(RemoteEndpoint endpoint, RemoteSession session, string parentId, string filter, int startIndex, int limit, CancellationToken cancellationToken)
