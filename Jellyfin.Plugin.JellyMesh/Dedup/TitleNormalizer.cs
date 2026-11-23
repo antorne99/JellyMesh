@@ -14,6 +14,9 @@ public static class TitleNormalizer
 {
     private const string ArtistSeparator = " - ";
 
+    // Enough for the names of artists that hold the separator; a title can be as long as a remote wants.
+    private const int MaxSeparators = 8;
+
     // Italian and English. Elided forms (l', un') arrive here as "l" and "un", since an apostrophe separates words.
     private static readonly FrozenSet<string> _articles = FrozenSet.ToFrozenSet(
         ["il", "lo", "la", "i", "gli", "le", "l", "un", "uno", "una", "the", "a", "an"],
@@ -57,9 +60,15 @@ public static class TitleNormalizer
     /// <returns>The title without the artist.</returns>
     public static string WithoutArtist(string title, int? year, IEnumerable<string> artists)
     {
-        var names = artists.Select(artist => Normalize(artist, null)).Where(name => name.Length > 0).ToHashSet(StringComparer.Ordinal);
         var trimmed = title.Trim();
-        for (var dash = trimmed.IndexOf(ArtistSeparator, StringComparison.Ordinal); dash >= 0; dash = trimmed.IndexOf(ArtistSeparator, dash + 1, StringComparison.Ordinal))
+        var dash = trimmed.IndexOf(ArtistSeparator, StringComparison.Ordinal);
+        if (dash < 0)
+        {
+            return title;
+        }
+
+        var names = artists.Select(artist => Normalize(artist, null)).Where(name => name.Length > 0).ToHashSet(StringComparer.Ordinal);
+        for (var tried = 0; dash >= 0 && tried < MaxSeparators; tried++, dash = trimmed.IndexOf(ArtistSeparator, dash + 1, StringComparison.Ordinal))
         {
             var rest = trimmed[(dash + ArtistSeparator.Length)..];
             if (names.Contains(Normalize(trimmed[..dash], null)) && !string.IsNullOrWhiteSpace(RemoveTrailingYear(rest, year)))
