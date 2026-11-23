@@ -204,6 +204,119 @@ public partial class PlaybackFiltersTests
         Assert.True(await RunAsync(InfoFilter(new InMemoryConfigurationStore()), Context("MediaInfo", "GetPlaybackInfo", ("itemId", _localId))));
     }
 
+    public static TheoryData<string, string> UnknownStubInfoCases() => new()
+    {
+        { "video", "GetPlaybackInfo" },
+        { "video", "GetPostedPlaybackInfo" },
+        { "track", "GetPlaybackInfo" },
+        { "track", "GetPostedPlaybackInfo" },
+        { "book", "GetPlaybackInfo" },
+        { "book", "GetPostedPlaybackInfo" }
+    };
+
+    // Row 514: PlaybackInfo of a stub the registry no longer knows wants a user who reaches it, then it is stock's.
+    [Theory]
+    [MemberData(nameof(UnknownStubInfoCases))]
+    public async Task PlaybackInfo_of_an_unknown_stub_wants_a_user(string kind, string action)
+    {
+        Anonymous();
+        var context = Context("MediaInfo", action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(StoreOf(kind, known: false)), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(UnknownStubInfoCases))]
+    public async Task PlaybackInfo_does_not_find_an_unknown_stub_the_user_cannot_see(string kind, string action)
+    {
+        var context = Context("MediaInfo", action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(StoreOf(kind, known: false)), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(UnknownStubInfoCases))]
+    public async Task PlaybackInfo_does_not_find_a_visible_unknown_stub_in_no_library(string kind, string action)
+    {
+        CanSeeItem();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = Context("MediaInfo", action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(StoreOf(kind, known: false)), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(UnknownStubInfoCases))]
+    public async Task PlaybackInfo_of_an_unknown_stub_in_a_library_stays_stock(string kind, string action)
+    {
+        CanSeeItem();
+        var context = Context("MediaInfo", action, ("itemId", _itemId));
+
+        Assert.True(await RunAsync(InfoFilter(StoreOf(kind, known: false)), context));
+        Assert.Null(context.Result);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PlaybackInfo_does_not_find_an_unknown_stub_asked_as_the_version_of_a_local_film(bool inBody)
+    {
+        var film = new Movie { Id = _localId, Path = "/media/film/A.mkv" };
+        _library.Setup(library => library.GetItemById(_localId)).Returns(film);
+        _library.Setup(library => library.GetItemById<BaseItem>(_localId, _user)).Returns(film);
+        var version = _itemId.ToString("N");
+        var context = inBody
+            ? Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _localId), ("playbackInfoDto", new { MediaSourceId = version }))
+            : Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _localId), ("mediaSourceId", version));
+
+        Assert.False(await RunAsync(InfoFilter(StoreOf("video", known: false)), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_does_not_find_a_track_stub_in_no_library_asked_as_the_version_of_a_local_track()
+    {
+        CanSeeItem();
+        var store = TrackStub();
+        _library.Setup(library => library.GetItemById(_localId)).Returns(new Audio { Id = _localId, Path = "/media/musica/A.flac" });
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _localId), ("mediaSourceId", _itemId.ToString("N")));
+
+        Assert.False(await RunAsync(InfoFilter(store), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/federata")]
+    public async Task PlaybackInfo_of_a_local_video_strm_stays_stock(string folder)
+    {
+        Anonymous();
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = folder;
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Movie { Path = "/media/film/A.strm", ShortcutPath = "http://media.example/a.mkv" });
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.True(await RunAsync(InfoFilter(store), context));
+        Assert.Null(context.Result);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_local_video_strm_in_a_library_stays_stock_while_the_folder_is_not_known()
+    {
+        CanSeeItem();
+        var store = new InMemoryConfigurationStore { Unavailable = true };
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Movie { Path = "/media/film/A.strm", ShortcutPath = "http://media.example/a.mkv" });
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.True(await RunAsync(InfoFilter(store), context));
+        Assert.Null(context.Result);
+    }
+
     private ActionExecutingContext StubRouteRequest(int route)
     {
         var entry = StockRouteGuardFilter.StubRoutes[route];
