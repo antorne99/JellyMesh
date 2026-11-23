@@ -41,6 +41,9 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
         _logger = logger;
     }
 
+    /// <summary>Gets the comparer of normalized paths.</summary>
+    internal static StringComparer PathComparer => StringComparer.FromComparison(_pathComparison);
+
     /// <inheritdoc />
     public FederatedFolderLinkReport Check(string federatedFolderPath, IReadOnlyList<Guid> serverIds)
     {
@@ -221,5 +224,5 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     private static bool IsSame(string location, string path) => string.Equals(Normalized(location), Normalized(path), _pathComparison);
 
     // Trailing separators, doubled ones and dots do not make another folder.
-    private static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    internal static string Normalized(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 }
