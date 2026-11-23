@@ -41,6 +41,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     private const string DownloadAction = "GetDownload";
 
+    // The extension and the type of a downloaded audio stub whose type is not listed (row 542).
+    private const string NeutralExtension = ".bin";
+    private const string NeutralType = "application/octet-stream";
+
     private const string LegacySegmentAction = "GetHlsVideoSegmentLegacy";
 
     private const string LegacyAudioAction = "GetHlsAudioSegmentLegacy";
@@ -356,7 +360,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
 
         // A book goes with the type of its format, never the remote's (D62). Books and audio go as a file on Download, with
-        // the name of their stub, which for audio takes the extension of the remote file (row 532).
+        // the name of their stub, which for audio takes the extension of the remote type or a neutral one (rows 532 and 542).
         var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
         if (stub.Kind is StubKind.Book or StubKind.Track or StubKind.AudioBook)
         {
@@ -364,7 +368,15 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             if (action == DownloadAction)
             {
                 var disposition = new ContentDispositionHeaderValue("attachment");
-                disposition.SetHttpFileName(stub.Kind == StubKind.Book ? Path.GetFileName(stub.RelativePath) : DownloadName(stub.RelativePath, opened.Headers.ContentType));
+                var name = Path.GetFileName(stub.RelativePath);
+                if (stub.Kind != StubKind.Book)
+                {
+                    var extension = AudioExtensionOf(opened.Headers.ContentType);
+                    name = Path.GetFileNameWithoutExtension(name) + (extension ?? NeutralExtension);
+                    mediaType = extension is null ? NeutralType : null;
+                }
+
+                disposition.SetHttpFileName(name);
                 http.Response.Headers.ContentDisposition = disposition.ToString();
             }
         }
@@ -373,13 +385,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return new EmptyResult();
     }
 
-    // The name a download of an audio stub gets: the local name of its stub with the extension of the remote file's type.
-    private static string DownloadName(string relativePath, string? contentType)
-    {
-        var type = contentType?.Split(';', 2)[0].Trim();
-        var extension = type is not null && _audioExtensions.TryGetValue(type, out var known) ? known : string.Empty;
-        return Path.GetFileNameWithoutExtension(relativePath) + extension;
-    }
+    // The extension of a listed audio type, whatever its case and parameters, or null.
+    private static string? AudioExtensionOf(string? contentType)
+        => contentType is not null && _audioExtensions.TryGetValue(contentType.Split(';', 2)[0].Trim(), out var extension) ? extension : null;
 
     // Serves a stock route on audio stubs: 401 without a user, 404 for one who cannot see them. Lyrics are read, never
     // managed; a static stream is the file; the other audio routes go through a session, anything else is a bare 503.
