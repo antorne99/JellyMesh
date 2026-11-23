@@ -38,6 +38,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
     private readonly TimeSpan _writeLimit;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _gates = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _paused = new();
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _anonymousPaused = new();
     private readonly SemaphoreSlim _inMemory = new(PlaybackLimits.PhotoImagesInMemory, PlaybackLimits.PhotoImagesInMemory);
     private readonly SemaphoreSlim _anonymous = new(
         PlaybackLimits.PhotoImagesInMemory - PlaybackLimits.PhotoImagesForUsers,
@@ -192,7 +193,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
             return null;
         }
 
-        var read = await CallAsync(source, size, cancellationToken).ConfigureAwait(false);
+        var read = await CallAsync(source, size, anonymous, cancellationToken).ConfigureAwait(false);
         if (read.IsSuccess && PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span, JellyfinRemoteClient.PhotoImageSide))
         {
             return read.Value.Content;
@@ -200,7 +201,8 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
 
         if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.AuthenticationFailed)
         {
-            _paused[source.ServerId] = _clock.GetUtcNow() + PlaybackTimeouts.PhotoServerPause;
+            // A failed anonymous read pauses no signed-in user.
+            (anonymous ? _anonymousPaused : _paused)[source.ServerId] = _clock.GetUtcNow() + PlaybackTimeouts.PhotoServerPause;
         }
 
         return null;
@@ -220,7 +222,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
 
             var gate = _gates.GetOrAdd(serverId, _ => new SemaphoreSlim(PlaybackLimits.PhotoImagesPerServer, PlaybackLimits.PhotoImagesPerServer));
             await call.EnterAsync(gate, wait.Token).ConfigureAwait(false);
-            if (IsPaused(serverId))
+            if (IsPaused(_paused, serverId) || (anonymous && IsPaused(_anonymousPaused, serverId)))
             {
                 return false;
             }
@@ -234,23 +236,26 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
         }
     }
 
-    private bool IsPaused(Guid serverId) => _paused.TryGetValue(serverId, out var until) && _clock.GetUtcNow() < until;
+    private bool IsPaused(ConcurrentDictionary<Guid, DateTimeOffset> paused, Guid serverId)
+        => paused.TryGetValue(serverId, out var until) && _clock.GetUtcNow() < until;
 
-    private async Task<RemoteResult<RemoteImage>> CallAsync(StubSource source, RemotePhotoSize size, CancellationToken cancellationToken)
+    private async Task<RemoteResult<RemoteImage>> CallAsync(StubSource source, RemotePhotoSize size, bool anonymous, CancellationToken cancellationToken)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_store.Read(PlaybackTimes.From).StreamOpen);
         try
         {
-            return await _registry.RunPlaybackCallAsync(
-                source.ServerId,
-                (endpoint, session, token) => _client.GetPhotoImageAsync(endpoint, session, source.ItemId, size, token),
-                limit.Token).ConfigureAwait(false);
+            return anonymous
+                ? await _registry.RunAnonymousCallAsync<RemoteImage>(source.ServerId, GetAsync, limit.Token).ConfigureAwait(false)
+                : await _registry.RunPlaybackCallAsync<RemoteImage>(source.ServerId, GetAsync, limit.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return RemoteResult.Fail<RemoteImage>(RemoteFailure.Timeout);
         }
+
+        Task<RemoteResult<RemoteImage>> GetAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken token)
+            => _client.GetPhotoImageAsync(endpoint, session, source.ItemId, size, token);
     }
 
     // The places a read holds, given back when it is disposed.

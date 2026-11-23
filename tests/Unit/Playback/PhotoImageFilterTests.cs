@@ -51,7 +51,7 @@ public class PhotoImageFilterTests
         _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Path = PhotoPath });
         _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _stubs.Setup(stubs => stubs.FindByPath(PhotoPath)).Returns(Stub());
-        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>())).ReturnsAsync(new AuthorizationInfo());
+        SignedOut();
         _answer = _ => Task.FromResult(Image(_jpeg));
         _client
             .Setup(client => client.GetPhotoImageAsync(It.IsAny<RemoteEndpoint>(), It.IsAny<RemoteSession>(), It.IsAny<string>(), It.IsAny<RemotePhotoSize>(), It.IsAny<CancellationToken>()))
@@ -87,6 +87,9 @@ public class PhotoImageFilterTests
             _library.Setup(library => library.GetItemById<BaseItem>(_itemId, _user)).Returns(new Photo { Path = PhotoPath });
         }
     }
+
+    private void SignedOut()
+        => _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>())).ReturnsAsync(new AuthorizationInfo());
 
     private PhotoImageFilter Filter(TimeSpan? queueWait = null, TimeSpan? writeLimit = null)
     {
@@ -478,7 +481,7 @@ public class PhotoImageFilterTests
         var slow = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => RunAsync(filter, SlowRequest(gone.Token).Context)).ToList();
         Assert.Equal(PlaybackLimits.PhotoImagesInMemory, _asked.Count);
 
-        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>())).ReturnsAsync(new AuthorizationInfo());
+        SignedOut();
         var over = Enumerable.Range(0, PlaybackLimits.PhotoImagesInMemory).Select(_ => Request()).ToList();
         await Task.WhenAll(over.Select(request => RunAsync(filter, request))).WaitAsync(TimeSpan.FromSeconds(30));
         Assert.All(over, AssertMissing);
@@ -600,6 +603,54 @@ public class PhotoImageFilterTests
         var third = Request();
         await RunAsync(filter, third);
         AssertServed(third);
+    }
+
+    // Row 534: an anonymous read leaves the state of the server alone, so it runs as a call that records nothing.
+    [Fact]
+    public async Task Only_an_image_without_a_user_is_read_as_an_anonymous_call()
+    {
+        await RunAsync(Filter(), Request());
+        Assert.Equal(1, _registry.AnonymousCalls);
+
+        SignedIn(sees: true);
+        var context = Request();
+        await RunAsync(Filter(), context);
+        AssertServed(context);
+        Assert.Equal(1, _registry.AnonymousCalls);
+    }
+
+    [Fact]
+    public async Task A_failed_anonymous_read_pauses_no_signed_in_user()
+    {
+        var filter = Filter();
+        _answer = _ => Task.FromResult(RemoteResult.Fail<RemoteImage>(RemoteFailure.Unreachable));
+        await RunAsync(filter, Request());
+
+        _answer = _ => Task.FromResult(Image(_jpeg));
+        SignedIn(sees: true);
+        var context = Request();
+        await RunAsync(filter, context);
+        AssertServed(context);
+
+        SignedOut();
+        var anonymous = Request();
+        await RunAsync(filter, anonymous);
+        AssertMissing(anonymous);
+    }
+
+    [Fact]
+    public async Task A_failed_read_of_a_signed_in_user_pauses_the_anonymous_ones_too()
+    {
+        var filter = Filter();
+        _answer = _ => Task.FromResult(RemoteResult.Fail<RemoteImage>(RemoteFailure.Unreachable));
+        SignedIn(sees: true);
+        await RunAsync(filter, Request());
+        await RunAsync(filter, Request());
+        Assert.Single(_asked);
+
+        SignedOut();
+        await RunAsync(filter, Request());
+        Assert.Single(_asked);
     }
 
     [Fact]

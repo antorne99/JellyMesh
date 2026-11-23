@@ -142,4 +142,18 @@ public interface IRemoteServerRegistry
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs a call for a request without a user like <see cref="RunWithSessionAsync{T}"/>, without recording its outcome and
+    /// with one log line per server and interval for its failures (row 534).
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="serverId">The server.</param>
+    /// <param name="call">The call.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The result of <paramref name="call"/>, or why it could not run.</returns>
+    Task<RemoteResult<T>> RunAnonymousCallAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken);
 }

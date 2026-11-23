@@ -68,6 +68,27 @@ public class ServerReachabilityActivityTests
         Assert.Equal([Offline], remote.Activity.Entries.Select(entry => entry.Type));
     }
 
+    // Row 534: neither do anonymous calls, whose failures the next sync call still sees as a change.
+    [Fact]
+    public async Task Anonymous_calls_never_write_and_leave_the_next_change_to_sync_calls()
+    {
+        var remote = new SwitchableRemote();
+        using var registry = remote.NewRegistry();
+        var server = await remote.AddAsync(registry);
+
+        foreach (var failure in new[] { RemoteFailure.Unreachable, RemoteFailure.Timeout })
+        {
+            await registry.RunAnonymousCallAsync(server.Id, (_, _, _) => Task.FromResult(RemoteResult.Fail<int>(failure)), CancellationToken.None);
+        }
+
+        Assert.Empty(remote.Activity.Entries);
+
+        remote.Answer = Answer.Offline;
+        await registry.GetLibrariesAsync(server.Id, CancellationToken.None);
+
+        Assert.Equal([Offline], remote.Activity.Entries.Select(entry => entry.Type));
+    }
+
     private static Task<RemoteResult<int>> PlaybackCallAsync(RemoteServerRegistry registry, Guid serverId, RemoteFailure failure)
         => registry.RunPlaybackCallAsync(
             serverId,
