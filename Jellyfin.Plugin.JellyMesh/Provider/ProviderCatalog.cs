@@ -28,6 +28,9 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public sealed class ProviderCatalog
 {
+    // How many parents of an item without a path are looked at for one.
+    private const int MaxParents = 4;
+
     private static readonly ItemFields[] _fields =
     [
         ItemFields.ProviderIds,
@@ -83,13 +86,13 @@ public sealed class ProviderCatalog
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(item.Path))
+        if (NearestPath(item) is not { } nearest)
         {
             return false;
         }
 
-        var path = FolderPath.Of(item.Path);
-        if (HasServerFolderLayout(path.Lexical) || HasServerFolderLayout(path.Canonical) || IsServerFolder(path.Lexical) || IsServerFolder(path.Canonical))
+        var path = FolderPath.Of(nearest);
+        if (HasServerFolderLayout(path) || IsServerFolder(path.Lexical) || IsServerFolder(path.Canonical))
         {
             return true;
         }
@@ -399,6 +402,25 @@ public sealed class ProviderCatalog
 
         return members;
     }
+
+    // The path of an item, or of its nearest parent that has one, such as the series of a season without a folder.
+    private string? NearestPath(BaseItem item)
+    {
+        BaseItem? current = item;
+        for (var depth = 0; current is not null && depth <= MaxParents; depth++)
+        {
+            if (!string.IsNullOrWhiteSpace(current.Path))
+            {
+                return current.Path;
+            }
+
+            current = current.ParentId.Equals(Guid.Empty) ? null : _library.GetItemById(current.ParentId);
+        }
+
+        return null;
+    }
+
+    private static bool HasServerFolderLayout(FolderPath path) => HasServerFolderLayout(path.Lexical) || HasServerFolderLayout(path.Canonical);
 
     // Looks for the folder of a server anywhere in the path: {server guid}/{library id}/{type folder}, or
     // {server guid}/{type folder} of the 0.5 layout, which held only films and series (decision 513).

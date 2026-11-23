@@ -137,6 +137,43 @@ public sealed class ProviderCatalogLayoutTests
     }
 
     [Theory]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show", false)]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show", false)]
+    [InlineData("/media/Serie/Show", true)]
+    public void A_season_or_episode_without_a_path_is_judged_by_its_series(string path, bool visible)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, "/media");
+        var series = new Series { Path = path };
+        var season = new Season();
+        var episode = new Episode();
+        Add(series, null);
+        Add(season, series);
+        Add(episode, season);
+
+        Assert.Equal(visible, _fixture.Catalog.FindVisible(_fixture.PeerCaller, season.Id) is not null);
+        Assert.Equal(visible, _fixture.Catalog.FindVisible(_fixture.PeerCaller, episode.Id) is not null);
+
+        void Add(BaseItem item, BaseItem? parent)
+        {
+            _fixture.AddItem(Guid.NewGuid(), item, ProviderFixture.SharedLibrary);
+            item.ParentId = parent?.Id ?? Guid.Empty;
+            _fixture.Library.Setup(manager => manager.GetItemById(item.Id)).Returns(item);
+        }
+    }
+
+    [Fact]
+    public void An_item_without_a_path_whose_parents_are_gone_is_not_federated()
+    {
+        var season = new Season { Id = Guid.NewGuid(), ParentId = Guid.NewGuid() };
+        var orphan = new Season { Id = Guid.NewGuid() };
+        orphan.ParentId = orphan.Id;
+        _fixture.Library.Setup(manager => manager.GetItemById(orphan.Id)).Returns(orphan);
+
+        Assert.False(_fixture.Catalog.IsFederated(season));
+        Assert.False(_fixture.Catalog.IsFederated(orphan));
+    }
+
+    [Theory]
     [InlineData("Series", "/vecchia/Serie/Show", CollectionTypeOptions.tvshows)]
     [InlineData("Movie", "/vecchia/Film/Title (2001)/Title (2001).mkv", CollectionTypeOptions.movies)]
     [InlineData("Series", "/media/Serie/0f8fad5b-d9cb-469f-a165-70867728950e/Show", CollectionTypeOptions.tvshows)]
