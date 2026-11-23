@@ -107,6 +107,21 @@ public class TrackDeviceTests
     }
 
     [Fact]
+    public async Task A_server_that_stopped_running_JellyMesh_is_told_of_no_device()
+    {
+        var source = JellyMeshSource();
+        Assert.Equal(PlaybackOutcomeKind.Remote, (await _fixture.OpenAsync(Track(source))).Kind);
+        var session = Assert.Single(_fixture.Sessions.All);
+        _fixture.Client.Devices.Clear();
+        _fixture.Registry.Servers.Clear();
+
+        await _fixture.Coordinator.ReadPlaylistAsync(session, session.UpstreamPath, CancellationToken.None);
+        using var read = (await _fixture.Coordinator.OpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, "/Audio/remote-item/hls1/main/0.mp4", null, Device: session.RemoteDevice), CancellationToken.None)).Value;
+
+        Assert.Equal([null, null], _fixture.Client.Devices);
+    }
+
+    [Fact]
     public async Task The_hash_of_a_device_never_reaches_a_client()
     {
         var source = JellyMeshSource();

@@ -374,6 +374,7 @@ public sealed class PlaybackCoordinator
             return RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy);
         }
 
+        var told = request with { Device = Told(serverId, request.Device) };
         var handedOver = false;
         try
         {
@@ -382,7 +383,7 @@ public sealed class PlaybackCoordinator
             var opened = await GatedAsync(
                 serverId,
                 Times.StreamOpen,
-                (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
+                (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, told, token),
                 cancellationToken).ConfigureAwait(false);
             if (opened.IsSuccess && end.IsCancellationRequested)
             {
@@ -416,7 +417,7 @@ public sealed class PlaybackCoordinator
         return GatedAsync(
             session.Source.ServerId,
             Times.StreamOpen,
-            (endpoint, remote, token) => _client.ReadPlaylistAsync(endpoint, remote, path, session.RemoteDevice, token),
+            (endpoint, remote, token) => _client.ReadPlaylistAsync(endpoint, remote, path, Told(session.Source.ServerId, session.RemoteDevice), token),
             cancellationToken);
     }
 
@@ -806,6 +807,9 @@ public sealed class PlaybackCoordinator
     {
         return stub.Kind == StubKind.Track && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
     }
+
+    // A session keeps its device, and its server can stop running JellyMesh meanwhile.
+    private string? Told(Guid serverId, string? device) => device is not null && IsJellyMesh(serverId) ? device : null;
 
     private async Task<Attempt> TryRemoteAsync(PlaybackOpenRequest request, StubSource source, bool keepIndexes, PlaybackSession? previous, CancellationToken cancellationToken)
     {
