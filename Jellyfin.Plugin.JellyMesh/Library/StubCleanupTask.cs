@@ -208,26 +208,29 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         // No users may mean they cannot be read for now.
         var users = _users.GetUsers().ToList();
-        var stubs = state.Stubs.ToDictionary(stub => stub.Id, stub => FederatedPaths.Resolve(root, stub.RelativePath), StringComparer.Ordinal);
-        var series = state.Series.ToDictionary(entry => entry.Id, entry => FederatedPaths.Resolve(root, entry.RelativePath), StringComparer.Ordinal);
+        var stubs = state.Stubs.ToDictionary(stub => stub.Id, stub => stub.RelativePath, StringComparer.Ordinal);
+        var series = state.Series.ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
         var left = state.Splits.Where(split => users.Count == 0
-            || !(HandOverSplit(split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
-                || HandOverSplit(split, series, true, MergeSeries, users, cancellationToken))).ToList();
+            || !(HandOverSplit(root, split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
+                || HandOverSplit(root, split, series, true, MergeSeries, users, cancellationToken))).ToList();
         return left.Count == state.Splits.Count ? state : state with { Splits = left };
     }
 
-    private bool HandOverSplit(StubSplit split, Dictionary<string, string> paths, bool isFolder, Func<UserItemData, UserItemData, bool> merge, List<User> users, CancellationToken cancellationToken)
+    private bool HandOverSplit(string root, StubSplit split, Dictionary<string, string> paths, bool isFolder, Func<UserItemData, UserItemData, bool> merge, List<User> users, CancellationToken cancellationToken)
     {
-        if (!paths.TryGetValue(split.FromStubId, out var from)
-            || !paths.TryGetValue(split.StubId, out var to)
-            || _library.FindByPath(from, isFolder) is not { } source
-            || _library.FindByPath(to, isFolder) is not { } target)
+        if (!paths.TryGetValue(split.FromStubId, out var from) || !paths.TryGetValue(split.StubId, out var to))
         {
             return false;
         }
 
         try
         {
+            if (_library.FindByPath(FederatedPaths.Resolve(root, from), isFolder) is not { } source
+                || _library.FindByPath(FederatedPaths.Resolve(root, to), isFolder) is not { } target)
+            {
+                return false;
+            }
+
             HandOver(users, source, target, merge, cancellationToken);
             return true;
         }
