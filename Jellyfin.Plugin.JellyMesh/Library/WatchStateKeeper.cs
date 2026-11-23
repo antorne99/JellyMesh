@@ -556,14 +556,23 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 
         List<T> Own<T>(KeptTitleKind kind, Func<KeptTitle, T> savedOf) => titles.Where(title => title.Kind == kind).Select(savedOf).ToList();
 
-        // The pairs of one rule.
+        // The pairs of one rule, or none when it fails: the titles of its types wait for a later run.
         List<(string Saved, string ServerId, string ItemId)> Match<T>(string types, Func<SavedPairs<T>> rule)
             where T : IServerItem
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var found = rule();
-            left += found.Left;
-            return found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)).ToList();
+            try
+            {
+                var found = rule();
+                left += found.Left;
+                return found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)).ToList();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException and not StoreSuspendedException)
+            {
+                // The type only: a message could hold a path.
+                _logger.LogError("Cannot match the kept watch state of {Types}: {Error}", types, exception.GetType().Name);
+                return [];
+            }
         }
     }
 

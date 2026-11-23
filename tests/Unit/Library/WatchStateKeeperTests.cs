@@ -588,6 +588,32 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Equal(isPutBack ? 0 : 1, _logger.Lines.Count(line => line.Contains("more than 100 copies", StringComparison.Ordinal)));
     }
 
+    // A rule that fails leaves the titles of its type for a later run and stops no other.
+    [Fact]
+    public async Task TheFailureOfOneRuleDoesNotStopTheOthers()
+    {
+        AddRemote(StubKind.Track);
+        AddRemote(StubKind.Book);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("film", "Song", 2019) with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } });
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films, TestLibraries.Music, TestLibraries.Books);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (film, track, book) = (Place(new Movie { Name = "Song", ProductionYear = 2019 }, b, StubKind.Movie), ItemOf(b, StubKind.Track), ItemOf(b, StubKind.Book));
+        await _kept.SaveAsync([KeptOf(StubKind.Movie), KeptOf(StubKind.Track), KeptOf(StubKind.Book)], CancellationToken.None);
+        var broken = new Mock<IManualMergeStore>();
+        broken.Setup(merges => merges.Merges).Throws(new InvalidOperationException("/secret"));
+        using var keeper = Keeper(_kept, broken.Object);
+
+        await keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, track).Played);
+        Assert.True(Row(_anna, book).Played);
+        Assert.False(Row(_anna, film).Played);
+        Assert.Equal(KeptTitleKind.Movie, Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Kind);
+        Assert.Contains("InvalidOperationException", Assert.Single(_logger.Lines, line => line.Contains("Cannot match", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
     // A kept title as the keeper saves the item of a stub of a kind, seen by Anna.
     private KeptTitle KeptOf(StubKind kind) => new()
     {
