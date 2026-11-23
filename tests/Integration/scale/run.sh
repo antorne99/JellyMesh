@@ -168,7 +168,10 @@ done
 echo "--- consumer $NAME on :$PORT"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" >/dev/null 2>&1 || true
+# The library options do not reach the artists that the stock ArtistsPostScanTask looks up on MusicBrainz, so its name and
+# TheAudioDB's resolve to nowhere: invented artists must not be asked of a public service.
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:8096" --add-host host.docker.internal:host-gateway \
+  --add-host musicbrainz.org:127.0.0.1 --add-host www.theaudiodb.com:127.0.0.1 \
   -e TZ=UTC -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" "$IMAGE" >/dev/null
 wait_ready
 sleep 3
