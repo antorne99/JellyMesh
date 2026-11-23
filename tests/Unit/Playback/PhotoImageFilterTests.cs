@@ -204,7 +204,7 @@ public class PhotoImageFilterTests
     }
 
     [Fact]
-    public async Task Only_the_size_and_the_quality_of_the_request_reach_the_remote()
+    public async Task Only_the_size_of_the_request_reaches_the_remote()
     {
         var context = Request(arguments:
         [
@@ -225,7 +225,7 @@ public class PhotoImageFilterTests
         await RunAsync(Filter(), context);
 
         Assert.Equal(
-            new RemotePhotoSize { MaxWidth = 1, MaxHeight = 2, Width = 3, Height = 4, FillWidth = 5, FillHeight = 6, Quality = 70 },
+            new RemotePhotoSize { MaxWidth = 1, MaxHeight = 2, Width = 3, Height = 4, FillWidth = 5, FillHeight = 6 },
             Assert.Single(_asked).Size);
     }
 

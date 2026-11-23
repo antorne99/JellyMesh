@@ -359,7 +359,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         // Below quality 90 Jellyfin never sends the original file, so the photo's own EXIF is not copied.
         var path = string.Create(
             CultureInfo.InvariantCulture,
-            $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={maxWidth}&maxHeight={maxHeight}&quality={BoundedQuality(size.Quality)}&format=Jpg");
+            $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={maxWidth}&maxHeight={maxHeight}&quality={PhotoImageQuality}&format=Jpg");
         path += fillWidth is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $"&fillWidth={fillWidth}");
         path += fillHeight is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $"&fillHeight={fillHeight}");
 
@@ -381,9 +381,6 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     // The smaller step of two asked sides, the last one for none.
     private static int SmallerStep(int? side, int? other)
         => Math.Min(StepOf(side) ?? PhotoImageSide, StepOf(other) ?? PhotoImageSide);
-
-    private static int BoundedQuality(int? quality)
-        => quality is > 0 ? Math.Min(quality.Value, PhotoImageQuality) : PhotoImageQuality;
 
     // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
     private async Task<RemoteResult<RemoteItemPage>> ReadBriefPageAsync(RemoteEndpoint endpoint, RemoteSession session, string parentId, string filter, int startIndex, int limit, CancellationToken cancellationToken)

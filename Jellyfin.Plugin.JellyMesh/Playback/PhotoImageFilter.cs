@@ -148,8 +148,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
         Width = NumberOf(context, "width"),
         Height = NumberOf(context, "height"),
         FillWidth = NumberOf(context, "fillWidth"),
-        FillHeight = NumberOf(context, "fillHeight"),
-        Quality = NumberOf(context, "quality")
+        FillHeight = NumberOf(context, "fillHeight")
     };
 
     private static int? NumberOf(ActionExecutingContext context, string name)

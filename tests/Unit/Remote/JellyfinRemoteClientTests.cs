@@ -122,18 +122,18 @@ public class JellyfinRemoteClientTests
 
     // Whatever the client asks for, the answer is a re-encoded JPEG of a bounded size.
     [Theory]
-    [InlineData(null, null, null, null, null, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
-    [InlineData(1920, 1080, null, null, null, null, 60, "?maxWidth=1920&maxHeight=1280&quality=60&format=Jpg")]
-    [InlineData(null, null, 400, 300, null, null, null, "?maxWidth=640&maxHeight=320&quality=80&format=Jpg")]
-    [InlineData(2000, 500, 1000, 900, null, null, null, "?maxWidth=1280&maxHeight=640&quality=80&format=Jpg")]
-    [InlineData(null, null, null, null, 300, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=320")]
-    [InlineData(null, 300, 400, 500, 600, 700, 100, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=640&fillHeight=960")]
-    [InlineData(100000, 100000, 100000, 100000, 100000, 100000, int.MaxValue, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=4096&fillHeight=4096")]
-    [InlineData(0, -1, 0, -1, 0, int.MinValue, 0, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
-    public async Task APhotoImageIsAskedReEncodedAndBoundedWithTheSessionInTheHeaderOnly(int? maxWidth, int? maxHeight, int? width, int? height, int? fillWidth, int? fillHeight, int? quality, string query)
+    [InlineData(null, null, null, null, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
+    [InlineData(1920, 1080, null, null, null, null, "?maxWidth=1920&maxHeight=1280&quality=80&format=Jpg")]
+    [InlineData(null, null, 400, 300, null, null, "?maxWidth=640&maxHeight=320&quality=80&format=Jpg")]
+    [InlineData(2000, 500, 1000, 900, null, null, "?maxWidth=1280&maxHeight=640&quality=80&format=Jpg")]
+    [InlineData(null, null, null, null, 300, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=320")]
+    [InlineData(null, 300, 400, 500, 600, 700, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=640&fillHeight=960")]
+    [InlineData(100000, 100000, 100000, 100000, 100000, 100000, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=4096&fillHeight=4096")]
+    [InlineData(0, -1, 0, -1, 0, int.MinValue, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
+    public async Task APhotoImageIsAskedReEncodedAndBoundedWithTheSessionInTheHeaderOnly(int? maxWidth, int? maxHeight, int? width, int? height, int? fillWidth, int? fillHeight, string query)
     {
         var handler = PhotoImageHandler();
-        var size = new RemotePhotoSize { MaxWidth = maxWidth, MaxHeight = maxHeight, Width = width, Height = height, FillWidth = fillWidth, FillHeight = fillHeight, Quality = quality };
+        var size = new RemotePhotoSize { MaxWidth = maxWidth, MaxHeight = maxHeight, Width = width, Height = height, FillWidth = fillWidth, FillHeight = fillHeight };
 
         var result = await ClientFor(handler).GetPhotoImageAsync(_endpoint, _session, "item 1", size, CancellationToken.None);
 
