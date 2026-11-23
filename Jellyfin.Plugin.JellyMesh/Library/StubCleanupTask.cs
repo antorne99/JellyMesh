@@ -253,7 +253,13 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             return state;
         }
 
+        // No users may mean they cannot be read for now.
         var users = _users.GetUsers().ToList();
+        if (users.Count == 0)
+        {
+            return state;
+        }
+
         foreach (var claim in StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs, placement.KeyOf))
         {
             if (claim.Stub is not { } stub)

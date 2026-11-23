@@ -319,6 +319,23 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Equal((7, false), (row.PlaybackPositionTicks, row.Played));
     }
 
+    // No users may mean they cannot be read for now.
+    [Fact]
+    public async Task AJoinWaitsWhileThereAreNoUsersToHandTheStateOver()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        AddItems();
+
+        await CleanAsync(users: []);
+
+        Assert.Equal(2, Stubs.Count);
+    }
+
     [Fact]
     public async Task AFilmThatJoinsHandsTheStateOverAndKeepsOneStub()
     {
@@ -464,10 +481,10 @@ public sealed class SplitTitleTests : IDisposable
         }
     }
 
-    private Task CleanAsync(StubRegistry? registry = null)
+    private Task CleanAsync(StubRegistry? registry = null, IReadOnlyList<User>? users = null)
     {
-        var users = new Mock<IUserManager>();
-        users.Setup(manager => manager.GetUsers()).Returns([_anna, _bruno]);
+        var manager = new Mock<IUserManager>();
+        manager.Setup(mock => mock.GetUsers()).Returns(users ?? [_anna, _bruno]);
         var task = new StubCleanupTask(
             registry ?? _fixture.Registry,
             _fixture.Resolver,
@@ -475,7 +492,7 @@ public sealed class SplitTitleTests : IDisposable
             _fixture.Sync.Registry,
             _fixture.Sync.Store,
             _fixture.Library.Object,
-            users.Object,
+            manager.Object,
             _userData.Object,
             Mock.Of<IProviderManager>(),
             Mock.Of<IFileSystem>(),
