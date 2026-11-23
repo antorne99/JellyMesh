@@ -186,6 +186,30 @@ public class MusicVideoStubPlannerTests
         Assert.Equal(0, plan.Unplaceable);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMusicVideoGoesToTheRemoteLibraryLayoutBesideAStubOfAnOlderLayout(bool is05)
+    {
+        // §10 row 444: new titles go to the remote library layout while the migration empties the older one (Q49).
+        var older = new StubEntry
+        {
+            Id = "old",
+            Kind = StubKind.Movie,
+            ServerId = is05 ? _serverA : null,
+            RelativePath = is05 ? FederatedPaths.MovieStub(_serverA, "Film (2020)", "Casa") : FederatedPaths.MovieStub("Film (2020)"),
+            IdentityKey = "film",
+            Sources = []
+        };
+
+        var plan = Plan([Title(OnA("m"))], [Catalog(_serverA, Clip("m"))], StubState.Empty with { Stubs = [older] });
+
+        Assert.Equal(In(_serverA, "Video musicali", "Song (2019)", "Song (2019) - Casa.strm"), Assert.Single(plan.Stubs).Entry.RelativePath);
+        Assert.Contains(older, plan.State.Stubs);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(0, plan.Unplaceable);
+    }
+
     [Fact]
     public void TheFlatPlanMakesNoStubForAMusicVideo_AndCountsNothingUnplaceable()
     {
