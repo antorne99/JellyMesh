@@ -135,6 +135,19 @@ public sealed class AudioBookMaterializerTests : IDisposable
         Assert.Empty(item.GetImages(ImageType.Primary));
     }
 
+    [Fact]
+    public async Task ACoverInANewFormatReplacesTheOldOneOfItsPartOnly()
+    {
+        var a = await AddAsync(Part("p1", "One", 1, cover: "c1"), Part("p2", "One.b", 1));
+        await File.WriteAllTextAsync(BookPath(a, "01 - One.png"), "old");
+        await File.WriteAllTextAsync(BookPath(a, "01 - One.b.png"), "another part's");
+        Parts[0] = Part("p1", "One", 1, cover: "c2");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["01 - One.b.png", "01 - One.b.strm", "01 - One.jpg", "01 - One.strm"], FilesOf(a));
+    }
+
     // The covers of a book share one folder, and the name of a part can be the start of another's.
     [Fact]
     public async Task ThePartsNamedAlikeKeepTheirOwnCovers()

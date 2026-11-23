@@ -227,19 +227,12 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
     private static Task WriteTextAsync(string path, string text, CancellationToken cancellationToken)
         => WriteFileAsync(path, Encoding.UTF8.GetBytes(text), cancellationToken);
 
-    // Deletes the image of a stem in another format; "One.b.jpg" belongs to another part than "One".
+    // Deletes the image of a stem in another format, without listing the folder, which can hold many parts with their covers.
     private static void DeleteOtherExtensions(string stem, string keep)
     {
-        var folder = Path.GetDirectoryName(stem)!;
-        var name = Path.GetFileName(stem);
-        foreach (var file in Directory.EnumerateFiles(folder))
+        foreach (var file in ImageExtensions.Select(extension => stem + extension).Where(file => !string.Equals(file, keep, StringComparison.Ordinal)))
         {
-            if (string.Equals(Path.GetFileNameWithoutExtension(file), name, StringComparison.Ordinal)
-                && !string.Equals(file, keep, StringComparison.Ordinal)
-                && ImageExtensions.Contains(Path.GetExtension(file)))
-            {
-                File.Delete(file);
-            }
+            File.Delete(file);
         }
     }
 
@@ -613,7 +606,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         string path;
         if (image.LocalPath is { } source)
         {
-            path = stem + Path.GetExtension(source);
+            path = stem + Path.GetExtension(source).ToLowerInvariant();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.Copy(source, path, overwrite: true);
         }
