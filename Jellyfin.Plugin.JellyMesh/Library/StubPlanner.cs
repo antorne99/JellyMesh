@@ -340,18 +340,20 @@ public static class StubPlanner
             .Distinct()
             .ToList();
 
-        SlotCopies Copies(StubEntry stub) => new(stub.Id, SlotOf(input, stub), stub.Sources);
+        SlotCopies Copies(StubEntry stub) => new(stub.Id, SlotOf(input, stub), stub.Sources, stub.EpisodeNumber ?? 0, stub.EpisodeNumberEnd ?? stub.EpisodeNumber ?? 0);
 
-        SlotCopies CopiesOfSeries(SeriesStub entry) => new(entry.Id, SlotOf(input, entry.ServerId, entry.RelativePath, TypeFolder.Series), entry.Sources);
+        SlotCopies CopiesOfSeries(SeriesStub entry) => new(entry.Id, SlotOf(input, entry.ServerId, entry.RelativePath, TypeFolder.Series), entry.Sources, 0, 0);
     }
 
+    // A file of several episodes is a copy of each, so the old stub must also hold every episode of the new one.
     private static IEnumerable<StubSplit> SharedCopies(List<SlotCopies> added, IEnumerable<SlotCopies> existing)
     {
         var byCopy = existing.SelectMany(entry => entry.Sources.Select(source => (Key: (entry.Slot.ServerId, source.ItemId), Entry: entry))).ToLookup(pair => pair.Key, pair => pair.Entry);
         return added.SelectMany(entry => entry.Sources
             .SelectMany(source => byCopy[(entry.Slot.ServerId, source.ItemId)])
-            .Where(other => other.Slot != entry.Slot)
-            .Select(other => new StubSplit(entry.Id, other.Id)));
+            .Where(other => other.Slot != entry.Slot && other.First <= entry.First && other.Last >= entry.Last)
+            .Select(other => new StubSplit(entry.Id, other.Id))
+            .Distinct());
     }
 
     // Adds a group of the stubs not in one yet, if it still has two copies.
@@ -915,7 +917,7 @@ public static class StubPlanner
         public List<SeasonEpisode> Episodes { get; } = [];
     }
 
-    private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<StubSource> Sources);
+    private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<StubSource> Sources, int First, int Last);
 
     private sealed record SeasonEpisode(string Folder, int Season, Guid ServerId, IndexedItem Episode);
 

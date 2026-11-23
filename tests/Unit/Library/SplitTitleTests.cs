@@ -270,6 +270,31 @@ public sealed class SplitTitleTests : IDisposable
         Assert.True(File.Exists(PathOf(Stubs.Single(stub => stub.SeasonNumber == 1))));
     }
 
+    // A file of two episodes is a backup of both, so it alone does not make two episodes one title.
+    [Fact]
+    public async Task AFileOfTwoEpisodesDoesNotMixTheirStates()
+    {
+        await AddSeriesAsync(("a1", TestLibraries.Shows, 1, 1), ("a2", TestLibraries.Shows, 1, 2), ("b1", TestLibraries.ShowsB, 1, 1), ("b2", TestLibraries.ShowsB, 1, 2));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("x", "s" + TestLibraries.ShowsB, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source("x", 480, 500_000)] });
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var first = Stubs.Single(stub => (stub.EpisodeNumber, stub.EpisodeNumberEnd ?? 1) == (1, 1));
+        var second = Stubs.Single(stub => stub.EpisodeNumber == 2);
+        Assert.All(new[] { first, second }, stub => Assert.Contains(stub.Sources, source => source.ItemId == "x"));
+        Give(_anna, PathOf(first), Full());
+        Give(_anna, PathOf(second), new UserItemData { Key = "k", PlaybackPositionTicks = 7, LastPlayedDate = _day.AddDays(1) });
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        var added = Stubs.Where(stub => stub.Id != first.Id && stub.Id != second.Id).ToList();
+        AssertFull(Row(_anna, PathOf(added.Single(stub => (stub.EpisodeNumber, stub.EpisodeNumberEnd ?? 1) == (1, 1)))));
+        var row = Row(_anna, PathOf(added.Single(stub => stub.EpisodeNumber == 2)));
+        Assert.Equal((7, false), (row.PlaybackPositionTicks, row.Played));
+    }
+
     [Fact]
     public async Task AFilmThatJoinsHandsTheStateOverAndKeepsOneStub()
     {
@@ -372,9 +397,13 @@ public sealed class SplitTitleTests : IDisposable
     private async Task AddSeriesAsync(params (string Id, string Library, int Season, int Number)[] episodes)
     {
         _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsB, "Serie B", "tvshows"));
-        foreach (var (id, library, season, number) in episodes)
+        foreach (var library in episodes.Select(episode => episode.Library).Distinct(StringComparer.Ordinal))
         {
             _fixture.Sync.Client.Add(library, RemoteItemType.Series, TestItems.Series("s" + library));
+        }
+
+        foreach (var (id, library, season, number) in episodes)
+        {
             _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, season, number));
         }
 
