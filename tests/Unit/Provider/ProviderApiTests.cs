@@ -362,10 +362,12 @@ public class ProviderCatalogTests
         Assert.Empty(_fixture.CatalogLogger.Lines);
     }
 
-    [Fact]
-    public void A_library_whose_real_paths_are_not_indexed_yet_reads_as_empty()
+    [Theory]
+    [InlineData("/federata/Film")]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film")]
+    public void A_library_whose_real_paths_are_not_indexed_yet_reads_as_empty(string federated)
     {
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", "/federata/Film");
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", federated);
 
         var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
 

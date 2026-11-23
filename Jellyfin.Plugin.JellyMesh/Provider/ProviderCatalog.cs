@@ -503,17 +503,18 @@ public sealed class ProviderCatalog
         // only links to one is not left out, since what it holds may link out of it.
         var root = FederatedRoot();
         var locations = Locations(library);
-        var old = locations.Where(location => HasServerFolderLayout(location.Lexical)).ToList();
-        var federated = locations.Where(location => old.Contains(location) || (root is not null && location.IsWithin(root))).ToList();
-        var outside = locations.Except(federated).ToList();
-        var above = root is null ? [] : outside.Where(root.IsWithin).ToList();
-        if (above.Count > 0 || outside.Exists(location => old.Exists(folder => folder.IsNamedWithin(location))))
+        var federated = root is null ? [] : locations.Where(location => location.IsWithin(root)).ToList();
+        var rest = locations.Except(federated).ToList();
+        var old = rest.Where(location => HasServerFolderLayout(location.Lexical)).ToList();
+        var real = rest.Except(old).ToList();
+        var above = root is null ? [] : real.Where(root.IsWithin).ToList();
+        if (above.Count > 0 || real.Exists(location => old.Exists(folder => folder.IsNamedWithin(location))))
         {
             // Jellyfin names the federated folder after the path of the library, which may reach it by a link.
             var folders = above.Select(location => location.Below(root!))
                 .Prepend(above.Count > 0 ? root!.Indexed : null)
                 .OfType<string>()
-                .Concat(federated.Select(folder => folder.Indexed))
+                .Concat(federated.Concat(old).Select(folder => folder.Indexed))
                 .Distinct(StringComparer.Ordinal)
                 .Select(path => _library.FindByPath(path, true))
                 .OfType<BaseItem>()
@@ -526,30 +527,36 @@ public sealed class ProviderCatalog
                 : new LibraryScope([], [.. folders, .. _library.GetItemIds(new InternalItemsQuery { AncestorIds = folders, Recursive = true })]);
         }
 
-        if (federated.Count == 0)
+        if (federated.Count == 0 && old.Count == 0)
         {
             return LibraryScope.Whole;
         }
 
-        var paths = outside.Select(location => location.Indexed).ToList();
-        var real = paths
-            .Select(path => _library.FindByPath(path, true))
-            .OfType<BaseItem>()
-            .Select(folder => folder.Id)
-            .ToArray();
-        if (old.Count > 0 && real.Length < paths.Count)
+        // A read that fails keeps what the peer already has, so an old folder is left out only if no real path is lost with it.
+        var indexed = IndexedIds(real);
+        if (indexed.Length < real.Count && old.Count > 0)
         {
-            // A read that fails keeps what the peer already has; one that succeeds without a real path takes it away.
-            return LibraryScope.Whole;
+            if (federated.Count == 0)
+            {
+                return LibraryScope.Whole;
+            }
+
+            indexed = IndexedIds(rest);
         }
 
-        if (real.Length == 0 && paths.Count > 0)
+        if (indexed.Length == 0 && real.Count > 0)
         {
             _logger.LogDebug("The real paths of library {LibraryId} are not indexed yet, so a page of it reads as empty", libraryId);
         }
 
-        return real.Length == 0 ? null : new LibraryScope(real, []);
+        return indexed.Length == 0 ? null : new LibraryScope(indexed, []);
     }
+
+    private Guid[] IndexedIds(IEnumerable<FolderPath> paths) => paths
+        .Select(path => _library.FindByPath(path.Indexed, true))
+        .OfType<BaseItem>()
+        .Select(folder => folder.Id)
+        .ToArray();
 
     // A path as Jellyfin indexes it, which is what it is looked up by, and as it is on disk. It is within a folder if
     // either form is, so that a link inside the federated folder pointing out of it does not let its content out.

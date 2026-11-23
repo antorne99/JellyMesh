@@ -153,6 +153,20 @@ public sealed class ProviderPagingTests : IDisposable
     }
 
     [Fact]
+    public void A_path_inside_the_federated_folder_stays_out_while_a_real_path_is_not_indexed_yet()
+    {
+        WithLocations(Real, "/media/altro", Server + "/Film", "/nuova/Film");
+        Add(Real + "/A.mkv");
+        Add("/media/altro/B.mkv");
+        Add("/nuova/Film/Title/Title - Server.strm");
+        _provider.Library.Setup(manager => manager.FindByPath("/media/altro", It.IsAny<bool?>())).Returns((BaseItem?)null);
+
+        var page = _provider.Catalog.ReadLibrary(_provider.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Equal(1, page.TotalRecordCount);
+    }
+
+    [Fact]
     public async Task A_page_of_a_library_with_the_folder_of_a_server_as_a_path_costs_no_read_of_its_items()
     {
         WithLocations(Real, Server + "/Film");
