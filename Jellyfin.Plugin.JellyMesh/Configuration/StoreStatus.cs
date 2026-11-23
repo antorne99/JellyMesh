@@ -36,7 +36,9 @@ public sealed record StoreStatus(StoreState State, string? Reason, StoreRecovery
             }
             catch (StoreSuspendedException)
             {
-                // Suspended since the health was read: the old files are not shown.
+                // Suspended since the health was read: the state is the new one, and the old files are not shown.
+                health = database.Health;
+                reason = health.Reason;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
             {

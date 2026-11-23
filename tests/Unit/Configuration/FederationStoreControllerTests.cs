@@ -65,6 +65,24 @@ public sealed class FederationStoreControllerTests
         Assert.Null(store.MigratedKeptUntil);
     }
 
+    // The read of the old files is what found the damage: the answer says so, not what the state was before it.
+    [Fact]
+    public async Task ADamageFoundReadingTheOldFilesShowsAsTheState()
+    {
+        var health = StoreHealth.Healthy;
+        _database.Setup(database => database.Health).Returns(() => health);
+        _database.Setup(database => database.MigratedKeptUntilAsync(It.IsAny<CancellationToken>())).Returns(() =>
+        {
+            health = new StoreHealth(StoreState.Damaged, "The database is damaged: malformed.");
+            return Task.FromException<DateTimeOffset?>(new StoreSuspendedException("damaged"));
+        });
+
+        var store = await Controller().GetStore(CancellationToken.None);
+
+        Assert.Equal((StoreState.Damaged, "The database is damaged: malformed."), (store.State, store.Reason));
+        Assert.Null(store.MigratedKeptUntil);
+    }
+
     // A file or SQLite error reading the old files shows as the reason, cleaned as the other reasons, and fails nothing.
     [Theory]
     [MemberData(nameof(ReadErrors))]
