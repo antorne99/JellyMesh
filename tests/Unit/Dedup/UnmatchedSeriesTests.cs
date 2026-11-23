@@ -63,6 +63,8 @@ public class UnmatchedSeriesTests
     [InlineData("series", null, 1)]
     [InlineData("series", 1, null)]
     [InlineData(null, 1, 1)]
+    [InlineData("", 1, 1)]
+    [InlineData(" ", 1, 1)]
     public void AnEpisodeWithoutItsNumbersOrSeries_StaysAlone(string? seriesId, int? season, int? episode)
     {
         var result = DedupEngine.Resolve([], [

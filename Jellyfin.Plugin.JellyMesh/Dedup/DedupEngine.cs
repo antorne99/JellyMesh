@@ -186,7 +186,7 @@ public static class DedupEngine
     private static List<ContentIdentity> IdentifyRemote(CatalogItem item, WorkResolver works)
     {
         var identities = Identify(item, works);
-        if (identities.Count == 0 && item.Kind == ContentKind.Episode && item.SeriesId is not null && works.Find(item) is null)
+        if (identities.Count == 0 && item.Kind == ContentKind.Episode && !string.IsNullOrWhiteSpace(item.SeriesId) && works.Find(item) is null)
         {
             // Keeps the episodes of a series without a work together, as a series of their server.
             identities = IdentifyEpisodes(item, new WorkResolver.Work(WorkResolver.KeyOfAlone(item), MatchKind.ItemOnly));
