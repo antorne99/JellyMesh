@@ -52,7 +52,7 @@ public static class PlaybackResponseBuilder
             Container = remote.Container,
             Size = remote.Size,
             Bitrate = remote.Bitrate,
-            RunTimeTicks = remote.RunTimeTicks,
+            RunTimeTicks = remote.RunTimeTicks is > 0 ? remote.RunTimeTicks : null,
             VideoType = remote.VideoType,
             IsoType = remote.IsoType,
             Video3DFormat = remote.Video3DFormat,

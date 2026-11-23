@@ -95,6 +95,20 @@ public class PlaybackResponseTests
         Assert.Equal(hasSegments, source.HasSegments);
     }
 
+    // A duration of zero or less is unknown everywhere (row 542).
+    [Theory]
+    [InlineData(0L, null)]
+    [InlineData(-1L, null)]
+    [InlineData(null, null)]
+    [InlineData(1L, 1L)]
+    public void A_duration_that_is_not_positive_is_not_given_to_a_client(long? remoteTicks, long? expected)
+    {
+        var remote = PlaybackValues.HlsAnswer("ms");
+        remote.RunTimeTicks = remoteTicks;
+
+        Assert.Equal(expected, PlaybackResponseBuilder.Build(remote, PlaybackValues.Session(), PlaybackValues.LocalToken)!.RunTimeTicks);
+    }
+
     [Fact]
     public void An_absolute_delivery_url_refuses_the_source()
     {
