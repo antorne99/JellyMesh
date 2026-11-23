@@ -123,6 +123,14 @@ public class LocalCatalogReaderTests
     }
 
     [Fact]
+    public void AMusicVideoWithNoArtistList_HasNoArtists()
+    {
+        var clip = new MusicVideo { Id = Guid.NewGuid(), Name = "Clip", Path = "/media/video/clip.mp4", Artists = null! };
+
+        Assert.Empty(Assert.Single(ReaderOver(clip).Read()).Artists);
+    }
+
+    [Fact]
     public void AFilmWithoutIdsThatJellyfinHasNotRefreshedAwaitsARefresh()
     {
         var film = Film("/media/film/a.mkv");

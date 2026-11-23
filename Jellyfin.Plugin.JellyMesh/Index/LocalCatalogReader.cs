@@ -89,7 +89,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
                 ServerId = LocalServerId,
                 ItemId = item.Id.ToString("N"),
                 Kind = item is MusicVideo ? ContentKind.MusicVideo : ContentKind.Movie,
-                Artists = item is MusicVideo video ? video.Artists : [],
+                Artists = (item as MusicVideo)?.Artists ?? [],
                 Title = item.Name,
                 Year = item.ProductionYear,
                 Ids = ids,
