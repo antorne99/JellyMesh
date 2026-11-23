@@ -118,7 +118,7 @@ public sealed class LegacyImport
     private readonly string? _configurationFile;
     private readonly ILogger<LegacyImport> _logger;
     private readonly IKeyFileGuard _guard;
-    private readonly Func<SqliteConnection, string> _quickCheck;
+    private readonly Func<SqliteConnection, string> _check;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LegacyImport"/> class.
@@ -138,14 +138,14 @@ public sealed class LegacyImport
     /// <param name="configurationFile">The configuration XML, or null.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="guard">Keeps the moved files private.</param>
-    /// <param name="quickCheck">Runs the integrity check of the database; <c>PRAGMA quick_check</c> when null.</param>
-    internal LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, IKeyFileGuard guard, Func<SqliteConnection, string>? quickCheck = null)
+    /// <param name="check">Runs the integrity check of the database; <c>PRAGMA integrity_check</c> when null.</param>
+    internal LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, IKeyFileGuard guard, Func<SqliteConnection, string>? check = null)
     {
         _folder = folder;
         _configurationFile = configurationFile;
         _logger = logger;
         _guard = guard;
-        _quickCheck = quickCheck ?? QuickCheck;
+        _check = check ?? FullCheck;
     }
 
     private string MigratedFolder => Path.Combine(_folder, FolderName);
@@ -241,7 +241,7 @@ public sealed class LegacyImport
             return false;
         }
 
-        if (!string.Equals(_quickCheck(writer), "ok", StringComparison.Ordinal))
+        if (!string.Equals(_check(writer), "ok", StringComparison.Ordinal))
         {
             _logger.LogWarning("The JellyMesh database failed its integrity check, so {Folder} is kept", FolderName);
             return false;
@@ -305,10 +305,10 @@ public sealed class LegacyImport
         return true;
     }
 
-    private static string QuickCheck(SqliteConnection writer)
+    private static string FullCheck(SqliteConnection writer)
     {
         using var check = writer.CreateCommand();
-        check.CommandText = "PRAGMA quick_check;";
+        check.CommandText = "PRAGMA integrity_check;";
         return Convert.ToString(check.ExecuteScalar(), CultureInfo.InvariantCulture) ?? string.Empty;
     }
 

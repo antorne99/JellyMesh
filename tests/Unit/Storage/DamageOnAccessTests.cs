@@ -122,6 +122,13 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Equal("ok", await database.ReadAsync((connection, transaction) => Scalar(connection, "PRAGMA quick_check;", transaction), CancellationToken.None));
     }
 
+    private static string CheckOf(string path)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        connection.Open();
+        return (string)Scalar(connection, "PRAGMA integrity_check;")!;
+    }
+
     private string[] SetAside() => Directory.GetFiles(Folder, PluginDatabase.FileName + ".damaged-*").Where(file => !file.EndsWith("-wal", StringComparison.Ordinal)).Select(Path.GetFileName).ToArray()!;
 
     private static async Task UntilAsync(Func<bool> condition)
@@ -354,24 +361,85 @@ public sealed class DamageOnAccessTests : IDisposable
 
     // Two indexes that hold each other's keys pass a quick check, and a delete that uses one fails as damage.
     [Fact]
-    public async Task AnIndexThatDoesNotMatchItsTableMakesNoCopy()
+    public async Task AnIndexThatDoesNotMatchItsTableIsRebuiltAndTheCopyMade()
     {
         var database = await WithACopyAsync();
         await SwapIndexesAsync(database);
-        var copies = Copies();
         _clock.Now += TimeSpan.FromDays(1);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() => database.BackUpAsync(CancellationToken.None));
+        var copy = await database.BackUpAsync(CancellationToken.None);
 
-        Assert.Equal(copies, Copies());
-        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((connection, transaction) => Scalar(connection, "DELETE FROM first WHERE rowid = 1;", transaction), CancellationToken.None));
-        await RecoveredAsync(database);
-        Assert.Equal("copied", await ItemsAsync(database));
+        Assert.Equal("ok", CheckOf(copy.FilePath));
+        await database.WriteAsync((connection, transaction) => Scalar(connection, "DELETE FROM first WHERE rowid = 1;", transaction), CancellationToken.None);
+        Assert.Equal("ok", await database.ReadAsync((connection, transaction) => Scalar(connection, "PRAGMA integrity_check;", transaction), CancellationToken.None));
+        Assert.Equal(StoreHealth.Healthy, database.Health);
+        Assert.Equal(1, database.Generation);
+        Assert.Empty(SetAside());
+        Assert.Null(database.Recovery);
     }
 
-    // Such a copy of an earlier version would be found damaged again after every restore.
     [Fact]
-    public async Task ACopyWithAnIndexThatDoesNotMatchItsTableIsPassedOver()
+    public async Task RebuildingTheIndexesWaitsForNoReadAndHoldsNone()
+    {
+        var database = await WithACopyAsync();
+        await SwapIndexesAsync(database);
+        _clock.Now += TimeSpan.FromDays(1);
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var read = database.ReadAsync(
+            (connection, transaction) =>
+            {
+                var before = Items(connection, transaction);
+                started.Set();
+                release.Wait(_wait);
+                return (before, Items(connection, transaction));
+            },
+            CancellationToken.None);
+        Assert.True(started.Wait(_wait));
+
+        var copy = await database.BackUpAsync(CancellationToken.None).WaitAsync(_wait);
+
+        Assert.Equal("copied,lost", await ItemsAsync(database));
+        release.Set();
+        Assert.Equal(("copied,lost", "copied,lost"), await read.WaitAsync(_wait));
+        Assert.Equal("ok", CheckOf(copy.FilePath));
+    }
+
+    // An index at the page of a table, which rebuilding would empty, and a unique one over two equal rows.
+    [Theory]
+    [InlineData("CREATE INDEX broken ON first (value);", "UPDATE sqlite_master SET rootpage = (SELECT rootpage FROM sqlite_master WHERE name = 'first') WHERE name = 'broken';")]
+    [InlineData("CREATE INDEX broken ON first (value);", "UPDATE sqlite_master SET sql = 'CREATE UNIQUE INDEX broken ON first (value)' WHERE name = 'broken';")]
+    public async Task ADatabaseThatRebuiltIndexesDoNotMendIsReplacedAsItWas(string index, string breaks)
+    {
+        var database = await WithACopyAsync();
+        await database.WriteAsync(
+            (connection, transaction) =>
+            {
+                Scalar(connection, "CREATE TABLE first (value TEXT); INSERT INTO first VALUES ('a'), ('a');" + index, transaction);
+                Scalar(connection, "PRAGMA writable_schema = ON;", transaction);
+                Scalar(connection, breaks, transaction);
+                Scalar(connection, "PRAGMA writable_schema = RESET;", transaction);
+            },
+            CancellationToken.None);
+        Assert.True(await database.TruncateWalAsync(CancellationToken.None));
+        var damaged = await File.ReadAllBytesAsync(DatabasePath);
+        var copies = Copies();
+        var bytes = await File.ReadAllBytesAsync(Assert.Single(copies));
+        _clock.Now += TimeSpan.FromDays(1);
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.BackUpAsync(CancellationToken.None));
+
+        await RecoveredAsync(database);
+        Assert.Equal("copied", await ItemsAsync(database));
+        Assert.Equal(copies, Copies());
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(copies[0]));
+        Assert.Equal(damaged, await File.ReadAllBytesAsync(Path.Combine(Folder, Assert.Single(SetAside()))));
+        Assert.Empty(Directory.GetFiles(Folder, "*.partial*"));
+    }
+
+    // A copy of an earlier version, which a restore would find damaged again: the restored file is mended, not the copy.
+    [Fact]
+    public async Task ACopyWithAnIndexThatDoesNotMatchItsTableIsMendedWhenItIsRestored()
     {
         var database = await WithACopyAsync();
         _clock.Now += TimeSpan.FromDays(1);
@@ -379,12 +447,42 @@ public sealed class DamageOnAccessTests : IDisposable
         await SwapIndexesAsync(database);
         Assert.True(await database.TruncateWalAsync(CancellationToken.None));
         File.Copy(DatabasePath, copy.FilePath, overwrite: true);
+        var bytes = await File.ReadAllBytesAsync(copy.FilePath);
 
         await Assert.ThrowsAsync<StoreSuspendedException>(() => database.WriteAsync((connection, transaction) => Scalar(connection, "DELETE FROM first WHERE rowid = 1;", transaction), CancellationToken.None));
 
         await RecoveredAsync(database);
+        Assert.Equal("copied,lost", await ItemsAsync(database));
+        Assert.Equal(_clock.Now, database.Recovery?.CopyDate);
+        Assert.Equal("ok", await database.ReadAsync((connection, transaction) => Scalar(connection, "PRAGMA integrity_check;", transaction), CancellationToken.None));
+        await database.WriteAsync((connection, transaction) => Scalar(connection, "DELETE FROM first WHERE rowid = 1;", transaction), CancellationToken.None);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(copy.FilePath));
+    }
+
+    [Fact]
+    public async Task ACopyThatRebuiltIndexesDoNotMendIsPassedOver()
+    {
+        var database = await WithACopyAsync();
+        _clock.Now += TimeSpan.FromDays(1);
+        var copy = await database.BackUpAsync(CancellationToken.None);
+        await database.WriteAsync(
+            (connection, transaction) =>
+            {
+                Scalar(connection, "CREATE TABLE first (value TEXT); INSERT INTO first VALUES ('a'), ('a'); CREATE INDEX broken ON first (value); PRAGMA writable_schema = ON;", transaction);
+                Scalar(connection, "UPDATE sqlite_master SET sql = 'CREATE UNIQUE INDEX broken ON first (value)' WHERE name = 'broken';", transaction);
+                Scalar(connection, "PRAGMA writable_schema = RESET;", transaction);
+            },
+            CancellationToken.None);
+        Assert.True(await database.TruncateWalAsync(CancellationToken.None));
+        File.Copy(DatabasePath, copy.FilePath, overwrite: true);
+        var bytes = await File.ReadAllBytesAsync(copy.FilePath);
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync<int>((_, _) => throw new SqliteException("malformed", 11), CancellationToken.None));
+
+        await RecoveredAsync(database);
         Assert.Equal("copied", await ItemsAsync(database));
         Assert.Equal(_clock.Now - TimeSpan.FromHours(25), database.Recovery?.CopyDate);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(copy.FilePath));
     }
 
     // The check at open does not see every damage, so a file an access read as damaged never comes back by itself.
@@ -473,7 +571,7 @@ public sealed class DamageOnAccessTests : IDisposable
 
     // VACUUM does not read the count of fragmented bytes of a page, which the integrity check does.
     [Fact]
-    public async Task ADatabaseThatFailsItsCheckReplacesNoCopy()
+    public async Task ADatabaseThatFailsItsCheckReplacesNoCopyAndStartsTheRecovery()
     {
         var database = await WithACopyAsync();
         _clock.Now += TimeSpan.FromDays(1);
@@ -486,8 +584,11 @@ public sealed class DamageOnAccessTests : IDisposable
         var root = await database.ReadAsync((connection, transaction) => (long)Scalar(connection, "SELECT rootpage FROM sqlite_master WHERE name = 'items';", transaction)!, CancellationToken.None);
         Spoil(((root - 1) * 4096) + 7, [3]);
 
-        await Assert.ThrowsAsync<InvalidDataException>(() => database.BackUpAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.BackUpAsync(CancellationToken.None));
 
+        await RecoveredAsync(database);
+        Assert.Equal("copied,lost", await ItemsAsync(database));
+        Assert.Single(SetAside());
         Assert.Equal(2, copies.Length);
         Assert.Equal(copies, Copies());
         Assert.Empty(Directory.GetFiles(Folder, "*.partial"));

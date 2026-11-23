@@ -28,6 +28,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private const int Corrupt = 11;
     private const int NotADatabase = 26;
 
+    // SQLITE_CONSTRAINT, as from a unique index rebuilt over equal rows.
+    private const int Constraint = 19;
+
     private static readonly string[] _walFiles = ["-wal", "-shm"];
 
     // What goes aside with a damaged file: its logs belong to it, and SQLite would read them into the file taking its place.
@@ -298,8 +301,52 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // The full check also compares the indexes with their tables, which the quick one leaves out.
-    private static bool PassesCheck(SqliteConnection connection, bool full) =>
-        string.Equals(Convert.ToString(Scalar(connection, full ? "PRAGMA integrity_check;" : "PRAGMA quick_check;"), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal);
+    private static bool PassesCheck(SqliteConnection connection, bool full, SqliteTransaction? transaction = null) =>
+        string.Equals(Convert.ToString(Scalar(connection, full ? "PRAGMA integrity_check;" : "PRAGMA quick_check;", transaction), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal);
+
+    // The full check. A file it fails is checked again with every index rebuilt, in one transaction kept only if it passes,
+    // so a rebuild that mends nothing leaves the file as it was (row 523). Reads go on meanwhile, and writes wait.
+    private bool PassesFullCheck(SqliteConnection connection)
+    {
+        try
+        {
+            if (PassesCheck(connection, full: true))
+            {
+                return true;
+            }
+
+            using var transaction = connection.BeginTransaction(deferred: false);
+            Scalar(connection, "REINDEX;", transaction);
+            if (!PassesCheck(connection, full: true, transaction))
+            {
+                return false;
+            }
+
+            transaction.Commit();
+        }
+        catch (SqliteException exception) when (IsDamage(exception) || exception.SqliteErrorCode == Constraint)
+        {
+            return false;
+        }
+
+        _logger.LogWarning("The indexes of {File} did not match their tables and were rebuilt", Path.GetFileName(connection.DataSource));
+        return true;
+    }
+
+    // The full check of a file nothing else reads. The journal of a rebuild stays in memory, so no other file is made.
+    private bool FilePassesFullCheck(string path)
+    {
+        try
+        {
+            using var connection = Connect(new SqliteConnectionStringBuilder(_connectionString) { DataSource = path }.ToString());
+            Scalar(connection, "PRAGMA journal_mode = MEMORY;");
+            return PassesFullCheck(connection);
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            return false;
+        }
+    }
 
     private static void ThrowIfSuspended(StoreHealth health)
     {
@@ -507,9 +554,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     // VACUUM INTO makes its file 0644 and refuses one that is not empty (F23), so it fills an empty private file, under a
     // name a recovery never takes until it is complete. It runs outside any transaction, on the writer with the gate held.
+    // The database is checked in full first, and one that fails its check is replaced (row 523).
     private StoreBackup BackUp()
     {
         var writer = Writer();
+        if (!PassesFullCheck(writer))
+        {
+            throw new SqliteException("The database failed its integrity check.", Corrupt);
+        }
+
         var now = _time.GetUtcNow();
         var copy = new StoreBackup(StoreBackups.BackupPath(_folder, now), DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds()));
         var partial = StoreBackups.PartialPath(copy.FilePath);
@@ -522,9 +575,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         try
         {
             VacuumInto(writer, partial);
-            if (!PassesCheck(writer, full: true))
+            if (!FilePassesFullCheck(partial))
             {
-                throw new InvalidDataException("The database failed its integrity check, so it is not copied.");
+                throw new InvalidDataException("The copy failed its integrity check, so it is not kept.");
             }
 
             ThrowIfSuspended(_health!);
@@ -551,7 +604,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // Fills a file with the content of the database. Damage of that file, when the database passes its check, only fails it.
-    private static void VacuumInto(SqliteConnection writer, string path)
+    private void VacuumInto(SqliteConnection writer, string path)
     {
         try
         {
@@ -561,7 +614,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (SqliteException exception) when (IsDamage(exception))
         {
-            if (!PassesCheck(writer, full: true))
+            if (!PassesFullCheck(writer))
             {
                 throw;
             }
@@ -729,13 +782,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once
-    // its version is known and it passes the check, in full for a restored copy. Every connection is closed when it returns.
+    // its version is known and it passes the check. A restored copy is checked in full, and its indexes rebuilt if it fails.
     private StoreHealth OpenFile(bool restored = false)
     {
         SqliteConnection? writer = null;
         try
         {
             int version;
+            bool passes;
             using (var probe = Connect(_readOnlyConnectionString))
             {
                 version = Convert.ToInt32(Scalar(probe, "PRAGMA user_version;"), CultureInfo.InvariantCulture);
@@ -745,11 +799,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
                 }
 
-                if (!PassesCheck(probe, restored))
-                {
-                    _logger.LogWarning("The JellyMesh database failed its integrity check");
-                    return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
-                }
+                passes = PassesCheck(probe, restored);
+            }
+
+            if (!passes && !(restored && FilePassesFullCheck(_path)))
+            {
+                _logger.LogWarning("The JellyMesh database failed its integrity check");
+                return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
             }
 
             writer = Connect(_connectionString);

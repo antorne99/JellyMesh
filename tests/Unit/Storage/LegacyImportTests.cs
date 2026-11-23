@@ -79,7 +79,7 @@ public sealed class LegacyImportTests : IDisposable
         }
     }
 
-    private string QuickCheckResult { get; set; } = "ok";
+    private string? CheckResult { get; set; } = "ok";
 
     private PluginDatabase Open(int busyTimeoutSeconds = 1)
     {
@@ -90,7 +90,7 @@ public sealed class LegacyImportTests : IDisposable
             SchemaMigrations.All,
             busyTimeoutSeconds,
             _clock,
-            new LegacyImport(Folder, ConfigurationFile, Logger, KeyFileGuards.ForThisSystem(), _ => QuickCheckResult));
+            new LegacyImport(Folder, ConfigurationFile, Logger, KeyFileGuards.ForThisSystem(), CheckResult is null ? null : _ => CheckResult));
         _opened.Add(database);
         _ = database.Health;
         return database;
@@ -678,15 +678,44 @@ public sealed class LegacyImportTests : IDisposable
         CopyFixtures();
         var database = Open();
         _clock.Now += TimeSpan.FromDays(31);
-        QuickCheckResult = "*** in database main *** Page 7: btreeInitPage() returns error code 11";
+        CheckResult = "*** in database main *** Page 7: btreeInitPage() returns error code 11";
 
         Assert.False(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
         Assert.Equal(4, Directory.EnumerateFiles(Migrated).Count());
         Assert.Contains(LogLevel.Warning, Logger.Levels);
 
-        QuickCheckResult = "ok";
+        CheckResult = "ok";
         Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
         Assert.False(Directory.Exists(Migrated));
+    }
+
+    // A quick check passes over an index that does not match its table; the next copy rebuilds it (row 523).
+    [Fact]
+    public async Task TheOldFilesStayWhileAnIndexDoesNotMatchItsTable()
+    {
+        CopyFixtures();
+        CheckResult = null;
+        var database = Open();
+        _clock.Now += TimeSpan.FromDays(31);
+        await database.WriteAsync(
+            (connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    CREATE TABLE first (value TEXT); CREATE INDEX first_index ON first (value); INSERT INTO first VALUES ('a'), ('B');
+                    PRAGMA writable_schema = ON;
+                    UPDATE sqlite_master SET sql = 'CREATE INDEX first_index ON first (value COLLATE NOCASE)' WHERE name = 'first_index';
+                    PRAGMA writable_schema = RESET;
+                    """;
+                command.ExecuteNonQuery();
+            },
+            CancellationToken.None);
+
+        Assert.False(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
+
+        await database.BackUpAsync(CancellationToken.None);
+        Assert.True(await database.DeleteExpiredMigratedAsync(CancellationToken.None));
     }
 
     // A file that cannot be overwritten is not deleted unread: the others go, it stays with a warning, and the next night tries again.

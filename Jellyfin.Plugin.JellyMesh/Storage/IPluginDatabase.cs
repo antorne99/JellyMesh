@@ -79,11 +79,12 @@ public interface IPluginDatabase
 
     /// <summary>
     /// Copies the database with <c>VACUUM INTO</c> into an owner-only file next to it, after the writes before it, and keeps
-    /// the last 2 copies, overwriting the others before deleting them, as the nightly reconciliation asks.
+    /// the last 2 copies, overwriting the others before deleting them, as the nightly reconciliation asks. The database is
+    /// checked in full first: indexes that do not match are rebuilt, and one that still fails its check is replaced.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The new copy.</returns>
-    /// <exception cref="StoreSuspendedException">The database is not healthy.</exception>
+    /// <exception cref="StoreSuspendedException">The database is not healthy, or the check found it damaged.</exception>
     Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken);
 
     /// <summary>
