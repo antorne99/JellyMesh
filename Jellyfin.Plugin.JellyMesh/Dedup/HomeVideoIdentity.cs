@@ -27,6 +27,7 @@ public static class HomeVideoIdentity
         ArgumentNullException.ThrowIfNull(current);
         var byName = current
             .Where(video => NameKey(video) is not null)
+            .DistinctBy(video => (video.ServerId, video.ItemId, video.RunTimeTicks))
             .GroupBy(video => NameKey(video)!, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.OrderBy(video => video.RunTimeTicks).ToList(), StringComparer.Ordinal);
         var pairs = new List<(HomeVideoItem Saved, HomeVideoItem Current)>();
@@ -39,7 +40,7 @@ public static class HomeVideoIdentity
                 continue;
             }
 
-            var copies = Near(alike, video.RunTimeTicks!.Value).DistinctBy(copy => (copy.ServerId, copy.ItemId)).Take(maxCopies + 1).ToList();
+            var copies = Near(alike, video.RunTimeTicks!.Value, cancellationToken).DistinctBy(copy => (copy.ServerId, copy.ItemId)).Take(maxCopies + 1).ToList();
             if (copies.Count > maxCopies)
             {
                 left++;
@@ -53,7 +54,7 @@ public static class HomeVideoIdentity
     }
 
     // The videos within 2 s of a duration, of a list sorted by duration.
-    private static IEnumerable<HomeVideoItem> Near(List<HomeVideoItem> sorted, long ticks)
+    private static IEnumerable<HomeVideoItem> Near(List<HomeVideoItem> sorted, long ticks, CancellationToken cancellationToken)
     {
         var (low, high) = (0, sorted.Count);
         while (low < high)
@@ -64,6 +65,7 @@ public static class HomeVideoIdentity
 
         for (; low < sorted.Count && sorted[low].RunTimeTicks!.Value - ticks <= _durationTolerance; low++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             yield return sorted[low];
         }
     }
