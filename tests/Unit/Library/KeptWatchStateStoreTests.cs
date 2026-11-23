@@ -121,11 +121,25 @@ public sealed class KeptWatchStateStoreTests : IDisposable
         var one = titles.Single(title => title.Title == "One");
         var two = titles.Single(title => title.Title == "Two");
 
-        await store.ForgetAsync([(one.Id, _anna), (two.Id, _anna)], CancellationToken.None);
+        await store.ForgetAsync([(one.Id, _anna), (two.Id, _anna)], store.Generation, CancellationToken.None);
 
         var left = Assert.Single(await store.ReadAsync(CancellationToken.None));
         Assert.Equal("One", left.Title);
         Assert.Equal(_bruno, Assert.Single(left.Users).UserId);
+    }
+
+    [Fact]
+    public async Task TitlesReadBeforeTheDatabaseWasReopenedAreNotForgotten()
+    {
+        var store = Store();
+        await store.SaveAsync([Film(Guid.NewGuid(), "One", Watched(_anna))], CancellationToken.None);
+        var generation = store.Generation;
+        var title = Assert.Single(await store.ReadAsync(CancellationToken.None));
+        _database.Reopen();
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => store.ForgetAsync([(title.Id, _anna)], generation, CancellationToken.None));
+
+        Assert.Single(await store.ReadAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -206,7 +220,7 @@ public sealed class KeptWatchStateStoreTests : IDisposable
 
         Assert.Equal([_sonda, _alfa], title.Copies);
         Assert.Equal(2, _database.Count("kept_title_copies"));
-        await store.ForgetAsync([(title.Id, _anna)], CancellationToken.None);
+        await store.ForgetAsync([(title.Id, _anna)], store.Generation, CancellationToken.None);
         Assert.Equal(0, _database.Count("kept_title_copies"));
     }
 

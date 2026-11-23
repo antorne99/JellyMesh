@@ -110,6 +110,9 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
     }
 
     /// <inheritdoc />
+    public long Generation => _database.Generation;
+
+    /// <inheritdoc />
     public Task<bool> HasTitlesAsync(CancellationToken cancellationToken) => _database.ReadAsync(
         (connection, transaction) =>
         {
@@ -189,12 +192,17 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
         cancellationToken);
 
     /// <inheritdoc />
-    public Task ForgetAsync(IReadOnlyCollection<(long TitleId, Guid UserId)> rows, CancellationToken cancellationToken)
+    public Task ForgetAsync(IReadOnlyCollection<(long TitleId, Guid UserId)> rows, long generation, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(rows);
         return rows.Count == 0 ? Task.CompletedTask : _database.WriteAsync(
             (connection, transaction) =>
             {
+                if (_database.Generation != generation)
+                {
+                    throw new StoreSuspendedException("The database was opened again since the kept titles were read.");
+                }
+
                 foreach (var (titleId, userId) in rows)
                 {
                     StoreSql.Execute(connection, transaction, DeleteUserRow, ("$title", titleId), ("$user", StoreSql.Text(userId)));
