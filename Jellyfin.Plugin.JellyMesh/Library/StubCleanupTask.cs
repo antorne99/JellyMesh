@@ -282,13 +282,14 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         var merges = StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs, placement.KeyOf)
             .SelectMany(claim => claim.Merged.Select(merged => (Merged: merged, Into: claim.Stub!)))
             .GroupBy(merge => merge.Merged.Id, StringComparer.Ordinal);
+        var waits = state.Splits.SelectMany(split => new[] { (Id: split.FromStubId, Split: split), (Id: split.StubId, Split: split) }).ToLookup(end => end.Id, end => end.Split, StringComparer.Ordinal);
         foreach (var merge in merges)
         {
             var merged = merge.First().Merged;
             var into = merge.Select(entry => entry.Into).ToList();
             try
             {
-                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsWaitedFor(state, merged, into))
+                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsWaitedFor(waits, state, merged, into))
                 {
                     state = await MergeAsync(root, state, merged, into, users, cancellationToken).ConfigureAwait(false);
                 }
@@ -304,11 +305,18 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     }
 
     // Whether a split still waits for the state of these stubs: a merge would remove it, or mix it with that of other episodes.
-    private static bool IsWaitedFor(StubState state, StubEntry merged, List<StubEntry> into) => state.Splits.Any(split =>
-        split.StubId == merged.Id
-        || split.FromStubId == merged.Id
-        || split.FromStubId == merged.SeriesStubId
-        || into.Exists(stub => stub.Id == split.FromStubId));
+    // One between these stubs waits for nothing more, since the merge hands the state over.
+    private static bool IsWaitedFor(ILookup<string, StubSplit> waits, StubState state, StubEntry merged, List<StubEntry> into)
+    {
+        var ids = into.Append(merged).SelectMany(stub => new[] { stub.Id, stub.SeriesStubId }).ToHashSet(StringComparer.Ordinal);
+        return waits[merged.Id]
+            .Concat(into.SelectMany(stub => waits[stub.Id].Where(split => split.FromStubId == stub.Id)))
+            .Concat(merged.SeriesStubId is { } series && waits.Contains(series) && IsLastOfSeries(state, merged) ? waits[series] : [])
+            .Any(split => !ids.Contains(split.StubId) || !ids.Contains(split.FromStubId));
+    }
+
+    private static bool IsLastOfSeries(StubState state, StubEntry stub) =>
+        !state.Stubs.Any(other => other.Id != stub.Id && other.SeriesStubId == stub.SeriesStubId);
 
     // Null when the libraries cannot be read: no stub is merged until the next scan.
     private LibraryPlacement? ReadPlacement()
@@ -371,7 +379,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     {
         if (stub.SeriesStubId is { } leaving
             && !string.Equals(leaving, into.SeriesStubId, StringComparison.Ordinal)
-            && !state.Stubs.Any(other => other.Id != stub.Id && other.SeriesStubId == leaving)
+            && IsLastOfSeries(state, stub)
             && FindSeries(root, state, leaving) is { } source
             && FindSeries(root, state, into.SeriesStubId) is { } target)
         {

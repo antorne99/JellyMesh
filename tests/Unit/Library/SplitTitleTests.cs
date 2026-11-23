@@ -585,6 +585,22 @@ public sealed class SplitTitleTests : IDisposable
         Assert.False(Row(_anna, PathOf(StubOf(1, null))).Played);
     }
 
+    // The merge hands the state over, so it does not wait for a stub that may never have an item.
+    [Fact]
+    public async Task AStubThatSplitAndJoinedAgainIsMergedWithoutItsItem()
+    {
+        await WaitingSplitAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        var kept = Assert.Single(Split, stub => stub.Sources.Count == 2);
+        AddItems();
+        _items.Remove(PathOf(Assert.Single(Split, stub => stub.Id != kept.Id)));
+
+        await CleanAsync();
+
+        Assert.Equal(kept.Id, Assert.Single(Split).Id);
+    }
+
     // Row 537: the wait closes when the old stub or the new one goes.
     [Fact]
     public async Task ASplitClosesWhenTheCopiesOfItsOldStubAreGone()
