@@ -160,6 +160,26 @@ public static class SmallStateSchema
     }
 
     /// <summary>
+    /// Adds the data of a kept track, audiobook, book or home video (row 532), inside the step's transaction. Titles kept
+    /// before have none.
+    /// </summary>
+    /// <param name="connection">The open database.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddKeptTypes(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            ALTER TABLE kept_titles ADD COLUMN album_artists TEXT NOT NULL DEFAULT '[]';
+            ALTER TABLE kept_titles ADD COLUMN album TEXT;
+            ALTER TABLE kept_titles ADD COLUMN series_name TEXT;
+            ALTER TABLE kept_titles ADD COLUMN provider_ids TEXT NOT NULL DEFAULT '{}';
+            ALTER TABLE kept_titles ADD COLUMN place TEXT;
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// Creates the tables, inside the step's transaction.
     /// </summary>
     /// <param name="connection">The writer connection.</param>

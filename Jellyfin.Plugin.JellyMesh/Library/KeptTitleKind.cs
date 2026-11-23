@@ -15,5 +15,17 @@ public enum KeptTitleKind
     Series,
 
     /// <summary>A music video, one title like a film (row 454).</summary>
-    MusicVideo
+    MusicVideo,
+
+    /// <summary>A music track, known as in the dedup of music (row 453).</summary>
+    Track,
+
+    /// <summary>One file of an audiobook.</summary>
+    AudioBook,
+
+    /// <summary>An ebook, PDF or comic.</summary>
+    Book,
+
+    /// <summary>A home video.</summary>
+    HomeVideo
 }

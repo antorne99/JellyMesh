@@ -32,9 +32,10 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
 
     private const string InsertTitle = """
         INSERT INTO kept_titles (old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres,
-            studios, people, season_number, episode_number, episode_number_end, saved_utc, artists)
+            studios, people, season_number, episode_number, episode_number_end, saved_utc, artists, album_artists, album, series_name,
+            provider_ids, place)
         VALUES ($old, $kind, $title, $year, $tmdb, $imdb, $tvdb, $original, $runtime, $overview, $genres, $studios, $people, $season,
-            $episode, $episodeEnd, $saved, $artists)
+            $episode, $episodeEnd, $saved, $artists, $albumArtists, $album, $seriesName, $providerIds, $place)
         RETURNING id;
         """;
 
@@ -46,7 +47,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
 
     private const string SelectTitles = """
         SELECT id, old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres, studios, people,
-            season_number, episode_number, episode_number_end, saved_utc, artists
+            season_number, episode_number, episode_number_end, saved_utc, artists, album_artists, album, series_name, provider_ids, place
         FROM kept_titles ORDER BY id;
         """;
 
@@ -365,7 +366,12 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
             ("$episode", title.EpisodeNumber),
             ("$episodeEnd", title.EpisodeNumberEnd),
             ("$saved", savedTicks),
-            ("$artists", Json(title.Artists)));
+            ("$artists", Json(title.Artists)),
+            ("$albumArtists", Json(title.AlbumArtists)),
+            ("$album", title.Album),
+            ("$seriesName", title.SeriesName),
+            ("$providerIds", JsonSerializer.Serialize(title.ProviderIds)),
+            ("$place", title.Place));
         return (long)command.ExecuteScalar()!;
     }
 
@@ -413,6 +419,11 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
             EpisodeNumberEnd = StoreSql.IntOrNull(reader, 16),
             SavedUtc = new DateTime(reader.GetInt64(17), DateTimeKind.Utc),
             Artists = List(reader.GetString(18)),
+            AlbumArtists = List(reader.GetString(19)),
+            Album = StoreSql.TextOrNull(reader, 20),
+            SeriesName = StoreSql.TextOrNull(reader, 21),
+            ProviderIds = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(22)) ?? [],
+            Place = StoreSql.TextOrNull(reader, 23),
             Users = users.GetValueOrDefault(id) ?? []
         };
     }

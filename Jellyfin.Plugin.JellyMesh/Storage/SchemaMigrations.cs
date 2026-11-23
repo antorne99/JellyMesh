@@ -14,6 +14,11 @@ public static class SchemaMigrations
     public const int NewItemKindsVersion = 8;
 
     /// <summary>
+    /// The version from which the kept watch state may hold tracks, audiobooks, books and home videos (row 532).
+    /// </summary>
+    public const int KeptTypesVersion = 10;
+
+    /// <summary>
     /// Gets every step, with versions 1, 2, 3 and so on.
     /// </summary>
     public static IReadOnlyList<SchemaMigration> All { get; } =
@@ -44,7 +49,10 @@ public static class SchemaMigrations
         new(NewItemKindsVersion, static (_, _) => { }),
 
         // The artists of a kept music video (F53).
-        new(9, SmallStateSchema.AddKeptArtists)
+        new(9, SmallStateSchema.AddKeptArtists),
+
+        // The kinds of their own in the kept watch state (row 532).
+        new(KeptTypesVersion, SmallStateSchema.AddKeptTypes)
     ];
 
     /// <summary>
