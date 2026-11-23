@@ -320,7 +320,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 Interlocked.Increment(ref _generation);
             }
 
-            if (health.State != StoreState.Damaged)
+            if (!health.Suspended)
             {
                 _damage = null;
             }
@@ -819,6 +819,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return damage with { Reason = damage.Reason + " It cannot be set aside: " + ReasonOf(exception) };
         }
 
+        Volatile.Write(ref _damage, null);
         return Replace(now, damaged);
     }
 

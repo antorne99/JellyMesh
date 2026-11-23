@@ -387,6 +387,24 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Equal(_clock.Now - TimeSpan.FromHours(25), database.Recovery?.CopyDate);
     }
 
+    // The check at open does not see every damage, so a file an access read as damaged never comes back by itself.
+    [Fact]
+    public async Task ARetryAfterAFailedOpenStillSetsTheDamagedFileAside()
+    {
+        var guard = new PrivacyFailingGuard();
+        var database = await WithACopyAsync(guard);
+        guard.Fails = true;
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync<int>((_, _) => throw new SqliteException("malformed", 11), CancellationToken.None));
+        await UntilAsync(() => database.Health.State == StoreState.Unavailable);
+        Assert.Empty(SetAside());
+        guard.Fails = false;
+
+        Assert.Equal(StoreState.Healthy, database.Retry().State);
+        Assert.Equal("copied", await ItemsAsync(database));
+        Assert.Single(SetAside());
+    }
+
     // The banner is of a restore that ended: until then no copy date is known, and the state says what is wrong.
     [Fact]
     public async Task ARestoreNotEndedYetShowsNoBanner()
@@ -531,6 +549,26 @@ public sealed class DamageOnAccessTests : IDisposable
         }
 
         public void KeepPrivate(string path) => _inner.KeepPrivate(path);
+    }
+
+    // Cannot keep a file private while it fails.
+    private sealed class PrivacyFailingGuard : IKeyFileGuard
+    {
+        private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();
+
+        public bool Fails { get; set; }
+
+        public FileStream CreatePrivate(string path) => _inner.CreatePrivate(path);
+
+        public void KeepPrivate(string path)
+        {
+            if (Fails)
+            {
+                throw new IOException("The permissions cannot be changed");
+            }
+
+            _inner.KeepPrivate(path);
+        }
     }
 
     // Cannot make the database file while it fails, as on a full disk.
