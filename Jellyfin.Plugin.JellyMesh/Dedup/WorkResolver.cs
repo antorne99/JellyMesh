@@ -427,8 +427,8 @@ internal sealed class WorkResolver
     // the copies takes the yearless ones in; with several, those stay alone, like a copy that could join two sets of IDs.
     private void LinkMusicVideosWithoutIds(IReadOnlyCollection<CatalogItem> items)
     {
-        var videos = items.Where(item => item.Kind == ContentKind.MusicVideo && MusicVideoKey(item) is not null);
-        foreach (var candidates in videos.GroupBy(item => MusicVideoKey(item)!, StringComparer.Ordinal))
+        var videos = items.Where(item => item.Kind == ContentKind.MusicVideo).Select(item => (Item: item, Key: MusicVideoKey(item))).Where(video => video.Key is not null);
+        foreach (var candidates in videos.GroupBy(video => video.Key!, video => video.Item, StringComparer.Ordinal))
         {
             var copies = candidates
                 .Where(item => CanonicalIds(item) is null)
@@ -443,15 +443,17 @@ internal sealed class WorkResolver
             var years = candidates.Select(item => item.Year).OfType<int>().Distinct().ToList();
             int? YearOf(CatalogItem item) => years.Count == 1 ? years[0] : item.Year;
 
+            var worksByYear = candidates
+                .Where(item => CanonicalIds(item) is not null)
+                .Select(item => (Year: YearOf(item), Key: _keysByIds[CanonicalIds(item)!.Value]))
+                .Distinct()
+                .ToLookup(work => work.Year, work => work.Key);
+
             var alone = new List<string>();
             foreach (var group in copies.GroupBy(YearOf))
             {
                 var titleKey = string.Create(CultureInfo.InvariantCulture, $"{candidates.Key}|{group.Key}");
-                var works = candidates
-                    .Where(item => CanonicalIds(item) is not null && YearOf(item) == group.Key)
-                    .Select(item => _keysByIds[CanonicalIds(item)!.Value])
-                    .Distinct(StringComparer.Ordinal)
-                    .ToList();
+                var works = worksByYear[group.Key].ToList();
                 if ((group.Key is null && years.Count > 1) || works.Count > 1)
                 {
                     foreach (var copy in group)
