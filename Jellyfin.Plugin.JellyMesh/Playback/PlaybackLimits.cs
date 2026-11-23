@@ -33,6 +33,12 @@ public static class PlaybackLimits
     public const int SessionsPerUser = 16;
 
     /// <summary>
+    /// The most track files of one user whose copy that took over is remembered. Over it the oldest goes, and a read in the
+    /// middle of that file asks its own source again. Each device has its own, and a client names its device as it likes.
+    /// </summary>
+    public const int FileCopiesPerUser = 256;
+
+    /// <summary>
     /// The most folders a remote can make one session remember. A film needs one for the segments and one per subtitle.
     /// </summary>
     public const int FoldersPerSession = 1024;

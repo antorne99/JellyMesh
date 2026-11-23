@@ -295,6 +295,7 @@ public sealed class PlaybackCoordinator
                 else
                 {
                     _fileCopies[key] = new FileCopy(copy.Id, _clock.GetUtcNow());
+                    ForgetFileCopies(userId);
                 }
 
                 return read.Content;
@@ -656,6 +657,16 @@ public sealed class PlaybackCoordinator
         }
 
         return (null, refused, tried);
+    }
+
+    // A client names its device as it likes, so a user keeps a limited number of copies, the latest.
+    private void ForgetFileCopies(Guid userId)
+    {
+        var copies = _fileCopies.Where(entry => entry.Key.UserId.Equals(userId)).ToList();
+        foreach (var entry in copies.OrderBy(entry => entry.Value.At).Take(copies.Count - PlaybackLimits.FileCopiesPerUser))
+        {
+            _fileCopies.TryRemove(entry);
+        }
     }
 
     // A read with no Range, or one whose first range starts at byte 0.
