@@ -160,10 +160,10 @@ public sealed class StubMatcher
 
     private StubEntry? ClaimFirst(ResolvedContent content, IEnumerable<StubEntry> stubs)
     {
-        var stub = stubs.Where(stub => !_claimed.Contains(stub.Id)).OrderBy(stub => IsSame(content, stub) ? 0 : 1).FirstOrDefault();
+        var stub = stubs.Where(stub => !_claimed.Contains(stub.Id)).MinBy(stub => IsSame(content, stub) ? 0 : 1);
         return stub is not null && _claimed.Add(stub.Id) ? stub : null;
     }
 
     private IEnumerable<StubEntry> HoldersOf(ResolvedContent content)
-        => content.RemoteItems.SelectMany(item => _byItem.GetValueOrDefault((item.ServerId, item.ItemId)) ?? []);
+        => content.RemoteItems.SelectMany(item => _byItem.GetValueOrDefault((item.ServerId, item.ItemId)) ?? []).Distinct().Where(stub => !_claimed.Contains(stub.Id));
 }
