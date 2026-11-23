@@ -286,7 +286,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             var into = merge.Select(entry => entry.Into).ToList();
             try
             {
-                if (into.TrueForAll(stub => IsTakenOver(merged, stub)))
+                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsWaitedFor(state, merged, into))
                 {
                     state = await MergeAsync(root, state, merged, into, users, cancellationToken).ConfigureAwait(false);
                 }
@@ -300,6 +300,13 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         return state;
     }
+
+    // Whether a split still waits for the state of these stubs: a merge would remove it, or mix it with that of other episodes.
+    private static bool IsWaitedFor(StubState state, StubEntry merged, List<StubEntry> into) => state.Splits.Any(split =>
+        split.StubId == merged.Id
+        || split.FromStubId == merged.Id
+        || split.FromStubId == merged.SeriesStubId
+        || into.Exists(stub => stub.Id == split.FromStubId));
 
     // Null when the libraries cannot be read: no stub is merged until the next scan.
     private LibraryPlacement? ReadPlacement()

@@ -554,6 +554,37 @@ public sealed class SplitTitleTests : IDisposable
         AssertFull(Row(_anna, second));
     }
 
+    // A merge before the state is handed over would mix the states of the two episodes.
+    [Fact]
+    public async Task AStubThatASplitWaitsForIsNotMergedYet()
+    {
+        await AddSeriesAsync();
+        AddDouble("x", TestLibraries.Shows, 480);
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Series, TestItems.Series("s" + TestLibraries.ShowsB));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b1", "s" + TestLibraries.ShowsB, 1, 1));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b2", "s" + TestLibraries.ShowsB, 1, 2));
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Assert.Equal(TestLibraries.Shows, FederatedPaths.RemoteLibraryOf(StubOf(2, null).RelativePath));
+        var old = Stubs.ToList();
+        Assert.Equal(2, old.Count);
+        Give(_anna, PathOf(StubOf(2, null)), Full());
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+
+        await CleanAsync();
+        Assert.All(old, stub => Assert.Contains(Stubs, other => other.Id == stub.Id));
+
+        await ScanAsync();
+        Assert.Empty(_fixture.Registry.State.Splits);
+        Assert.Equal(3, Stubs.Count);
+        AssertFull(Row(_anna, PathOf(StubOf(2, null))));
+        Assert.False(Row(_anna, PathOf(StubOf(1, null))).Played);
+    }
+
     // Row 537: the wait closes when the old stub or the new one goes.
     [Fact]
     public async Task ASplitClosesWhenTheCopiesOfItsOldStubAreGone()
