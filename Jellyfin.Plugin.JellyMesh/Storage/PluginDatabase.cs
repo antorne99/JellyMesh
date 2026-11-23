@@ -48,10 +48,18 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private static readonly StoreHealth _closed = new(StoreState.Unavailable, "The database is closed.");
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "A call after Dispose still waits on the gate and is refused as closed; the semaphore never makes a wait handle.")]
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    // Guards the health and the fields below it; held for an instant, never around SQLite, a file or the gate.
+    private readonly Lock _access = new();
     private volatile bool _disposed;
     private long _generation;
     private SqliteConnection? _writer;
     private StoreHealth? _health;
+
+    // The damage an access found, until a recovery replaces the file; the recovery waits for the reads still in progress.
+    private StoreHealth? _damage;
+    private bool _recoveryWaits;
+    private int _readers;
     private RecoveryNote? _note;
 
     /// <summary>
@@ -141,12 +149,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _gate.Wait();
         try
         {
-            if (_health is { Suspended: false } healthy)
+            lock (_access)
             {
-                return healthy;
+                if (_health is { } health && (!health.Suspended || _recoveryWaits))
+                {
+                    return health;
+                }
             }
 
-            return SetHealth(Open());
+            return Reopen();
         }
         finally
         {
@@ -179,30 +190,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
-        return Task.Run(
-            () =>
-            {
-                ThrowIfSuspended(Health);
-                using var connection = Connect(_connectionString, queryOnly: true);
-                using var transaction = connection.BeginTransaction(deferred: true);
-                return read(connection, transaction);
-            },
-            cancellationToken);
+        return Task.Run(() => Read(read), cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
+    public Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(write);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return Write(write);
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        return WithGateAsync(() => Write(write), cancellationToken);
     }
 
     /// <inheritdoc />
@@ -219,77 +214,38 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<bool> TruncateWalAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return TruncateWal();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => WithGateAsync(TruncateWal, cancellationToken);
 
     /// <inheritdoc />
-    public async Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return BackUp();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => WithGateAsync(BackUp, cancellationToken);
 
     /// <inheritdoc />
-    public async Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+    public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => WithGateAsync(
+        () =>
         {
-            ThrowIfSuspended(_health ?? SetHealth(Open()));
+            _ = Writer();
             DeleteExpiredDamaged();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+            return true;
+        },
+        cancellationToken);
 
     /// <inheritdoc />
-    public async Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+    public Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken) => WithGateAsync(
+        () =>
         {
             var writer = Writer();
             return _legacy?.DeleteExpired(writer, _time.GetUtcNow()) ?? true;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+        },
+        cancellationToken);
 
     /// <inheritdoc />
-    public async Task<DateTimeOffset?> MigratedKeptUntilAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+    public Task<DateTimeOffset?> MigratedKeptUntilAsync(CancellationToken cancellationToken) => WithGateAsync(
+        () =>
         {
             var writer = Writer();
             return _legacy?.KeptUntil(writer);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+        },
+        cancellationToken);
 
     /// <inheritdoc />
     public void Dispose()
@@ -339,6 +295,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return command.ExecuteScalar();
     }
 
+    private static bool PassesCheck(SqliteConnection connection) =>
+        string.Equals(Convert.ToString(Scalar(connection, "PRAGMA quick_check;"), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal);
+
     private static void ThrowIfSuspended(StoreHealth health)
     {
         if (health.Suspended)
@@ -347,16 +306,25 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Each healthy open, the first one included, counts as a new generation.
+    // Each healthy open, the first one included, counts as a new generation. A closed store stays closed.
     private StoreHealth SetHealth(StoreHealth health)
     {
-        if (!health.Suspended)
+        lock (_access)
         {
-            Interlocked.Increment(ref _generation);
-        }
+            health = _disposed ? _closed : health;
+            if (!health.Suspended)
+            {
+                Interlocked.Increment(ref _generation);
+            }
 
-        Volatile.Write(ref _health, health);
-        return health;
+            if (health.State != StoreState.Damaged)
+            {
+                _damage = null;
+            }
+
+            Volatile.Write(ref _health, health);
+            return health;
+        }
     }
 
     private StoreHealth OpenFirst()
@@ -364,11 +332,136 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _gate.Wait();
         try
         {
-            return _health ?? SetHealth(Open());
+            return _health ?? Reopen();
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    // Opens the file and takes its health, leaving no writer behind a store closed meanwhile; called with the gate held.
+    private StoreHealth Reopen()
+    {
+        var health = SetHealth(Open());
+        if (_disposed)
+        {
+            _writer?.Dispose();
+            _writer = null;
+        }
+
+        return health;
+    }
+
+    private static bool IsDamage(SqliteException exception) => exception.SqliteErrorCode is Corrupt or NotADatabase;
+
+    // Suspends the store for damage an access found, so that one recovery sets the file aside and restarts it (row 512).
+    private StoreSuspendedException MarkDamaged(SqliteException exception)
+    {
+        bool marked;
+        lock (_access)
+        {
+            marked = _health is { Suspended: false };
+            if (marked)
+            {
+                _damage = new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception));
+                _recoveryWaits = true;
+                Volatile.Write(ref _health, _damage);
+            }
+        }
+
+        if (marked)
+        {
+            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            StartRecovery();
+        }
+
+        return new StoreSuspendedException("The JellyMesh database is damaged.", exception);
+    }
+
+    // Starts the recovery that waits once no read is in progress: none sees the file change under it, or its logs go with it.
+    private void StartRecovery()
+    {
+        lock (_access)
+        {
+            if (!_recoveryWaits || _readers > 0)
+            {
+                return;
+            }
+
+            _recoveryWaits = false;
+        }
+
+        _ = Task.Run(RecoverDamaged);
+    }
+
+    private void RecoverDamaged()
+    {
+        _gate.Wait();
+        try
+        {
+            // A retry or the closing of the store may have come first.
+            if (Volatile.Read(ref _damage) is not null && !_disposed)
+            {
+                Reopen();
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "The damaged JellyMesh database cannot be replaced yet. Sync and remote playback stay suspended");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    // Runs on the one writer. Damage it meets suspends the store; every other error goes to the caller as it is.
+    private async Task<T> WithGateAsync<T>(Func<T> access, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return access();
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            throw MarkDamaged(exception);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    // A read counts until its connection is closed, so a recovery does not start before it ends.
+    private T Read<T>(Func<SqliteConnection, SqliteTransaction, T> read)
+    {
+        _ = Health;
+        lock (_access)
+        {
+            ThrowIfSuspended(_health!);
+            _readers++;
+        }
+
+        try
+        {
+            using var connection = Connect(_connectionString, queryOnly: true);
+            using var transaction = connection.BeginTransaction(deferred: true);
+            return read(connection, transaction);
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            throw MarkDamaged(exception);
+        }
+        finally
+        {
+            lock (_access)
+            {
+                _readers--;
+            }
+
+            StartRecovery();
         }
     }
 
@@ -403,7 +496,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 _logger.LogDebug("The JellyMesh database log was busy at open; it is emptied at the next credential change or nightly copy");
             }
         }
-        catch (SqliteException exception)
+        catch (SqliteException exception) when (!IsDamage(exception))
         {
             _logger.LogWarning("The JellyMesh database log could not be emptied at open: {Error}", exception.Message);
         }
@@ -425,9 +518,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _guard.CreatePrivate(partial).Dispose();
         try
         {
-            using var command = Command(writer, "VACUUM INTO $path;");
-            command.Parameters.AddWithValue("$path", partial);
-            command.ExecuteNonQuery();
+            VacuumInto(writer, partial);
             if (File.Exists(copy.FilePath))
             {
                 TryErase(copy.FilePath, "copy replaced");
@@ -448,6 +539,26 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
         _logger.LogInformation("The JellyMesh database was copied to {Copy}", Path.GetFileName(copy.FilePath));
         return copy;
+    }
+
+    // Fills a file with the content of the database. Damage of that file, when the database passes its check, only fails it.
+    private static void VacuumInto(SqliteConnection writer, string path)
+    {
+        try
+        {
+            using var command = Command(writer, "VACUUM INTO $path;");
+            command.Parameters.AddWithValue("$path", path);
+            command.ExecuteNonQuery();
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            if (!PassesCheck(writer))
+            {
+                throw;
+            }
+
+            throw new InvalidDataException("The copy is damaged: " + ReasonOf(exception), exception);
+        }
     }
 
     // Overwrites and deletes each damaged file and log once 30 days have passed since the date in its name (D35).
@@ -511,8 +622,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     // The writer of a healthy store, opening it first if nothing has; called with the gate held.
     private SqliteConnection Writer()
     {
-        var health = _health ?? SetHealth(Open());
-        ThrowIfSuspended(health);
+        ThrowIfSuspended(_health ?? Reopen());
         return _writer!;
     }
 
@@ -534,7 +644,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held.
+    // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held. A file an access
+    // read as damaged is not opened again, since the check at open may not see that damage.
     private StoreHealth Open()
     {
         if (_disposed)
@@ -572,7 +683,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         else
         {
-            health = OpenFile();
+            health = Volatile.Read(ref _damage) ?? OpenFile();
             health = health.State == StoreState.Damaged ? Recover(health) : health;
         }
 
@@ -618,8 +729,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
                 }
 
-                var check = Convert.ToString(Scalar(probe, "PRAGMA quick_check;"), CultureInfo.InvariantCulture);
-                if (!string.Equals(check, "ok", StringComparison.Ordinal))
+                if (!PassesCheck(probe))
                 {
                     _logger.LogWarning("The JellyMesh database failed its integrity check");
                     return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
@@ -648,7 +758,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             writer = null;
             return StoreHealth.Healthy;
         }
-        catch (SqliteException exception) when (exception.SqliteErrorCode is Corrupt or NotADatabase)
+        catch (SqliteException exception) when (IsDamage(exception))
         {
             _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
             return new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception));

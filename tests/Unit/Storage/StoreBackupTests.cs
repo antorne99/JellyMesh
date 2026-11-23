@@ -179,10 +179,11 @@ public sealed class StoreBackupTests : IDisposable
         _clock.Now += TimeSpan.FromDays(1);
 
         guard.Spoil = true;
-        await Assert.ThrowsAsync<SqliteException>(() => database.BackUpAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => database.BackUpAsync(CancellationToken.None));
 
         Assert.Equal(["jellymesh.db.backup-20261118030000", "jellymesh.db.backup-20261119030000"], Copies());
         Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(1, database.Generation);
     }
 
     // A clock set back keeps the copy just written, and the copies dated after it go.
