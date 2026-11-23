@@ -201,6 +201,9 @@ def report(phase, before=None):
     written = tables_written(before, phase) if before else None
     if written is not None:
         lines.append(f"store tables written since {before:<14} {written}")
+        torn = [p for p in (before, phase) if (read(f"{p}-store-copy.txt") or "whole").startswith("torn")]
+        if torn:
+            lines.append(f"STORE COPY TORN, do not compare            {', '.join(torn)}")
     groups = (read(f"{phase}-groups.txt") or "").strip()
     if groups:
         lines.append(f"version groups in the registry            {groups}")

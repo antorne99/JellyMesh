@@ -82,14 +82,25 @@ sample() {
   done
 }
 
+# Size and change time of the store and its WAL, which a checkpoint or a write changes.
+store_stamp() {
+  in_box 'cd /config/plugins/Jellyfin.Plugin.JellyMesh && stat -c "%n %s %.9Y" jellymesh.db jellymesh.db-wal 2>/dev/null'
+}
+
 # Reads a copy of the plugin's store and its log: the number of version groups goes to <phase>-groups.txt, and each
 # table's row count and a digest of its rows to <phase>-tables.txt, so that a phase that wrote a table shows: <phase>.
 store_snapshot() {
-  local phase=$1 copy="$WORK/store-copy" f
-  rm -rf "$copy" && mkdir -p "$copy"
-  for f in jellymesh.db jellymesh.db-wal; do
-    docker cp "$NAME:/config/plugins/Jellyfin.Plugin.JellyMesh/$f" "$copy/" >/dev/null 2>&1
+  local phase=$1 copy="$WORK/store-copy" f try before state=torn
+  for try in 1 2 3 4 5; do
+    rm -rf "$copy" && mkdir -p "$copy"
+    before=$(store_stamp)
+    for f in jellymesh.db jellymesh.db-wal; do
+      docker cp "$NAME:/config/plugins/Jellyfin.Plugin.JellyMesh/$f" "$copy/" >/dev/null 2>&1
+    done
+    [ -n "$before" ] && [ "$before" = "$(store_stamp)" ] && state=whole && break
+    sleep 5
   done
+  echo "$state after $try" >"$WORK/$phase-store-copy.txt"
   python3 -I -c 'import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM stub_groups").fetchone()[0])' \
     "$copy/jellymesh.db" >"$WORK/$phase-groups.txt" 2>/dev/null
   python3 -I "$S/store_tables.py" "$copy/jellymesh.db" >"$WORK/$phase-tables.txt" 2>/dev/null
