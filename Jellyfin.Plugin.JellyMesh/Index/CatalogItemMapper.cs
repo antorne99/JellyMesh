@@ -105,8 +105,8 @@ public static class CatalogItemMapper
                 DiscNumber = item.ParentIndexNumber,
                 TrackNumber = item.IndexNumber,
                 RunTimeTicks = item.RunTimeTicks,
-                RecordingId = ProviderId(item, MusicBrainzRecording),
-                TrackId = ProviderId(item, MusicBrainzTrack),
+                RecordingId = RecordingIdOf(item.ProviderIds),
+                TrackId = TrackIdOf(item.ProviderIds),
                 Versions = item.Versions.Select(version => new MediaVersion(version.MediaSourceId, AudioQualityOf(version))).ToList()
             })
             .ToList();
@@ -149,6 +149,16 @@ public static class CatalogItemMapper
 
     private static MediaVersion ToMediaVersion(IndexedVersion version) => new(version.MediaSourceId, QualityOf(version));
 
-    private static string? ProviderId(IndexedItem item, string name) =>
-        item.ProviderIds.FirstOrDefault(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+    /// <summary>Gets the MusicBrainz recording ID of a track.</summary>
+    /// <param name="providerIds">The provider IDs of the track.</param>
+    /// <returns>The ID, or null.</returns>
+    internal static string? RecordingIdOf(IEnumerable<KeyValuePair<string, string>> providerIds) => ProviderId(providerIds, MusicBrainzRecording);
+
+    /// <summary>Gets the MusicBrainz track ID of a track.</summary>
+    /// <param name="providerIds">The provider IDs of the track.</param>
+    /// <returns>The ID, or null.</returns>
+    internal static string? TrackIdOf(IEnumerable<KeyValuePair<string, string>> providerIds) => ProviderId(providerIds, MusicBrainzTrack);
+
+    private static string? ProviderId(IEnumerable<KeyValuePair<string, string>> providerIds, string name) =>
+        providerIds.FirstOrDefault(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
 }
