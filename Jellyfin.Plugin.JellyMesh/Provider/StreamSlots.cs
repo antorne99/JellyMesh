@@ -13,8 +13,9 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// from the consumer extends it, and after <see cref="IdleTimeout"/> without either it is gone, by default with its
 /// transcode, so a consumer that vanishes leaves nothing behind. A request that ends badly with nothing else running leaves it only
 /// <see cref="AbandonGrace"/>. A slot whose transcode has to be closed stays counted until <see cref="Closed"/>, so that a
-/// new stream never runs next to the ffmpeg of the old one, and one revoked or cut never comes back before that. In memory
-/// on purpose: a restart ends the streams too.
+/// new stream never runs next to the ffmpeg of the old one, and one revoked or cut never comes back before that. The audio
+/// streams of one device of the consumer count as one, however many they are (row 511). In memory on purpose: a restart
+/// ends the streams too.
 /// </summary>
 public sealed class StreamSlots
 {
@@ -61,8 +62,9 @@ public sealed class StreamSlots
     /// <param name="peerId">The peer.</param>
     /// <param name="limit">The most slots of the peer.</param>
     /// <param name="replaces">The play session this one replaces, if any. It frees its slot first.</param>
+    /// <param name="device">The device that plays, whose streams share one slot, null to count on its own.</param>
     /// <returns>The reservation, null if the peer is at its limit.</returns>
-    public string? TryReserve(Guid peerId, int limit, string? replaces)
+    public string? TryReserve(Guid peerId, int limit, string? replaces, string? device = null)
     {
         lock (_lock)
         {
@@ -72,13 +74,13 @@ public sealed class StreamSlots
                 slots.Remove(replaces);
             }
 
-            if (slots.Count >= limit)
+            if (!HasRoom(slots.Values, limit, device))
             {
                 return null;
             }
 
             var reservation = Guid.NewGuid().ToString("N");
-            slots[reservation] = new Slot(_clock.GetUtcNow(), 1, false) { IsReservation = true, Opened = ++_opened };
+            slots[reservation] = new Slot(_clock.GetUtcNow(), 1) { IsReservation = true, Device = device, Opened = ++_opened };
             return reservation;
         }
     }
@@ -97,9 +99,9 @@ public sealed class StreamSlots
         lock (_lock)
         {
             var slots = SlotsOf(peerId);
-            if (slots.Remove(reservation))
+            if (slots.Remove(reservation, out var reserved))
             {
-                slots[playSessionId] = new Slot(_clock.GetUtcNow(), 0, false, itemId) { Opened = ++_opened };
+                slots[playSessionId] = new Slot(_clock.GetUtcNow(), 0, itemId) { Device = reserved.Device, Opened = ++_opened };
             }
         }
 
@@ -153,39 +155,48 @@ public sealed class StreamSlots
 
     /// <summary>
     /// Records a stream request. A play session without a slot takes one: that is a paused stream resuming. A request with
-    /// no play session holds a slot only while it runs.
+    /// no play session holds a slot only while it runs, or until the idle time for a device.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="limit">The most slots of the peer.</param>
     /// <param name="playSessionId">The play session, null if the request has none.</param>
     /// <param name="itemId">The item it reads.</param>
     /// <param name="cut">What ends the request from outside.</param>
+    /// <param name="device">The device that plays, whose streams share one slot, null to count on its own.</param>
     /// <returns>The end of the request, to dispose. Null if the peer is at its limit.</returns>
-    public StreamRequest? TryEnter(Guid peerId, int limit, string? playSessionId, Guid itemId = default, Action? cut = null)
+    public StreamRequest? TryEnter(Guid peerId, int limit, string? playSessionId, Guid itemId = default, Action? cut = null, string? device = null)
     {
         lock (_lock)
         {
             var slots = SlotsOf(peerId);
-            var key = playSessionId ?? Guid.NewGuid().ToString("N");
+            var key = playSessionId ?? (device is null ? Guid.NewGuid().ToString("N") : ReadKey(device, itemId));
             if (slots.TryGetValue(key, out var slot))
             {
                 // A stream back while its transcode waits to be closed keeps both, if the open slots leave it room. One
                 // that was revoked or cut waits for the close, and then counts as new.
-                if (slot.Closing && (slot.Ended || slots.Values.Count(other => !other.Closing) >= limit))
+                var group = device is null ? null : slot.Device;
+                if (slot.Closing && (slot.Ended || !HasRoom(slots.Values.Where(other => !other.Closing), limit, group)))
                 {
                     return null;
                 }
 
+                // A read that names no device counts on its own: only reads of audio share the slot of a device.
+                if (group != slot.Device && !HasRoom(slots.Values.Where(other => other != slot), limit, null))
+                {
+                    return null;
+                }
+
+                slot.Device = group;
                 slot.InFlight++;
                 slot.Closing = false;
             }
-            else if (slots.Count >= limit)
+            else if (!HasRoom(slots.Values, limit, device))
             {
                 return null;
             }
             else
             {
-                slot = new Slot(_clock.GetUtcNow(), 1, playSessionId is null, itemId) { Opened = ++_opened };
+                slot = new Slot(_clock.GetUtcNow(), 1, itemId) { Device = device, IsRead = playSessionId is null, Opened = ++_opened };
                 slots[key] = slot;
             }
 
@@ -283,7 +294,7 @@ public sealed class StreamSlots
 
     /// <summary>
     /// Brings a peer down to a lower limit at once. What no longer fits ends as in <see cref="Revoke"/>: its requests are
-    /// cut and its transcode is closed, counted until then. The rest stays counted.
+    /// cut and its transcode is closed, counted until then. The rest stays counted. A device ends or stays as a whole.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <param name="limit">The new limit.</param>
@@ -294,8 +305,8 @@ public sealed class StreamSlots
         {
             // A slot being closed is going anyway: it never makes a stream go in its place.
             var slots = SlotsOf(peerId);
-            var open = slots.Where(pair => !pair.Value.Closing).ToDictionary();
-            var excess = InCuttingOrder(open).Take(open.Count - limit).ToList();
+            var open = slots.Where(pair => !pair.Value.Closing).GroupBy(pair => (pair.Value.Device, pair.Value.Device is null ? pair.Key : null)).ToList();
+            var excess = InCuttingOrder(open).Take(open.Count - limit).SelectMany(group => group).ToList();
             foreach (var (key, slot) in excess)
             {
                 End(peerId, slots, key, slot);
@@ -354,7 +365,7 @@ public sealed class StreamSlots
     }
 
     /// <summary>
-    /// Counts the slots of a peer, those whose transcode is being closed too.
+    /// Counts the slots of a peer, those whose transcode is being closed too. The streams of a device count as one.
     /// </summary>
     /// <param name="peerId">The peer.</param>
     /// <returns>The slots in use.</returns>
@@ -362,16 +373,49 @@ public sealed class StreamSlots
     {
         lock (_lock)
         {
-            return SlotsOf(peerId).Count;
+            return CountOf(SlotsOf(peerId).Values);
         }
     }
 
     // Who goes first when a limit comes down, so that the oldest keep playing: what has not started, then the newest. This
-    // order is a choice of ours, and this is the only place that holds it.
-    private static IEnumerable<KeyValuePair<string, Slot>> InCuttingOrder(Dictionary<string, Slot> slots)
+    // order is a choice of ours, and this is the only place that holds it. A device is as old as its oldest stream.
+    private static IEnumerable<IEnumerable<KeyValuePair<string, Slot>>> InCuttingOrder(IEnumerable<IEnumerable<KeyValuePair<string, Slot>>> groups)
     {
-        return slots.OrderByDescending(pair => pair.Value.IsReservation).ThenByDescending(pair => pair.Value.Opened);
+        return groups
+            .OrderByDescending(group => group.All(pair => pair.Value.IsReservation))
+            .ThenByDescending(group => group.Min(pair => pair.Value.Opened));
     }
+
+    // The slots that count on their own, plus one per device.
+    private static int CountOf(IEnumerable<Slot> slots)
+    {
+        var own = 0;
+        var devices = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var slot in slots)
+        {
+            if (slot.Device is null)
+            {
+                own++;
+            }
+            else
+            {
+                devices.Add(slot.Device);
+            }
+        }
+
+        return own + devices.Count;
+    }
+
+    // A device with an open stream has its slot already. One whose streams are all being closed has to wait for that.
+    private static bool HasRoom(IEnumerable<Slot> slots, int limit, string? device)
+    {
+        var held = slots.ToList();
+        return (device is not null && held.Any(slot => !slot.Closing && string.Equals(slot.Device, device, StringComparison.Ordinal)))
+            || CountOf(held) < limit;
+    }
+
+    // No play session has a name like this one.
+    private static string ReadKey(string device, Guid itemId) => device + ":" + itemId.ToString("N");
 
     // Expired slots go whenever the peer is looked at, so that no timer is needed. After a lost connection their transcodes
     // go too, and the slot waits for that. After the idle time that is a setting, read here, because stock has a timer of
@@ -387,7 +431,7 @@ public sealed class StreamSlots
         var now = _clock.GetUtcNow();
         foreach (var (key, slot) in slots.Where(pair => !pair.Value.Closing && pair.Value.IsExpired(now)).ToList())
         {
-            if (!slot.EndsWithRequest && (slot.Abandoned || CloseAtExpiry) && !RunningOf(peerId).Any(request => request.PlaySessionId == key))
+            if (!slot.IsRead && (slot.Abandoned || CloseAtExpiry) && !RunningOf(peerId).Any(request => request.PlaySessionId == key))
             {
                 slot.Closing = true;
                 _closing.Add((peerId, key));
@@ -405,7 +449,7 @@ public sealed class StreamSlots
     // again. A reservation or a read has nothing to close and goes at once.
     private void End(Guid peerId, Dictionary<string, Slot> slots, string key, Slot slot)
     {
-        if (slot.EndsWithRequest || slot.IsReservation)
+        if (slot.IsRead || slot.IsReservation)
         {
             slots.Remove(key);
             return;
@@ -441,7 +485,7 @@ public sealed class StreamSlots
 
             // The last request to end decides: until then the stream is alive.
             slot.Abandoned = request.IsAbandoned;
-            if (slot.EndsWithRequest)
+            if (slot.IsRead && slot.Device is null)
             {
                 SlotsOf(peerId).Remove(key);
             }
@@ -450,11 +494,10 @@ public sealed class StreamSlots
 
     private sealed class Slot
     {
-        public Slot(DateTimeOffset lastUsed, int inFlight, bool endsWithRequest, Guid itemId = default)
+        public Slot(DateTimeOffset lastUsed, int inFlight, Guid itemId = default)
         {
             LastUsed = lastUsed;
             InFlight = inFlight;
-            EndsWithRequest = endsWithRequest;
             ItemId = itemId;
         }
 
@@ -462,7 +505,11 @@ public sealed class StreamSlots
 
         public int InFlight { get; set; }
 
-        public bool EndsWithRequest { get; }
+        // With no play session: there is no transcode to close, and without a device it ends with its request.
+        public bool IsRead { get; init; }
+
+        // Whose audio streams share one slot, null for a stream that counts on its own.
+        public string? Device { get; set; }
 
         public Guid ItemId { get; }
 
