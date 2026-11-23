@@ -188,6 +188,19 @@ public class PeerGuardFilterTests
     }
 
     [Fact]
+    public async Task With_the_database_damaged_the_stream_a_peer_plays_opens_no_other_title()
+    {
+        var reservation = _fixture.Slots.TryReserve(_fixture.Peer.Id, 1, null)!;
+        _fixture.Slots.Confirm(_fixture.Peer.Id, reservation, "play", Guid.NewGuid());
+        _fixture.Health = new StoreHealth(StoreState.Damaged, "test");
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", ProviderFixture.SharedItem, "?playSessionId=play");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
     public async Task With_the_database_damaged_anyone_who_is_not_a_peer_passes_untouched()
     {
         _fixture.Health = new StoreHealth(StoreState.Damaged, "test");

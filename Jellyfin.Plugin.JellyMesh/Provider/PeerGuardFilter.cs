@@ -256,7 +256,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     {
         return kind switch
         {
-            PeerRouteKind.Stream => _slots.Owns(peerId, StreamPlaySessionOf(context.HttpContext)),
+            PeerRouteKind.Stream => _slots.Owns(peerId, StreamPlaySessionOf(context.HttpContext), ItemIdOf(context.RouteData)),
             PeerRouteKind.StopEncoding => _slots.Owns(peerId, PlaySessionOf(context.HttpContext)),
             PeerRouteKind.Item when action?.ControllerName == "Subtitle" => ItemIdOf(context.RouteData) is { } itemId && _slots.IsPlaying(peerId, itemId),
             PeerRouteKind.Open when action?.ControllerTypeInfo == typeof(ProviderController) && !HttpMethods.IsGet(context.HttpContext.Request.Method) =>
