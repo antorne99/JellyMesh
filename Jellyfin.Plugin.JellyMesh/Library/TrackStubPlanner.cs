@@ -10,8 +10,8 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// Plans the track stubs of one server: one <c>.strm</c> per track and local library, with no <c>.nfo</c>, in
-/// <c>Musica/&lt;album artist&gt;/&lt;album&gt;/</c> grouped by remote album, and one cover per album (D60).
+/// Plans the track and audiobook stubs of one server: one <c>.strm</c> per file and local library, with no <c>.nfo</c>, in
+/// <c>&lt;type folder&gt;/&lt;album artist&gt;/&lt;album&gt;/</c> grouped by remote album, with one cover per album of music (D60, D69).
 /// </summary>
 internal static class TrackStubPlanner
 {
@@ -24,35 +24,40 @@ internal static class TrackStubPlanner
     private const string CoverStem = "folder";
 
     /// <summary>
-    /// Plans the tracks of a server. Paths of stubs that exist never change; the tracks of the index claim their stubs by
-    /// remote item, and the stubs left unclaimed go to the sweep.
+    /// Plans the tracks, or the audiobook parts, of a server. Paths of stubs that exist never change; the items of the index
+    /// claim their stubs by remote item, and the stubs left unclaimed go to the sweep.
     /// </summary>
     /// <param name="input">What is known.</param>
     /// <param name="catalog">The index, by item.</param>
     /// <param name="serverId">The server.</param>
-    /// <param name="stubs">The track stubs of the server.</param>
-    /// <returns>One work per track and local library.</returns>
-    public static List<StubWork> Plan(StubPlanInput input, IndexItemLookup catalog, Guid serverId, IReadOnlyList<StubEntry> stubs)
+    /// <param name="kind">Track or audiobook.</param>
+    /// <param name="stubs">The stubs of that kind of the server.</param>
+    /// <param name="artistFolder">Gives the relative folder of an artist from its type folder, its name and the new stub.</param>
+    /// <returns>One work per item and local library.</returns>
+    public static List<StubWork> Plan(StubPlanInput input, IndexItemLookup catalog, Guid serverId, StubKind kind, IReadOnlyList<StubEntry> stubs, Func<string, string, string, string> artistFolder)
     {
+        var type = TypeFolder.Of(kind);
+        var itemKind = kind == StubKind.AudioBook ? IndexedItemKind.AudioBook : IndexedItemKind.Audio;
+
         // A federated track has no version of its own once the mapper drops the stub sources (no cycles).
-        var tracks = input.Snapshot.Find(serverId)?.Items.Where(item => item.Kind == IndexedItemKind.Audio && item.Versions.Count > 0).ToList() ?? [];
+        var tracks = input.Snapshot.Find(serverId)?.Items.Where(item => item.Kind == itemKind && item.Versions.Count > 0).ToList() ?? [];
         var albums = tracks.GroupBy(AlbumKeyOf, StringComparer.Ordinal).ToDictionary(group => group.Key, Album.Of, StringComparer.Ordinal);
         var keys = KeysOf(input.View, serverId);
-        var paths = new Paths(serverId, stubs, input.PlacementOf, stub => stub.Sources.Select(source => catalog.Find(serverId, source.ItemId)).OfType<IndexedItem>().Select(AlbumKeyOf).FirstOrDefault());
+        var paths = new Paths(serverId, type, stubs, input.PlacementOf, artistFolder, stub => stub.Sources.Select(source => catalog.Find(serverId, source.ItemId)).OfType<IndexedItem>().Select(AlbumKeyOf).FirstOrDefault());
 
         var works = new List<StubWork>();
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var track in tracks.OrderBy(AlbumKeyOf, StringComparer.Ordinal).ThenBy(item => item.ParentIndexNumber ?? 1).ThenBy(item => item.IndexNumber ?? int.MaxValue).ThenBy(item => item.ItemId, StringComparer.Ordinal))
         {
             var album = albums[AlbumKeyOf(track)];
-            foreach (var (placement, library) in PlacementsOf(input, serverId, track))
+            foreach (var (placement, library) in PlacementsOf(input, serverId, type, track))
             {
                 var stub = paths.Claim(placement, track.ItemId);
                 var id = stub?.Id ?? Guid.NewGuid().ToString("N");
                 var relative = stub?.RelativePath ?? paths.NewTrack(library, album, FileNameOf(track, album.HasDiscs), id);
                 var folder = Path.GetDirectoryName(relative)!;
-                var key = keys.GetValueOrDefault(track.ItemId) ?? string.Create(CultureInfo.InvariantCulture, $"Track|item:{serverId:N}:{track.ItemId}");
-                works.Add(WorkOf(input, serverId, track, library, stub, id, relative, key, covered.Add(folder) ? album : null));
+                var key = keys.GetValueOrDefault(track.ItemId) ?? string.Create(CultureInfo.InvariantCulture, $"{kind}|item:{serverId:N}:{track.ItemId}");
+                works.Add(WorkOf(input, serverId, kind, track, library, stub, id, relative, key, kind == StubKind.Track && covered.Add(folder) ? album : null));
             }
         }
 
@@ -67,9 +72,9 @@ internal static class TrackStubPlanner
     private static string ArtistOf(IReadOnlyList<string>? albumArtists, IReadOnlyList<string>? artists)
         => albumArtists?.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? artists?.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? UnknownArtist;
 
-    private static IEnumerable<(string Placement, string Library)> PlacementsOf(StubPlanInput input, Guid serverId, IndexedItem track)
+    private static IEnumerable<(string Placement, string Library)> PlacementsOf(StubPlanInput input, Guid serverId, TypeFolder type, IndexedItem track)
         => track.LibraryIds.Where(FederatedPaths.IsLibraryId)
-            .Select(library => (Placement: input.PlacementOf(serverId, library, TypeFolder.Music), Library: library))
+            .Select(library => (Placement: input.PlacementOf(serverId, library, type), Library: library))
             .DistinctBy(entry => entry.Placement, StringComparer.Ordinal);
 
     private static string FileNameOf(IndexedItem track, bool hasDiscs)
@@ -97,10 +102,10 @@ internal static class TrackStubPlanner
         return keys;
     }
 
-    private static StubWork WorkOf(StubPlanInput input, Guid serverId, IndexedItem track, string library, StubEntry? stub, string id, string relative, string key, Album? cover)
+    private static StubWork WorkOf(StubPlanInput input, Guid serverId, StubKind kind, IndexedItem track, string library, StubEntry? stub, string id, string relative, string key, Album? cover)
     {
         var version = track.Versions[0];
-        var entry = (stub ?? new StubEntry { Id = id, Kind = StubKind.Track, RelativePath = relative, Sources = [], IdentityKey = string.Empty }) with
+        var entry = (stub ?? new StubEntry { Id = id, Kind = kind, RelativePath = relative, Sources = [], IdentityKey = string.Empty }) with
         {
             ServerId = serverId,
             IdentityKey = key,
@@ -151,14 +156,24 @@ internal static class TrackStubPlanner
     private sealed class Paths
     {
         private readonly Guid _serverId;
+        private readonly TypeFolder _type;
+        private readonly Func<string, string, string, string> _artistFolder;
         private readonly Dictionary<(string Placement, string ItemId), StubEntry> _byItem = [];
         private readonly Dictionary<(string TypeFolder, string Album), string> _albumFolders = [];
         private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
 
-        public Paths(Guid serverId, IReadOnlyList<StubEntry> stubs, Func<Guid, string, TypeFolder, string> placementOf, Func<StubEntry, string?> albumOf)
+        public Paths(
+            Guid serverId,
+            TypeFolder type,
+            IReadOnlyList<StubEntry> stubs,
+            Func<Guid, string, TypeFolder, string> placementOf,
+            Func<string, string, string, string> artistFolder,
+            Func<StubEntry, string?> albumOf)
         {
             _serverId = serverId;
+            _type = type;
+            _artistFolder = artistFolder;
             foreach (var stub in stubs)
             {
                 var folder = Path.GetDirectoryName(stub.RelativePath)!;
@@ -171,12 +186,12 @@ internal static class TrackStubPlanner
 
                 foreach (var source in stub.Sources)
                 {
-                    _byItem.TryAdd((placementOf(serverId, library, TypeFolder.Music), source.ItemId), stub);
+                    _byItem.TryAdd((placementOf(serverId, library, type), source.ItemId), stub);
                 }
 
                 if (albumOf(stub) is { } album)
                 {
-                    _albumFolders.TryAdd((FederatedPaths.TypeFolderOf(serverId, library, TypeFolder.Music), album), folder);
+                    _albumFolders.TryAdd((FederatedPaths.TypeFolderOf(serverId, library, type), album), folder);
                 }
             }
         }
@@ -187,10 +202,10 @@ internal static class TrackStubPlanner
         // The path of a new track: the folder of its album, made on first use, and a file name unique in it.
         public string NewTrack(string library, Album album, string fileName, string id)
         {
-            var typeFolder = FederatedPaths.TypeFolderOf(_serverId, library, TypeFolder.Music);
+            var typeFolder = FederatedPaths.TypeFolderOf(_serverId, library, _type);
             if (!_albumFolders.TryGetValue((typeFolder, album.Key), out var folder))
             {
-                folder = Unique(Path.Combine(typeFolder, FederatedPaths.Sanitize(album.Artist), FederatedPaths.Sanitize(album.Name)), id);
+                folder = Unique(Path.Combine(_artistFolder(typeFolder, FederatedPaths.Sanitize(album.Artist), id), FederatedPaths.Sanitize(album.Name)), id);
                 _albumFolders[(typeFolder, album.Key)] = folder;
             }
 

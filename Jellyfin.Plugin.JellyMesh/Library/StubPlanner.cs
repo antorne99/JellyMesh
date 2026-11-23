@@ -143,8 +143,9 @@ public static partial class StubPlanner
         {
             // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
             var contents = ServerContents(input.View, input.Snapshot, catalog, server).Where(content => !legacy || content.Identity.Kind != ContentKind.MusicVideo).ToList();
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book) && !IsUntitledVideo(stub.Kind, legacy) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book or StubKind.AudioBook) && !IsUntitledVideo(stub.Kind, legacy) && (legacy || IsCurrent(stub.RelativePath))).ToList();
             var ownBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Book).ToList();
+            var ownAudioBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.AudioBook).ToList();
             var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsUntitledVideo(stub.Kind, legacy)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
@@ -192,7 +193,7 @@ public static partial class StubPlanner
             // Tracks come only in the new layout (Q49), from the index: the dedup has no track identity yet.
             if (!legacy)
             {
-                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList());
+                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, StubKind.Track, input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList(), (folder, artist, _) => Path.Combine(folder, artist));
                 tracks.AddRange(serverTracks);
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
@@ -207,6 +208,7 @@ public static partial class StubPlanner
             }
 
             books.AddRange(BookWorks(input, server.Id, ownBooks, legacy, claimed, unplaceable));
+            books.AddRange(AudioBookWorks(input, catalog, server.Id, ownAudioBooks, legacy, claimed));
         }
 
         works.AddRange(tracks);

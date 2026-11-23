@@ -9,7 +9,8 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The book part of the plan: one placeholder per remote ebook, PDF or comic and local library, with no dedup (927-Q7).
+/// The book part of the plan: one placeholder per remote ebook, PDF or comic and one <c>.strm</c> per audiobook part, for each
+/// local library, with no dedup (927-Q7).
 /// </summary>
 public static partial class StubPlanner
 {
@@ -58,6 +59,14 @@ public static partial class StubPlanner
             }
         }
 
+        return works;
+    }
+
+    // Plans the audiobooks of one server from its index, as tracks: their stubs too are kept in an older layout.
+    private static List<StubWork> AudioBookWorks(StubPlanInput input, IndexItemLookup catalog, Guid serverId, List<StubEntry> own, bool legacy, HashSet<string> claimed)
+    {
+        var works = legacy ? [] : TrackStubPlanner.Plan(input, catalog, serverId, StubKind.AudioBook, own, (folder, artist, _) => Path.Combine(folder, artist));
+        claimed.UnionWith(legacy ? own.Select(stub => stub.Id) : works.Select(work => work.Entry.Id));
         return works;
     }
 

@@ -103,10 +103,10 @@ public sealed record StubMetadata
     public string? TmdbCollectionId { get; init; }
 
     /// <summary>
-    /// Builds the metadata of a track. Stock Jellyfin reads nothing from a track stub, so every field is written with or
-    /// without protection, which only adds the lock (D60).
+    /// Builds the metadata of a track, or of an audiobook part with its plot. Stock Jellyfin reads nothing from their stubs,
+    /// so every field is written with or without protection, which only adds the lock (D60, D69).
     /// </summary>
-    /// <param name="item">The track.</param>
+    /// <param name="item">The track or part.</param>
     /// <param name="isProtected">Whether metadata protection is on.</param>
     /// <returns>The metadata.</returns>
     public static StubMetadata Track(IndexedItem item, bool isProtected)
@@ -120,6 +120,7 @@ public sealed record StubMetadata
             Year = item.ProductionYear,
             ProviderIds = item.ProviderIds,
             Genres = item.Genres,
+            Overview = item.Kind == IndexedItemKind.AudioBook ? item.Overview : null,
             Album = item.Album,
             Artists = item.Artists ?? [],
             AlbumArtists = item.AlbumArtists ?? [],
