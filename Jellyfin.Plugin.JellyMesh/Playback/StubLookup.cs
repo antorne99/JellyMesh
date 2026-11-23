@@ -348,7 +348,8 @@ public sealed class StubLookup
 
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
 
-    // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
+    // A .strm in the federated folder; while the settings cannot be read, any .strm, since stock would send its signed URL.
+    // With no folder set none is in it (row 522).
     private bool IsStrmInFolder(string? path) => PathInFolder(path) is not null;
 
     // The path of a .strm in the federated folder, also through an alias of it, spelled under the folder; else null.
@@ -359,12 +360,13 @@ public sealed class StubLookup
             return null;
         }
 
-        if (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path))
+        return _store.ReadOr(config => config.FederatedFolderPath, null) switch
         {
-            return path;
-        }
-
-        return RealPath.Rebase(root, path!);
+            null => path,
+            { Length: 0 } => null,
+            var root when FederatedPaths.IsInside(root, path) => path,
+            var root => RealPath.Rebase(root, path!)
+        };
     }
 
     private void AddAlternates(Dictionary<Guid, Video> members, Video video)

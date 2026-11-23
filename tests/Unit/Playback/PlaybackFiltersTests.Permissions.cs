@@ -3,6 +3,8 @@ using System.IO;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
+using MediaBrowser.Controller.Entities.Movies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -157,6 +159,49 @@ public partial class PlaybackFiltersTests
         Assert.False(await RunAsync(GuardFilter(store: StoreOf(kind, known)), context));
         Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
         Assert.Empty(_fixture.Client.Opened);
+    }
+
+    public static TheoryData<int, string> LocalStrmCases()
+    {
+        var cases = new TheoryData<int, string>();
+        for (var index = 0; index < StockRouteGuardFilter.StubRoutes.Count; index++)
+        {
+            cases.Add(index, "/media/musica/A.strm");
+            cases.Add(index, "/federata/S/L/Musica/A.strm");
+        }
+
+        return cases;
+    }
+
+    // Row 522: with no federated folder set nothing is in it, also a track left by a folder that was removed.
+    [Theory]
+    [MemberData(nameof(LocalStrmCases))]
+    public async Task A_stub_route_leaves_a_strm_to_stock_with_no_folder_set(int route, string path)
+    {
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Audio { Id = _itemId, Path = path });
+        Assert.True(await RunAsync(GuardFilter(store: new InMemoryConfigurationStore()), StubRouteRequest(route)));
+
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Movie { Id = _itemId, Path = path, ShortcutPath = "http://media.example/a.mkv" });
+        Assert.True(await RunAsync(GuardFilter(store: new InMemoryConfigurationStore()), StubRouteRequest(route)));
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_local_track_strm_stays_stock_with_no_folder_set()
+    {
+        Anonymous();
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Audio { Id = _itemId, Path = "/media/musica/A.strm" });
+
+        Assert.True(await RunAsync(InfoFilter(new InMemoryConfigurationStore()), Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId))));
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_local_strm_with_versions_stays_stock_with_no_folder_set()
+    {
+        var local = new Movie { Id = _localId, Path = "/media/film/A.strm", ShortcutPath = "http://media.example/a.mkv", LinkedAlternateVersions = [new LinkedChild { ItemId = _itemId }] };
+        _library.Setup(library => library.GetItemById(_localId)).Returns(local);
+        _library.Setup(library => library.GetItemById<BaseItem>(_localId, _user)).Returns(local);
+
+        Assert.True(await RunAsync(InfoFilter(new InMemoryConfigurationStore()), Context("MediaInfo", "GetPlaybackInfo", ("itemId", _localId))));
     }
 
     private ActionExecutingContext StubRouteRequest(int route)
