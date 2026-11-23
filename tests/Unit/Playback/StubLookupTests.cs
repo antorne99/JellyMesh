@@ -116,6 +116,56 @@ public class StubLookupTests
         Assert.Equal(inLibrary, Lookup().Sees(user, local.Id));
     }
 
+    // Row 527: a stub the registry lacks counts as a version wherever its .strm is, and a .strm of the admin never does.
+    [Theory]
+    [InlineData("", true, true)]
+    [InlineData("/nuova", true, true)]
+    [InlineData("/federata", true, true)]
+    [InlineData("", false, false)]
+    [InlineData("/nuova", false, false)]
+    [InlineData("/nuova", null, false)]
+    public void AFilmLinkedToAStubTheRegistryLacksHasVersions(string folder, bool? pluginUrl, bool hasVersions)
+    {
+        var strm = Item("/federata/S/Film/A/A.strm");
+        strm.ShortcutPath = pluginUrl switch
+        {
+            true => PlaybackRoutes.StrmUrl(8096, null, "gone", "signature"),
+            false => "http://media.example/a.mkv",
+            null => null
+        };
+        var local = Item("/media/film/A.mkv");
+        local.LinkedAlternateVersions = [new LinkedChild { ItemId = strm.Id }];
+        strm.SetPrimaryVersionId(local.Id);
+        _store.Configuration.FederatedFolderPath = folder;
+
+        Assert.Equal(hasVersions, Lookup().HasVersions(local.Id));
+        Assert.Equal(hasVersions, Lookup().HasVersions(strm.Id));
+    }
+
+    [Fact]
+    public void AFilmLinkedToAnUnreadStrmReachedThroughALinkHasVersions()
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-real-").FullName;
+        try
+        {
+            var real = Path.Combine(temp, "federata");
+            Directory.CreateDirectory(Path.Combine(real, "S"));
+            File.WriteAllText(Path.Combine(real, "S", "A.strm"), "http://127.0.0.1/strm");
+            var alias = Path.Combine(temp, "alias");
+            Directory.CreateSymbolicLink(alias, real);
+            var strm = Item(Path.Combine(alias, "S", "A.strm"));
+            var local = Item("/media/film/A.mkv");
+            local.LinkedAlternateVersions = [new LinkedChild { ItemId = strm.Id }];
+            _store.Configuration.FederatedFolderPath = real;
+
+            Assert.True(Lookup().HasVersions(local.Id));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
     // A track stub has no plugin URL: the file routes find it by its path, playback does not until F56.
     [Fact]
     public void ATrackStrmInTheFolderIsAStubFoundForItsFileOnly()

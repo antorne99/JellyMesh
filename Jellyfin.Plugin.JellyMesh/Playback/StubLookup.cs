@@ -204,15 +204,7 @@ public sealed class StubLookup
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>True for a stub.</returns>
-    public bool IsStub(Guid itemId)
-    {
-        return _libraryManager.GetItemById(itemId) switch
-        {
-            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
-            Audio audio => IsStrmInFolder(audio.Path),
-            var item => IsPlaceholder(item)
-        };
-    }
+    public bool IsStub(Guid itemId) => IsStub(_libraryManager.GetItemById(itemId));
 
     /// <summary>
     /// Tells whether an item is an audio stub: an audio <c>.strm</c> in the federated folder, which has no plugin URL.
@@ -311,7 +303,7 @@ public sealed class StubLookup
         return members;
     }
 
-    // A link only between local films stays stock.
+    // A link only between local films stays stock; a stub the registry lacks counts too (row 527).
     private bool IsLinkedToStub(Guid itemId)
     {
         var members = LinkedVersionsOf(itemId);
@@ -321,16 +313,17 @@ public sealed class StubLookup
         }
 
         var root = _store.ReadOr(config => config.FederatedFolderPath, null);
-        foreach (var member in members.Values)
-        {
-            if ((root is null ? IsStrm(member.Path) : FederatedPaths.IsInside(root, member.Path))
-                || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && _stubs.Find(stubId) is not null))
-            {
-                return true;
-            }
-        }
+        return members.Values.Any(member => FederatedPaths.IsInside(root, member.Path) || IsStub(member));
+    }
 
-        return false;
+    private bool IsStub(BaseItem? item)
+    {
+        return item switch
+        {
+            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
+            Audio audio => IsStrmInFolder(audio.Path),
+            _ => IsPlaceholder(item)
+        };
     }
 
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
