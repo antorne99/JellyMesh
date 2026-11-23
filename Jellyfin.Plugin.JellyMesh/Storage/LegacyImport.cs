@@ -494,7 +494,8 @@ public sealed class LegacyImport
     private static bool WholeStubs(StubState state) =>
         state.Stubs is not null && state.Series is not null && state.Groups is not null && state.Labels is not null
         && state.RemovedServers is not null && state.ServerNames is not null && state.Renames is not null
-        && state.Stubs.All(stub => stub is { Id: not null, RelativePath: not null, IdentityKey: not null, Sources: not null } && WholeSources(stub.Sources))
+        && state.Stubs.All(stub => stub is { Id: not null, RelativePath: not null, IdentityKey: not null, Sources: not null, PartCopies: not null } && WholeSources(stub.Sources)
+            && stub.PartCopies.All(item => item is not null))
         && state.Series.All(series => series is { Id: not null, RelativePath: not null, WorkKey: not null, Sources: not null, Seasons: not null }
             && WholeSources(series.Sources) && series.Seasons.All(season => season is { RelativePath: not null }))
         && state.Groups.All(group => group is { Id: not null, IdentityKey: not null, StubIds: not null, LocalItemIds: not null } && group.StubIds.All(id => id is not null))

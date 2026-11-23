@@ -321,18 +321,34 @@ public static class StubPlanner
 
     // The splits that still wait, and those of this plan: a new stub or series that takes a copy of one of its server in
     // another local library. One whose new stub goes, or whose old one is gone, waits for nothing.
-    private static List<StubSplit> SplitsOf(StubPlanInput input, List<StubWork> works, List<SeriesWork> seriesWorks, List<StubEntry> stubs, List<SeriesStub> series, List<StubEntry> removals)
+    private static List<StubSplit> SplitsOf(
+        StubPlanInput input,
+        List<StubWork> works,
+        List<SeriesWork> seriesWorks,
+        List<StubEntry> stubs,
+        List<SeriesStub> series,
+        List<StubEntry> removals)
     {
+        var written = works.ToDictionary(work => work.Entry.Id, work => work.Entry, StringComparer.Ordinal);
+        var narrowed = input.State.Stubs
+            .Where(stub => stub.EpisodeNumberEnd is not null && IsCurrent(stub.RelativePath) && written.TryGetValue(stub.Id, out var entry) && entry.EpisodeNumberEnd != stub.EpisodeNumberEnd)
+            .Select(stub => stub.Id)
+            .ToHashSet(StringComparer.Ordinal);
         var added = works.Where(work => work.IsNew).Select(work => Copies(work.Entry)).ToList();
         var addedSeries = seriesWorks.Where(work => work.IsNew).Select(work => CopiesOfSeries(work.Entry)).ToList();
-        if (input.State.Splits.Count == 0 && added.Count == 0 && addedSeries.Count == 0)
+        if (input.State.Splits.Count == 0 && added.Count == 0 && addedSeries.Count == 0 && narrowed.Count == 0)
         {
             return [];
         }
 
+        var existing = input.State.Stubs.Where(stub => IsCurrent(stub.RelativePath)).Select(Copies).ToList();
         var splits = input.State.Splits
-            .Concat(SharedCopies(added, input.State.Stubs.Where(stub => IsCurrent(stub.RelativePath)).Select(Copies)))
-            .Concat(SharedCopies(addedSeries, input.State.Series.Where(entry => IsCurrent(entry.RelativePath)).Select(CopiesOfSeries)));
+            .Concat(SharedCopies(added, existing.Where(entry => added.Count > 0), (entry, other) => other.Slot != entry.Slot))
+            .Concat(SharedCopies(
+                narrowed.Count == 0 ? [] : works.Where(work => work.Entry.Kind == StubKind.Episode).Select(work => Copies(work.Entry)),
+                existing.Where(entry => narrowed.Contains(entry.Id)),
+                (entry, other) => other.Slot == entry.Slot && other.Id != entry.Id))
+            .Concat(SharedCopies(addedSeries, input.State.Series.Where(entry => IsCurrent(entry.RelativePath)).Select(CopiesOfSeries), (entry, other) => other.Slot != entry.Slot));
         var known = stubs.Select(stub => stub.Id).Concat(series.Select(entry => entry.Id)).ToHashSet(StringComparer.Ordinal);
         var removed = removals.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
         return splits
@@ -340,18 +356,28 @@ public static class StubPlanner
             .Distinct()
             .ToList();
 
-        SlotCopies Copies(StubEntry stub) => new(stub.Id, SlotOf(input, stub), stub.Sources, stub.EpisodeNumber ?? 0, stub.EpisodeNumberEnd ?? stub.EpisodeNumber ?? 0);
+        SlotCopies Copies(StubEntry stub) => new(
+            stub.Id,
+            SlotOf(input, stub),
+            stub.Sources.Select(source => source.ItemId).Concat(stub.PartCopies).ToList(),
+            stub.EpisodeNumber ?? 0,
+            stub.EpisodeNumberEnd ?? stub.EpisodeNumber ?? 0);
 
-        SlotCopies CopiesOfSeries(SeriesStub entry) => new(entry.Id, SlotOf(input, entry.ServerId, entry.RelativePath, TypeFolder.Series), entry.Sources, 0, 0);
+        SlotCopies CopiesOfSeries(SeriesStub entry) => new(
+            entry.Id,
+            SlotOf(input, entry.ServerId, entry.RelativePath, TypeFolder.Series),
+            entry.Sources.Select(source => source.ItemId).ToList(),
+            0,
+            0);
     }
 
     // A file of several episodes is a copy of each, so the old stub must also hold every episode of the new one.
-    private static IEnumerable<StubSplit> SharedCopies(List<SlotCopies> added, IEnumerable<SlotCopies> existing)
+    private static IEnumerable<StubSplit> SharedCopies(IEnumerable<SlotCopies> takers, IEnumerable<SlotCopies> existing, Func<SlotCopies, SlotCopies, bool> isSplit)
     {
-        var byCopy = existing.SelectMany(entry => entry.Sources.Select(source => (Key: (entry.Slot.ServerId, source.ItemId), Entry: entry))).ToLookup(pair => pair.Key, pair => pair.Entry);
-        return added.SelectMany(entry => entry.Sources
-            .SelectMany(source => byCopy[(entry.Slot.ServerId, source.ItemId)])
-            .Where(other => other.Slot != entry.Slot && other.First <= entry.First && other.Last >= entry.Last)
+        var byCopy = existing.SelectMany(entry => entry.ItemIds.Select(item => (Key: (entry.Slot.ServerId, item), Entry: entry))).ToLookup(pair => pair.Key, pair => pair.Entry);
+        return takers.SelectMany(entry => entry.ItemIds
+            .SelectMany(item => byCopy[(entry.Slot.ServerId, item)])
+            .Where(other => isSplit(entry, other) && other.First <= entry.First && other.Last >= entry.Last)
             .Select(other => new StubSplit(entry.Id, other.Id))
             .Distinct());
     }
@@ -588,6 +614,11 @@ public static class StubPlanner
             .ToList();
     }
 
+    private static List<string> PartCopiesOf(ResolvedContent content) => content.RemoteItems
+        .Select(item => item.ItemId)
+        .Except(content.Backups.Prepend(content.Winner!).Select(source => source.ItemId), StringComparer.Ordinal)
+        .ToList();
+
     private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, Func<string, string> newPath)
     {
         var id = stub?.Id ?? NewId();
@@ -644,6 +675,7 @@ public static class StubPlanner
             SeasonNumber = season,
             EpisodeNumber = number,
             EpisodeNumberEnd = last,
+            PartCopies = serverId is null || last is null ? [] : PartCopiesOf(content),
 
             // New numbers reach an existing item with the technical data, because its .nfo is not read again.
             TechnicalTag = (stub?.SeasonNumber, stub?.EpisodeNumber, stub?.EpisodeNumberEnd) == (season, number, last) ? stub!.TechnicalTag : null
@@ -917,7 +949,7 @@ public static class StubPlanner
         public List<SeasonEpisode> Episodes { get; } = [];
     }
 
-    private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<StubSource> Sources, int First, int Last);
+    private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<string> ItemIds, int First, int Last);
 
     private sealed record SeasonEpisode(string Folder, int Season, Guid ServerId, IndexedItem Episode);
 

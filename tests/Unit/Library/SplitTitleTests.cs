@@ -409,6 +409,102 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Single(seriesPaths, Directory.Exists);
     }
 
+    // Row 537: a stub of two episodes gives its state to both, also when the files of the other library back one episode each.
+    [Fact]
+    public async Task AStubOfTwoEpisodesThatSplitsGivesItsStateToEachOfThem()
+    {
+        await AddSeriesAsync(("b1", TestLibraries.ShowsB, 1, 1), ("b2", TestLibraries.ShowsB, 1, 2));
+        AddDouble("x", TestLibraries.Shows, 2160);
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Stubs);
+        Assert.Equal((1, 2), (old.EpisodeNumber, old.EpisodeNumberEnd));
+        Give(_anna, PathOf(old), Full());
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.Equal(3, Stubs.Count);
+        Assert.All(Stubs, stub => AssertFull(Row(_anna, PathOf(stub))));
+    }
+
+    [Fact]
+    public async Task AStubOfTwoEpisodesRemembersItsCopiesOfOneAcrossARestart()
+    {
+        await AddSeriesAsync(("b1", TestLibraries.ShowsB, 1, 1), ("b2", TestLibraries.ShowsB, 1, 2));
+        AddDouble("x", TestLibraries.Shows, 2160);
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(["b1", "b2"], Reopened());
+
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Empty(Reopened());
+
+        List<string> Reopened()
+        {
+            using var reopened = new StubRegistry(_fixture.Database, _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+            return reopened.State.Stubs.SelectMany(stub => stub.PartCopies).Order(StringComparer.Ordinal).ToList();
+        }
+    }
+
+    // A new copy is a version, so it takes nothing (row 63).
+    [Fact]
+    public async Task ANewCopyOfOneEpisodeInAnotherLocalLibraryIsNoSplit()
+    {
+        await AddSeriesAsync(("b9", TestLibraries.ShowsB, 1, 9));
+        AddDouble("x", TestLibraries.Shows, 2160);
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Give(_anna, PathOf(StubOf(1, 2)), Full());
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b1", "s" + TestLibraries.ShowsB, 1, 1));
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.False(Row(_anna, PathOf(StubOf(1, null))).Played);
+    }
+
+    // Row 537: never from one episode to a stub of several.
+    [Fact]
+    public async Task AStubOfOneEpisodeThatSplitsGivesNothingToAStubOfTwo()
+    {
+        await AddSeriesAsync(("b1", TestLibraries.ShowsB, 1, 1), ("b2", TestLibraries.ShowsB, 1, 2));
+        AddDouble("x", TestLibraries.Shows, 480);
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Give(_anna, PathOf(StubOf(1, null)), Full());
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.False(Row(_anna, PathOf(StubOf(1, 2))).Played);
+    }
+
+    [Fact]
+    public async Task AStubOfTwoEpisodesThatKeepsOneGivesItsStateToTheOther()
+    {
+        await AddSeriesAsync(("b9", TestLibraries.Shows, 1, 9));
+        AddDouble("x", TestLibraries.Shows, 480);
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Give(_anna, PathOf(StubOf(1, 2)), Full());
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("a1", "s" + TestLibraries.Shows, 1, 1));
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        AssertFull(Row(_anna, PathOf(StubOf(1, null))));
+        AssertFull(Row(_anna, PathOf(StubOf(2, null))));
+        Assert.False(Row(_anna, PathOf(StubOf(9, null))).Played);
+    }
+
     private static UserItemData Full() => new()
     {
         Key = "k",
@@ -434,6 +530,19 @@ public sealed class SplitTitleTests : IDisposable
 
     private StubEntry StubIn(string libraryId) =>
         Assert.Single(Stubs, stub => FederatedPaths.RemoteLibraryOf(stub.RelativePath) == libraryId);
+
+    private StubEntry StubOf(int first, int? last) => Assert.Single(Stubs, stub => (stub.EpisodeNumber, stub.EpisodeNumberEnd) == (first, last));
+
+    // A file of the first two episodes, the worst or the best copy by its height.
+    private void AddDouble(string id, string library, int height)
+    {
+        if (!_fixture.Sync.Client.Items.ContainsKey((library, RemoteItemType.Series)))
+        {
+            _fixture.Sync.Client.Add(library, RemoteItemType.Series, TestItems.Series("s" + library));
+        }
+
+        _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source(id, height, 500_000)] });
+    }
 
     private VirtualFolderInfo Local(string name, TypeFolder type, params string[] libraries) => new()
     {

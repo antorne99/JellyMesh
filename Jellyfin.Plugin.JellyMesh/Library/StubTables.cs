@@ -13,6 +13,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 internal static class StubTables
 {
     private static readonly IReadOnlyList<StubSource> _noSources = [];
+    private static readonly IReadOnlyList<string> _noCopies = [];
     private static readonly IReadOnlyList<SeasonStub> _noSeasons = [];
 
     /// <summary>
@@ -117,7 +118,8 @@ internal static class StubTables
         """);
 
     /// <summary>
-    /// Creates the table of the splits that wait for their watch state, inside the transaction of a schema step.
+    /// Creates the tables of the splits that wait for their watch state and of the copies of some episodes of a stub, inside
+    /// the transaction of a schema step.
     /// </summary>
     /// <param name="connection">The connection that writes.</param>
     /// <param name="transaction">The transaction of the schema step.</param>
@@ -130,6 +132,12 @@ internal static class StubTables
             stub_id TEXT NOT NULL,
             from_stub_id TEXT NOT NULL
         );
+        CREATE TABLE stub_entry_part_copies (
+            stub_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            item_id TEXT NOT NULL,
+            PRIMARY KEY (stub_id, position)
+        ) WITHOUT ROWID;
         """);
 
     /// <summary>
@@ -143,6 +151,7 @@ internal static class StubTables
     public static StubState Load(SqliteConnection connection, SqliteTransaction transaction)
     {
         var entrySources = ReadSources(connection, transaction, "SELECT stub_id, server_id, item_id, media_source_id, library_id FROM stub_entry_sources ORDER BY stub_id, position;");
+        var partCopies = ReadPartCopies(connection, transaction);
         var stubs = new List<StubEntry>();
         using (var command = StoreCommands.Command(
             connection,
@@ -173,7 +182,8 @@ internal static class StubTables
                     TechnicalTag = reader.GetTextOrNull(11),
                     UrlTag = reader.GetTextOrNull(12),
                     StrmWrittenUtc = reader.IsDBNull(13) ? null : new DateTime(reader.GetInt64(13), DateTimeKind.Utc),
-                    Sources = entrySources.GetValueOrDefault(id) ?? []
+                    Sources = entrySources.GetValueOrDefault(id) ?? [],
+                    PartCopies = partCopies.GetValueOrDefault(id) ?? []
                 });
             }
         }
@@ -268,8 +278,8 @@ internal static class StubTables
                 connection,
                 transaction,
                 """
-                DELETE FROM stub_entries; DELETE FROM stub_entry_sources; DELETE FROM stub_series; DELETE FROM stub_series_sources;
-                DELETE FROM stub_series_seasons;
+                DELETE FROM stub_entries; DELETE FROM stub_entry_sources; DELETE FROM stub_entry_part_copies; DELETE FROM stub_series;
+                DELETE FROM stub_series_sources; DELETE FROM stub_series_seasons;
                 """);
         }
 
@@ -373,7 +383,9 @@ internal static class StubTables
     }
 
     private static bool SameStub(StubEntry a, StubEntry b)
-        => a with { Sources = _noSources } == b with { Sources = _noSources } && a.Sources.SequenceEqual(b.Sources);
+        => a with { Sources = _noSources, PartCopies = _noCopies } == b with { Sources = _noSources, PartCopies = _noCopies }
+            && a.Sources.SequenceEqual(b.Sources)
+            && a.PartCopies.SequenceEqual(b.PartCopies, StringComparer.Ordinal);
 
     private static bool SameSeries(SeriesStub a, SeriesStub b)
         => a with { Sources = _noSources, Seasons = _noSeasons } == b with { Sources = _noSources, Seasons = _noSeasons }
@@ -417,12 +429,15 @@ internal static class StubTables
             "$strm");
         using var move = StoreCommands.Prepared(connection, transaction, "UPDATE stub_entries SET ordinal = $ordinal WHERE id = $id;", "$ordinal", "$id");
         using var delete = StoreCommands.Prepared(connection, transaction, "DELETE FROM stub_entries WHERE id = $id;", "$id");
+        using var clearCopies = StoreCommands.Prepared(connection, transaction, "DELETE FROM stub_entry_part_copies WHERE stub_id = $id;", "$id");
+        using var insertCopy = StoreCommands.Prepared(connection, transaction, "INSERT INTO stub_entry_part_copies (stub_id, position, item_id) VALUES ($id, $position, $item);", "$id", "$position", "$item");
         using var sources = new SourceWriter(connection, transaction, "stub_entry_sources", "stub_id");
 
         foreach (var stubId in write.StubDeletes)
         {
             delete.Run(stubId);
             sources.Clear(stubId);
+            clearCopies.Run(stubId);
         }
 
         foreach (var (stubId, ordinal) in write.StubOrdinals)
@@ -449,6 +464,11 @@ internal static class StubTables
                 stub.UrlTag,
                 stub.StrmWrittenUtc?.Ticks);
             sources.Replace(stub.Id, stub.Sources);
+            clearCopies.Run(stub.Id);
+            for (var position = 0; position < stub.PartCopies.Count; position++)
+            {
+                insertCopy.Run(stub.Id, position, stub.PartCopies[position]);
+            }
         }
     }
 
@@ -554,6 +574,19 @@ internal static class StubTables
         }
 
         return sources;
+    }
+
+    private static Dictionary<string, List<string>> ReadPartCopies(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var copies = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using var command = StoreCommands.Command(connection, transaction, "SELECT stub_id, item_id FROM stub_entry_part_copies ORDER BY stub_id, position;");
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            Add(copies, reader.GetString(0), reader.GetString(1));
+        }
+
+        return copies;
     }
 
     private static List<VersionGroup> ReadGroups(SqliteConnection connection, SqliteTransaction transaction)
