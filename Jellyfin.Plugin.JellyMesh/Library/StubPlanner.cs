@@ -918,7 +918,7 @@ public static partial class StubPlanner
         return tag.ToString();
     }
 
-    private static void AddRemote(List<StubImage> images, IndexedItem item, Guid serverId, ImageType type, string stem)
+    internal static void AddRemote(List<StubImage> images, IndexedItem item, Guid serverId, ImageType type, string stem)
     {
         if (TagOf(item, type) is not null)
         {
@@ -927,7 +927,7 @@ public static partial class StubPlanner
     }
 
     // The images an earlier tag lists, hence written by the plugin, whose type the remote row no longer has (Q235).
-    private static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
+    internal static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
     {
         if (string.IsNullOrEmpty(writtenTag))
         {
@@ -948,7 +948,7 @@ public static partial class StubPlanner
             : item.ImageTags.GetValueOrDefault(type.ToString());
     }
 
-    private static string ImageTagOf(IndexedItem item, List<StubImage> images)
+    internal static string ImageTagOf(IndexedItem item, List<StubImage> images)
     {
         return string.Concat(images.Select(image => string.Create(CultureInfo.InvariantCulture, $"{image.Type}={TagOf(item, image.Type)};")));
     }

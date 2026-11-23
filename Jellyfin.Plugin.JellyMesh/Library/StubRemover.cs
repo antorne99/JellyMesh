@@ -254,9 +254,9 @@ public sealed class StubRemover
         else if (stub.Kind is StubKind.Track or StubKind.AudioBook)
         {
             // Track and part names are the remote's, so files sharing the stem, the album cover included, are not theirs.
-            // Only the lyrics Jellyfin saves next to them are.
+            // Only the lyrics Jellyfin saves next to them are, and the cover of a part.
             File.Delete(strm);
-            foreach (var extension in _lyricExtensions)
+            foreach (var extension in stub.Kind == StubKind.AudioBook ? _lyricExtensions.Concat(LibraryMaterializer.ImageExtensions) : _lyricExtensions)
             {
                 File.Delete(Path.ChangeExtension(strm, extension));
             }

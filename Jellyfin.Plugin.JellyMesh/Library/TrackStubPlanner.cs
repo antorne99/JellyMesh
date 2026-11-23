@@ -117,8 +117,23 @@ internal static class TrackStubPlanner
         var hash = StubPlanner.Hash(Fingerprint(metadata), url.Split('?', 2)[0]);
         var technical = string.Join('|', serverId.ToString("N"), track.ItemId, version.MediaSourceId, version.ETag, track.Etag);
 
-        // One track of each album folder carries the cover, written as the folder image the album reads.
-        var stem = Path.Combine(Path.GetDirectoryName(relative)!, CoverStem);
+        var (images, imageTag, removed) = kind == StubKind.AudioBook ? PartCoverOf(entry, track, serverId) : AlbumCoverOf(entry, cover, serverId);
+        return new StubWork(entry, stub is null, metadata, string.Empty, string.Empty, url, hash, images, imageTag, technical) { RemovedImages = removed };
+    }
+
+    // Each part has its own cover, named as its file, which 12.4 reads as the Primary image of an audiobook (D69).
+    private static (List<StubImage> Images, string ImageTag, List<StubImage> Removed) PartCoverOf(StubEntry entry, IndexedItem part, Guid serverId)
+    {
+        var stem = Path.ChangeExtension(entry.RelativePath, null);
+        var images = new List<StubImage>();
+        StubPlanner.AddRemote(images, part, serverId, ImageType.Primary, stem);
+        return (images, StubPlanner.ImageTagOf(part, images), StubPlanner.Removed(entry.ImageTag, [(ImageType.Primary, stem)], images));
+    }
+
+    // One track of each album folder carries the cover, written as the folder image the album reads.
+    private static (List<StubImage> Images, string ImageTag, List<StubImage> Removed) AlbumCoverOf(StubEntry entry, Album? cover, Guid serverId)
+    {
+        var stem = Path.Combine(Path.GetDirectoryName(entry.RelativePath)!, CoverStem);
         List<StubImage> images = cover is { Id: { } albumId, CoverTag: not null } ? [new StubImage(ImageType.Primary, stem, serverId, albumId, null)] : [];
         var imageTag = images.Count > 0 ? string.Create(CultureInfo.InvariantCulture, $"{ImageType.Primary}={cover!.CoverTag};") : string.Empty;
         var removed = new List<StubImage>();
@@ -127,7 +142,7 @@ internal static class TrackStubPlanner
             removed.Add(new StubImage(ImageType.Primary, stem, null, null, null));
         }
 
-        return new StubWork(entry, stub is null, metadata, string.Empty, string.Empty, url, hash, images, imageTag, technical) { RemovedImages = removed };
+        return (images, imageTag, removed);
     }
 
     // Every field the plugin writes, so that a change of any of them reaches the item.

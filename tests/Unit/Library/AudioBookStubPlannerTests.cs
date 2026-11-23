@@ -5,6 +5,7 @@ using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using MediaBrowser.Model.Entities;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -140,6 +141,18 @@ public class AudioBookStubPlannerTests
         var second = Plan([Part("p1") with { Overview = "Another plot" }], first.State);
 
         Assert.NotEqual(Assert.Single(first.Stubs).ContentHash, Assert.Single(second.Stubs).ContentHash);
+    }
+
+    [Fact]
+    public void EachPartCarriesItsOwnCoverNamedAsItsFile()
+    {
+        var withCover = Part("p1", "One", 1) with { ImageTags = new Dictionary<string, string> { ["Primary"] = "c1" } };
+        var plan = Plan([withCover, Part("p2", "Two", 2)]);
+
+        var image = Assert.Single(plan.Stubs.SelectMany(work => work.Images));
+        Assert.Equal(new StubImage(ImageType.Primary, PathIn("Narrator", "Story", "01 - One"), _server, "p1", null), image);
+        Assert.Equal("Primary=c1;", WorkOf(plan, "p1").ImageTag);
+        Assert.Equal(string.Empty, WorkOf(plan, "p2").ImageTag);
     }
 
     [Fact]

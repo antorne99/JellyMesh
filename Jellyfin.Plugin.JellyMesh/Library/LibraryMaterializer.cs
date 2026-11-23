@@ -25,8 +25,6 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
     // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
     private const int ImageReadsAtOnce = 4;
 
-    private static readonly string[] _imageExtensions = [".jpg", ".png", ".webp", ".gif"];
-
     private readonly StubRegistry _registry;
     private readonly IFederationResolver _resolver;
     private readonly IFederationIndex _index;
@@ -99,6 +97,11 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         _linker = linker;
         _keeper = keeper;
     }
+
+    /// <summary>
+    /// Gets the extensions of the images the plugin writes.
+    /// </summary>
+    internal static IReadOnlyList<string> ImageExtensions { get; } = [".jpg", ".png", ".webp", ".gif"];
 
     /// <inheritdoc />
     public MaterializationReport? LastReport => _lastReport;
@@ -224,15 +227,16 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
     private static Task WriteTextAsync(string path, string text, CancellationToken cancellationToken)
         => WriteFileAsync(path, Encoding.UTF8.GetBytes(text), cancellationToken);
 
+    // Deletes the image of a stem in another format; "One.b.jpg" belongs to another part than "One".
     private static void DeleteOtherExtensions(string stem, string keep)
     {
         var folder = Path.GetDirectoryName(stem)!;
-        var name = Path.GetFileName(stem) + ".";
+        var name = Path.GetFileName(stem);
         foreach (var file in Directory.EnumerateFiles(folder))
         {
-            if (Path.GetFileName(file).StartsWith(name, StringComparison.Ordinal)
+            if (string.Equals(Path.GetFileNameWithoutExtension(file), name, StringComparison.Ordinal)
                 && !string.Equals(file, keep, StringComparison.Ordinal)
-                && _imageExtensions.Contains(Path.GetExtension(file)))
+                && ImageExtensions.Contains(Path.GetExtension(file)))
             {
                 File.Delete(file);
             }
@@ -568,7 +572,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         foreach (var image in removed)
         {
             var stem = FederatedPaths.Resolve(run.Root, image.RelativeStem);
-            var files = _imageExtensions.Select(extension => stem + extension).ToList();
+            var files = ImageExtensions.Select(extension => stem + extension).ToList();
             foreach (var file in files.Where(File.Exists))
             {
                 File.Delete(file);

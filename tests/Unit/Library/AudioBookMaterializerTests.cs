@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
-// Audiobook stubs written end to end: a .strm per part and no .nfo (D69).
+// Audiobook stubs written end to end: a .strm per part, no .nfo, its cover beside it (D69).
 public sealed class AudioBookMaterializerTests : IDisposable
 {
     private readonly StubFixture _fixture = new();
@@ -21,7 +21,7 @@ public sealed class AudioBookMaterializerTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private static RemoteItem Part(string id, string name, int number, string overview = "Once upon a time") => new()
+    private static RemoteItem Part(string id, string name, int number, string overview = "Once upon a time", string? cover = null) => new()
     {
         Id = id,
         Name = name,
@@ -32,6 +32,7 @@ public sealed class AudioBookMaterializerTests : IDisposable
         AlbumArtists = [new RemoteNamedItem("Narrator")],
         Genres = ["Fantasy"],
         Overview = overview,
+        ImageTags = cover is null ? null : new Dictionary<string, string> { ["Primary"] = cover },
         Chapters = [new RemoteChapter("Chapter One", 0), new RemoteChapter("Chapter Two", 40_000_000)],
         MediaSources =
         [
@@ -107,6 +108,49 @@ public sealed class AudioBookMaterializerTests : IDisposable
 
         var saved = Assert.Single(_fixture.Chapters.Invocations, call => call.Method.Name == nameof(_fixture.Chapters.Object.SaveChapters) && call.Arguments[0] == item);
         Assert.Equal(["Only"], ((IEnumerable<ChapterInfo>)saved.Arguments[1]).Select(chapter => chapter.Name));
+    }
+
+    [Fact]
+    public async Task EachPartCarriesItsOwnCoverBesideIt()
+    {
+        var a = await AddAsync(Part("p1", "One", 1, cover: "c1"), Part("p2", "Two", 2));
+
+        Assert.Equal(["01 - One.jpg", "01 - One.strm", "02 - Two.strm"], FilesOf(a));
+        Assert.Equal(["p1/Primary/0"], _fixture.Sync.Client.ImageReads);
+    }
+
+    [Fact]
+    public async Task ANewCoverReachesThePartAndOneTheRemoteDropsLeavesWithIt()
+    {
+        var a = await AddAsync(Part("p1", "One", 1, cover: "c1"));
+        var item = Indexed(BookPath(a, "01 - One.strm"));
+        Parts[0] = Part("p1", "One", 1, cover: "c2");
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(BookPath(a, "01 - One.jpg"), item.GetImageInfo(ImageType.Primary, 0)?.Path);
+        Parts[0] = Part("p1", "One", 1);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["01 - One.strm"], FilesOf(a));
+        Assert.Empty(item.GetImages(ImageType.Primary));
+    }
+
+    // The covers of a book share one folder, and the name of a part can be the start of another's.
+    [Fact]
+    public async Task ThePartsNamedAlikeKeepTheirOwnCovers()
+    {
+        var a = await AddAsync(Part("p1", "One", 1, cover: "c1"), Part("p2", "One.b", 1, cover: "c2"));
+        Assert.Equal(["01 - One.b.jpg", "01 - One.b.strm", "01 - One.jpg", "01 - One.strm"], FilesOf(a));
+        Parts[0] = Part("p1", "One", 1, cover: "c3");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["01 - One.b.jpg", "01 - One.b.strm", "01 - One.jpg", "01 - One.strm"], FilesOf(a));
+        Parts.RemoveAll(item => item.Id == "p1");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["01 - One.b.jpg", "01 - One.b.strm"], FilesOf(a));
     }
 
     // No cycles: a part of another JellyMesh read in standard mode has no version of its own, so it gets no stub.
