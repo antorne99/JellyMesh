@@ -247,7 +247,18 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
             return;
         }
 
-        _database.WriteAsync((connection, transaction) => ConfigurationTables.Write(connection, transaction, saved, current), CancellationToken.None).GetAwaiter().GetResult();
+        _database.WriteAsync(
+            (connection, transaction) =>
+            {
+                // The difference holds only for the rows it was made from, which a restore has replaced.
+                if (_database.Generation != _loadedGeneration)
+                {
+                    throw new StoreSuspendedException("The JellyMesh database was opened again while the configuration was being changed.");
+                }
+
+                ConfigurationTables.Write(connection, transaction, saved, current);
+            },
+            CancellationToken.None).GetAwaiter().GetResult();
         _saved = current;
         if (saved.DropsCredentialsIn(current))
         {
