@@ -487,7 +487,7 @@ public class StreamSlotsDeviceTests
         Assert.Equal(2, _slots.Count(_peer));
     }
 
-    // Stock serves the job of a play session whatever item the request names.
+    // Only a play session that keeps to its item shares the slot of a device.
     [Fact]
     public void A_play_session_of_another_item_never_shares_the_slot_of_a_device()
     {

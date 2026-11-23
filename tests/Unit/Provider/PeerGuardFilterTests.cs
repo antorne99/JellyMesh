@@ -1049,7 +1049,7 @@ public class PeerGuardFilterTests
         Assert.False(await PlaybackInfoAsync("other", DeviceTwo));
     }
 
-    // Stock serves the job of a play session whatever item the route names.
+    // Only a play session that keeps to its item shares the slot of a device.
     [Theory]
     [InlineData("Videos", "GetVideoStream", "?static=true&PlaySessionId=")]
     [InlineData("DynamicHls", "GetHlsAudioSegment", "?PlaySessionId=")]

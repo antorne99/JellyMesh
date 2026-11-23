@@ -168,8 +168,7 @@ public sealed class StreamSlots
     {
         lock (_lock)
         {
-            // Stock serves the job of a play session whatever item a request names, so one that ever played another item
-            // shares the slot of no device.
+            // A play session that ever named an item other than the one it was recorded with shares the slot of no device.
             if (playSessionId is not null && !_owners.KeepsTo(peerId, playSessionId, itemId))
             {
                 device = null;
