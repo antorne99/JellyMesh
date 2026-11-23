@@ -13,7 +13,7 @@ public sealed class PlaybackSessionStore
 {
     private readonly ConcurrentDictionary<string, PlaybackSession> _sessions = new(StringComparer.Ordinal);
     private readonly PlaySessionOwners _localOwners;
-    private readonly ConcurrentDictionary<string, Guid> _localSources = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (Guid ServerId, string? StubId)> _localSources = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSessionStore"/> class.
@@ -81,10 +81,22 @@ public sealed class PlaybackSessionStore
     /// </summary>
     /// <param name="playSessionId">The play session, recorded with <see cref="RecordLocal"/>.</param>
     /// <param name="serverId">The server of the file.</param>
-    public void RecordLocalSource(string playSessionId, Guid serverId)
+    /// <param name="stubId">The stub whose <c>.strm</c> it reads, null if not known.</param>
+    public void RecordLocalSource(string playSessionId, Guid serverId, string? stubId = null)
     {
         ArgumentNullException.ThrowIfNull(playSessionId);
-        _localSources[playSessionId] = serverId;
+        _localSources[playSessionId] = (serverId, stubId);
+    }
+
+    /// <summary>
+    /// Tells whether the local transcode of a play session still open reads the <c>.strm</c> of a stub.
+    /// </summary>
+    /// <param name="stubId">The stub.</param>
+    /// <returns>Whether one reads it.</returns>
+    public bool IsReadLocally(string stubId)
+    {
+        ForgetEndedSources();
+        return _localSources.Values.Any(source => string.Equals(source.StubId, stubId, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -95,7 +107,7 @@ public sealed class PlaybackSessionStore
     public IReadOnlyList<string> LocalSessionsReading(Guid serverId)
     {
         ForgetEndedSources();
-        return _localSources.Where(pair => pair.Value == serverId).Select(pair => pair.Key).ToList();
+        return _localSources.Where(pair => pair.Value.ServerId == serverId).Select(pair => pair.Key).ToList();
     }
 
     /// <summary>

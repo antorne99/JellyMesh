@@ -354,6 +354,20 @@ public sealed class StreamSlots
     }
 
     /// <summary>
+    /// Tells whether a peer holds a slot for an item.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="itemId">The item.</param>
+    /// <returns>Whether it plays it.</returns>
+    public bool IsPlaying(Guid peerId, Guid itemId)
+    {
+        lock (_lock)
+        {
+            return SlotsOf(peerId).Values.Any(slot => slot.ItemId.Equals(itemId));
+        }
+    }
+
+    /// <summary>
     /// Counts the slots of a peer, those whose transcode is being closed too.
     /// </summary>
     /// <param name="peerId">The peer.</param>

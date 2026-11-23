@@ -13,6 +13,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
@@ -36,6 +37,7 @@ public sealed class PlaybackCoordinator
     private readonly IPluginConfigurationStore _store;
     private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
+    private readonly IPluginDatabase _database;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
@@ -59,6 +61,7 @@ public sealed class PlaybackCoordinator
     /// <param name="store">The configuration store.</param>
     /// <param name="lastServed">The last server that served each stub to each user.</param>
     /// <param name="clock">The clock.</param>
+    /// <param name="database">The plugin database, whose state suspends new playback.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="transcodes">The transcode manager, which closes the local transcodes of a removed server.</param>
     public PlaybackCoordinator(
@@ -68,6 +71,7 @@ public sealed class PlaybackCoordinator
         IPluginConfigurationStore store,
         ILastServedSourceStore lastServed,
         TimeProvider clock,
+        IPluginDatabase database,
         ILogger<PlaybackCoordinator> logger,
         ITranscodeManager? transcodes = null)
     {
@@ -77,6 +81,7 @@ public sealed class PlaybackCoordinator
         _store = store;
         _lastServed = lastServed;
         _clock = clock;
+        _database = database;
         _logger = logger;
         _transcodes = transcodes;
     }
@@ -87,6 +92,12 @@ public sealed class PlaybackCoordinator
     /// whose disks are waking up.
     /// </summary>
     public TimeSpan StallLimit => Times.Idle;
+
+    /// <summary>
+    /// Gets a value indicating whether nothing new plays from the remotes because the plugin database cannot be used (row
+    /// 524). What already plays goes on.
+    /// </summary>
+    public bool IsSuspended => _database.Health.Suspended;
 
     /// <summary>
     /// Gets or sets how long closing one session on the remote may take while its server is removed (413).
@@ -105,6 +116,12 @@ public sealed class PlaybackCoordinator
     public async Task<PlaybackOutcome> OpenAsync(PlaybackOpenRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        if (IsSuspended)
+        {
+            _logger.LogWarning("Title {StubId} cannot play from a server: the JellyMesh database cannot be used", request.Stub.Id);
+            return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable);
+        }
 
         // After a fallback the session is under the version that served, which the same client may ask for again.
         var versions = VersionsOf(request).ToList();
@@ -272,7 +289,8 @@ public sealed class PlaybackCoordinator
 
     /// <summary>
     /// Opens the remote file of a stub for the server's own reader: the local ffmpeg of the fallback. It has no user, so it
-    /// stays on its stub, first the source <c>OpenAsync</c> chose, and a stub of one server never reads another (D22).
+    /// stays on its stub, first the source <c>OpenAsync</c> chose, and a stub of one server never reads another (D22). While
+    /// the plugin database cannot be used, only the stub of a local transcode already open is read (row 524).
     /// </summary>
     /// <param name="stub">The stub.</param>
     /// <param name="method">GET or HEAD.</param>
@@ -282,6 +300,12 @@ public sealed class PlaybackCoordinator
     public async Task<RemoteContent?> OpenFileAsync(StubEntry stub, HttpMethod method, string? range, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stub);
+
+        if (IsSuspended && !_sessions.IsReadLocally(stub.Id))
+        {
+            _logger.LogWarning("The file of stub {StubId} is not opened: the JellyMesh database cannot be used", stub.Id);
+            return null;
+        }
 
         var chosen = ChosenFor(stub);
         IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
@@ -446,11 +470,12 @@ public sealed class PlaybackCoordinator
     /// </summary>
     /// <param name="playSessionId">The local play session.</param>
     /// <param name="file">The source of the file, null if none.</param>
-    public void RecordLocalTranscode(string? playSessionId, StubSource? file)
+    /// <param name="stubId">The stub whose <c>.strm</c> it reads, null if not known.</param>
+    public void RecordLocalTranscode(string? playSessionId, StubSource? file, string? stubId = null)
     {
         if (!string.IsNullOrEmpty(playSessionId) && file is not null)
         {
-            _sessions.RecordLocalSource(playSessionId, file.ServerId);
+            _sessions.RecordLocalSource(playSessionId, file.ServerId, stubId);
         }
     }
 

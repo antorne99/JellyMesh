@@ -81,6 +81,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "MediaSegments"
     };
 
+    private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal)
+    {
+        "Videos",
+        "DynamicHls",
+        "Audio",
+        "UniversalAudio"
+    };
+
     private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
@@ -254,6 +262,16 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
+            // Stock would start reading the .strm. The stub the named local play session plays goes on.
+            if (_coordinator.IsSuspended
+                && _streamControllers.Contains(controller)
+                && !stubs.Keys.All(id => named.Any(playSessionId => _sessions.LocalItemOf(playSessionId) == id)))
+            {
+                _logger.LogWarning("{Controller}.{Action} of a federated title is refused: the JellyMesh database cannot be used", controller, action);
+                context.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, PlaybackRefusal.Text);
+                return;
+            }
+
             foreach (var playSessionId in named)
             {
                 _sessions.UseLocal(user.Id, playSessionId);
@@ -345,6 +363,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (_stubs.Find(itemId) is not { } stub)
         {
             _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // Before a place is taken, which could close an older session of the user.
+        if (_coordinator.IsSuspended)
+        {
+            _logger.LogWarning("{Action} of stub {StubId} is refused: the JellyMesh database cannot be used: 503", action, stub.Id);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 

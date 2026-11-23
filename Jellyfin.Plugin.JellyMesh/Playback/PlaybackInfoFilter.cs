@@ -347,7 +347,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
         _coordinator.RecordLocalPlaySession(request.Identity.UserId, request.Identity.ItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
         _logger.LogInformation("Title {StubId} plays from a local transcode, play session {PlaySessionId}", request.Stub.Id, response.PlaySessionId);
-        _coordinator.RecordLocalTranscode(response.PlaySessionId, outcome.FileSource);
+        _coordinator.RecordLocalTranscode(response.PlaySessionId, outcome.FileSource, request.Identity.StubId);
         _segments.OfferOnLocal(response, request.Identity, outcome.FileSource, route);
     }
 

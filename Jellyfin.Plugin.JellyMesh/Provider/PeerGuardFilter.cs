@@ -1,7 +1,9 @@
 using System;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -14,7 +16,8 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// <summary>
 /// The boundary of a peer on stock routes: what it may call, on which items, and how many streams at a time. A resource
 /// filter, because it has to wrap the writing of the response: for a stream that is where the time goes, and the slot
-/// stays held until the last byte. Anyone who is not a peer passes untouched.
+/// stays held until the last byte. Anyone who is not a peer passes untouched. While the plugin database cannot be used a
+/// peer gets 503 on every route, except for what it already plays (row 524).
 /// </summary>
 public sealed class PeerGuardFilter : IAsyncResourceFilter
 {
@@ -30,6 +33,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private readonly ProviderCatalog _catalog;
     private readonly StreamSlots _slots;
     private readonly AbandonedStreamCloser _closer;
+    private readonly IPluginDatabase _database;
     private readonly ConcurrencyLimit<Guid> _reads = new(ProviderProtocol.MaxReadsPerPeer);
 
     /// <summary>
@@ -39,12 +43,14 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     /// <param name="catalog">The catalog.</param>
     /// <param name="slots">The stream slots.</param>
     /// <param name="closer">What closes the transcodes of abandoned streams.</param>
-    public PeerGuardFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots, AbandonedStreamCloser closer)
+    /// <param name="database">The plugin database, whose state suspends the peers.</param>
+    public PeerGuardFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots, AbandonedStreamCloser closer, IPluginDatabase database)
     {
         _peers = peers;
         _catalog = catalog;
         _slots = slots;
         _closer = closer;
+        _database = database;
     }
 
     /// <summary>
@@ -88,6 +94,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         var action = context.ActionDescriptor as ControllerActionDescriptor;
         var kind = PeerRoutes.Classify(action, http.Request.Method);
+        if (_database.Health.Suspended && !IsOfRunningStream(caller.Grant.UserId, kind, action, context))
+        {
+            context.Result = StoreUnavailableFilter.Unavailable();
+            return;
+        }
+
         switch (kind)
         {
             case PeerRouteKind.Open when IsProviderRead(action, http.Request.Method):
@@ -237,6 +249,20 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         {
             _slots.Release(caller.Grant.UserId, playSessionId);
         }
+    }
+
+    // Tells whether a request belongs to a stream the peer already plays: the stream, its subtitles, its slot or its end.
+    private bool IsOfRunningStream(Guid peerId, PeerRouteKind kind, ControllerActionDescriptor? action, ResourceExecutingContext context)
+    {
+        return kind switch
+        {
+            PeerRouteKind.Stream => _slots.Owns(peerId, StreamPlaySessionOf(context.HttpContext)),
+            PeerRouteKind.StopEncoding => _slots.Owns(peerId, PlaySessionOf(context.HttpContext)),
+            PeerRouteKind.Item when action?.ControllerName == "Subtitle" => ItemIdOf(context.RouteData) is { } itemId && _slots.IsPlaying(peerId, itemId),
+            PeerRouteKind.Open when action?.ControllerTypeInfo == typeof(ProviderController) && !HttpMethods.IsGet(context.HttpContext.Request.Method) =>
+                _slots.Owns(peerId, context.RouteData.Values[PlaySessionParameter]?.ToString()),
+            _ => false
+        };
     }
 
     private static bool IsProviderRead(ControllerActionDescriptor? action, string method)
