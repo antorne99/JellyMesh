@@ -55,6 +55,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     public const int PhotoImageSide = 4096;
 
     /// <summary>
+    /// Largest image of a remote photo served to a client, in bytes. It stays in memory until the client has read it.
+    /// </summary>
+    public const int MaxPhotoImageBytes = 8 * 1024 * 1024;
+
+    /// <summary>
+    /// Largest local thumbnail of a remote photo, in bytes. Well above a JPEG of <see cref="PhotoThumbnailSide"/>.
+    /// </summary>
+    public const int MaxPhotoThumbnailBytes = 1024 * 1024;
+
+    /// <summary>
     /// Highest JPEG quality of the image of a remote photo. Below 90, so that Jellyfin always encodes it again.
     /// </summary>
     public const int PhotoImageQuality = 80;
@@ -323,13 +333,20 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     /// <inheritdoc />
     public Task<RemoteResult<RemoteImage>> GetPhotoThumbnailAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
-        => GetPhotoImageAsync(endpoint, session, itemId, new RemotePhotoSize { MaxWidth = PhotoThumbnailSide, MaxHeight = PhotoThumbnailSide }, cancellationToken);
+        => ReadPhotoAsync(endpoint, session, itemId, new RemotePhotoSize { MaxWidth = PhotoThumbnailSide, MaxHeight = PhotoThumbnailSide }, MaxPhotoThumbnailBytes, cancellationToken);
 
     /// <inheritdoc />
-    public async Task<RemoteResult<RemoteImage>> GetPhotoImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, CancellationToken cancellationToken)
+    public Task<RemoteResult<RemoteImage>> GetPhotoImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(size);
+
+        return ReadPhotoAsync(endpoint, session, itemId, size, MaxPhotoImageBytes, cancellationToken);
+    }
+
+    // Reads a re-encoded JPEG of a photo of at most a number of bytes.
+    private async Task<RemoteResult<RemoteImage>> ReadPhotoAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, int maxBytes, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
-        ArgumentNullException.ThrowIfNull(size);
 
         // Below quality 90 Jellyfin never sends the original file, so the photo's own EXIF is not copied.
         var path = string.Create(
@@ -343,7 +360,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             }
         }
 
-        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, MaxImageBytes).ConfigureAwait(false);
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, maxBytes).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
             return RemoteResult.Fail<RemoteImage>(response.Failure);

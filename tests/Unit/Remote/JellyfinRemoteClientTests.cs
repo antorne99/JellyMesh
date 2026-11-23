@@ -113,9 +113,9 @@ public class JellyfinRemoteClientTests
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
     }
 
-    private static StubHandler PhotoImageHandler(string type = "image/jpeg") => new(_ =>
+    private static StubHandler PhotoImageHandler(string type = "image/jpeg", byte[]? bytes = null) => new(_ =>
     {
-        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0xD8, 0xFF, 0xD9]) };
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes ?? [0xFF, 0xD8, 0xFF, 0xD9]) };
         response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(type);
         return response;
     });
@@ -140,6 +140,17 @@ public class JellyfinRemoteClientTests
         Assert.Equal(query, request.Uri.Query);
         Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    // A served image is held in memory and a thumbnail on disk, so each has a limit of its own.
+    [Fact]
+    public async Task APhotoImageOrThumbnailOverItsBytesIsRefused()
+    {
+        var image = await ClientFor(PhotoImageHandler(bytes: new byte[JellyfinRemoteClient.MaxPhotoImageBytes + 1])).GetPhotoImageAsync(_endpoint, _session, "item", new RemotePhotoSize(), CancellationToken.None);
+        var thumbnail = await ClientFor(PhotoImageHandler(bytes: new byte[JellyfinRemoteClient.MaxPhotoThumbnailBytes + 1])).GetPhotoThumbnailAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, image.Failure);
+        Assert.Equal(RemoteFailure.ResponseTooLarge, thumbnail.Failure);
     }
 
     [Theory]
