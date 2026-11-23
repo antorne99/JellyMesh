@@ -700,6 +700,26 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ASeriesWithTwoRowsOfOneIdGetsItsStateBack()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID"));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
+        var (_, oldEpisode) = ShowItems(a);
+        Watch(_anna, oldEpisode, 1);
+        await RemoveAsync(a);
+
+        var again = await AddAndMaterializeAsync("A", TestLibraries.Shows);
+        var (_, episode) = ShowItems(again);
+        var state = _fixture.Registry.State;
+        await _fixture.Registry.SaveAsync(state with { Series = [.. state.Series, state.Series[0] with { WorkKey = "other" }] }, CancellationToken.None);
+        Assert.Equal(2, _fixture.Registry.State.Series.Count);
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, episode).Played);
+    }
+
     // D21: a title merged by hand gets the kept state of each of its identities, on every copy of it.
     [Fact]
     public async Task AMergedTitleGetsTheKeptStateOfEachOfItsIdentities()
