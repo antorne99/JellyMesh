@@ -207,7 +207,7 @@ public static class StubPlanner
         var splits = SplitsOf(input, works, seriesWorks, stubs, series, removals, lost);
         var waiting = splits.Select(split => split.FromStubId).ToHashSet(StringComparer.Ordinal);
         removals.RemoveAll(stub => stub.ServerId is { } server && servers.ContainsKey(server)
-            && (waiting.Contains(stub.Id) || (stub.SeriesStubId is { } owner && waiting.Contains(owner))));
+            && (waiting.Contains(stub.Id) || (stub.SeriesStubId is { } owner && waiting.Contains(owner) && !living.Contains(owner))));
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
         var groups = Groups(input, placed, stubs.Where(stub => legacy || IsCurrent(stub.RelativePath)).ToList(), removals.Select(stub => stub.Id).Concat(merged));

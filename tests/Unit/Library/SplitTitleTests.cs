@@ -688,6 +688,27 @@ public sealed class SplitTitleTests : IDisposable
         AssertFull(Row(_anna, PathOf(added)));
     }
 
+    [Fact]
+    public async Task AnEpisodeGoesWhileASplitWaitsForItsSeries()
+    {
+        await AddSeriesAsync(("e1", TestLibraries.Shows, 1, 1), ("e2", TestLibraries.Shows, 1, 2), ("f1", TestLibraries.ShowsB, 2, 1), ("f2", TestLibraries.ShowsB, 2, 2));
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var first = Assert.Single(Stubs, stub => stub.Sources[0].ItemId == "e1");
+        var library = FederatedPaths.RemoteLibraryOf(first.RelativePath)!;
+        var gone = library == TestLibraries.Shows ? first : Assert.Single(Stubs, stub => stub.Sources[0].ItemId == "f1");
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Contains(_fixture.Registry.State.Splits, split => split.FromStubId == first.SeriesStubId);
+        Remove(library, RemoteItemType.Episode, gone.Sources[0].ItemId);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.DoesNotContain(Stubs, stub => stub.Id == gone.Id);
+        Assert.Contains(_fixture.Registry.State.Splits, split => split.FromStubId == first.SeriesStubId);
+    }
+
     // The series is still on its server, so it keeps its state until the new one takes it.
     [Theory]
     [InlineData(false)]
