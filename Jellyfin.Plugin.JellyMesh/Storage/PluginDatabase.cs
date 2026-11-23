@@ -339,13 +339,17 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return true;
     }
 
-    // The full check of a file nothing else reads. The journal of a rebuild stays in memory, so no other file is made.
-    private bool FilePassesFullCheck(string path)
+    // The full check of a file nothing else reads. A copy can be made again, so the journal of its rebuild stays in memory.
+    private bool FilePassesFullCheck(string path, bool isCopy = true)
     {
         try
         {
             using var connection = Connect(new SqliteConnectionStringBuilder(_connectionString) { DataSource = path }.ToString());
-            Scalar(connection, "PRAGMA journal_mode = MEMORY;");
+            if (isCopy)
+            {
+                Scalar(connection, "PRAGMA journal_mode = MEMORY;");
+            }
+
             return PassesFullCheck(connection);
         }
         catch (SqliteException exception) when (IsDamage(exception))
@@ -774,7 +778,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 return held;
             }
 
-            health = Volatile.Read(ref _damage) ?? OpenFile(full: held is not null);
+            health = Volatile.Read(ref _damage) ?? OpenFile(full: held is not null, isCopy: false);
             health = health.State == StoreState.Damaged ? Recover(health, retried) : health;
         }
 
@@ -818,7 +822,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once
     // its version is known and it passes the check. A full check rebuilds the indexes of a file that fails it.
-    private StoreHealth OpenFile(bool full = false)
+    private StoreHealth OpenFile(bool full = false, bool isCopy = true)
     {
         SqliteConnection? writer = null;
         try
@@ -837,7 +841,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 passes = PassesCheck(probe, full);
             }
 
-            if (!passes && !(full && FilePassesFullCheck(_path)))
+            if (!passes && !(full && FilePassesFullCheck(_path, isCopy)))
             {
                 _logger.LogWarning("The JellyMesh database failed its integrity check");
                 return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");

@@ -380,6 +380,25 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Null(database.Recovery);
     }
 
+    // A store that waited for Retry past a restart is checked in full, and its own data stays when the indexes can be rebuilt.
+    [Fact]
+    public async Task RetryAfterARestartRebuildsTheIndexesOfTheFileItFinds()
+    {
+        var database = await WithACopyAsync();
+        await SwapIndexesAsync(database);
+        database.Dispose();
+        await File.WriteAllTextAsync(Path.Combine(Folder, StoreBackups.HeldFileName), "\"damaged\"");
+
+        var restarted = Open();
+        Assert.Equal(new StoreHealth(StoreState.Damaged, "damaged"), restarted.Health);
+        Assert.Equal(StoreHealth.Healthy, restarted.Retry());
+
+        Assert.Equal("copied,lost", await ItemsAsync(restarted));
+        Assert.Equal("ok", await restarted.ReadAsync((connection, transaction) => Scalar(connection, "PRAGMA integrity_check;", transaction), CancellationToken.None));
+        Assert.Empty(SetAside());
+        Assert.Null(restarted.Recovery);
+    }
+
     [Fact]
     public async Task RebuildingTheIndexesWaitsForNoReadAndHoldsNone()
     {
