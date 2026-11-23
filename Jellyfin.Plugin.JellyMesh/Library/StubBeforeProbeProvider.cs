@@ -63,7 +63,7 @@ public sealed class StubBeforeProbeProvider : StubMetadataProvider
         }
 
         var changed = Technical.WriteItemAndStreams(item, stub, cancellationToken);
-        changed |= stub.Kind == StubKind.Track && Technical.WriteTrack(item, stub, Store.ReadOr(config => config.MetadataProtection, true));
+        changed |= stub.Kind is StubKind.Track or StubKind.AudioBook && Technical.WriteTrack(item, stub, Store.ReadOr(config => config.MetadataProtection, true));
         return changed ? ItemUpdateType.MetadataImport : ItemUpdateType.None;
     }
 
