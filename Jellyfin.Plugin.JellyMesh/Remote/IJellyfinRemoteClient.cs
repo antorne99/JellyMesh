@@ -127,12 +127,12 @@ public interface IJellyfinRemoteClient
     Task<RemoteResult<RemoteImage>> GetImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, string imageType, int imageIndex, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Downloads a JPEG of a photo of a bounded size, at quality 80 at most, which Jellyfin always encodes again.
+    /// Downloads a JPEG of a photo of a bounded size, at quality 80, which Jellyfin always encodes again.
     /// </summary>
     /// <param name="endpoint">The remote.</param>
     /// <param name="session">The session.</param>
     /// <param name="itemId">The photo on the remote.</param>
-    /// <param name="size">The size and quality asked for.</param>
+    /// <param name="size">The size asked for.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The image. An answer that is not a JPEG is <see cref="RemoteFailure.InvalidResponse"/>.</returns>
     Task<RemoteResult<RemoteImage>> GetPhotoImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, CancellationToken cancellationToken);
