@@ -1151,7 +1151,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     // Whether a call may write a log line: an anonymous one at most one per interval and server (row 534).
-    private bool MayLog(ServerRuntime runtime, bool anonymous) => !anonymous || runtime.TryTakeAnonymousLine(Clock.GetUtcNow());
+    private bool MayLog(ServerRuntime runtime, bool anonymous) => !anonymous || runtime.TryTakeAnonymousLine(Clock);
 
     private async Task<SessionAttempt<T>> CallOnceAsync<T>(
         StoredServer server,
@@ -1658,10 +1658,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         // Takes the log line of the anonymous calls, at most one per interval. A clock set back starts a new one.
-        public bool TryTakeAnonymousLine(DateTimeOffset now)
+        public bool TryTakeAnonymousLine(TimeProvider clock)
         {
             lock (_gate)
             {
+                var now = clock.GetUtcNow();
                 if (now >= _anonymousLine && now - _anonymousLine < AnonymousLogInterval)
                 {
                     return false;
