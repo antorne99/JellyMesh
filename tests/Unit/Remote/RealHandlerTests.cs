@@ -88,7 +88,7 @@ public sealed class RealHandlerTests : IDisposable
             (await catalog.GetImageAsync(endpoint, _session, "item", "Primary", 0, CancellationToken.None)).Failure,
             (await catalog.GetItemsAsync(endpoint, _session, new RemoteItemQuery("lib", RemoteItemType.Movie, 0, 1), CancellationToken.None)).Failure,
             (await playback.GetPlaybackInfoAsync(endpoint, _session, new RemotePlaybackRequest { ItemId = "i", MediaSourceId = "m" }, CancellationToken.None)).Failure,
-            (await playback.ReadPlaylistAsync(endpoint, _session, "/x.m3u8", CancellationToken.None)).Failure,
+            (await playback.ReadPlaylistAsync(endpoint, _session, "/x.m3u8", null, CancellationToken.None)).Failure,
             (await playback.OpenStreamAsync(endpoint, _session, new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null), CancellationToken.None)).Failure,
             (await playback.StopEncodingAsync(endpoint, _session, "ps", CancellationToken.None)).Failure
         };
@@ -213,7 +213,7 @@ public sealed class RealHandlerTests : IDisposable
         var endpoint = EndpointOf(server);
 
         var catalog = await WithinAsync(Catalog(TimeSpan.FromSeconds(10)).GetChangesAsync(endpoint, _session, null, CancellationToken.None));
-        var playback = await WithinAsync(Playback().ReadPlaylistAsync(endpoint, _session, "/x.m3u8", CancellationToken.None));
+        var playback = await WithinAsync(Playback().ReadPlaylistAsync(endpoint, _session, "/x.m3u8", null, CancellationToken.None));
 
         Assert.Equal(expected, catalog.Failure);
         Assert.Equal(expected, playback.Failure);
@@ -234,7 +234,7 @@ public sealed class RealHandlerTests : IDisposable
         });
         self = server;
 
-        var result = await WithinAsync(Playback().ReadPlaylistAsync(EndpointOf(server), _session, "/x.m3u8", CancellationToken.None));
+        var result = await WithinAsync(Playback().ReadPlaylistAsync(EndpointOf(server), _session, "/x.m3u8", null, CancellationToken.None));
 
         Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
         Assert.InRange(server.BytesWritten, RemotePlaybackClient.MaxDocumentBytes, RemotePlaybackClient.MaxDocumentBytes + (32L * 1024 * 1024));
@@ -322,7 +322,7 @@ public sealed class RealHandlerTests : IDisposable
 
         foreach (var path in paths)
         {
-            var playlist = await playback.ReadPlaylistAsync(endpoint, _session, path, CancellationToken.None);
+            var playlist = await playback.ReadPlaylistAsync(endpoint, _session, path, null, CancellationToken.None);
             var stream = await playback.OpenStreamAsync(endpoint, _session, new RemoteStreamRequest(HttpMethod.Get, path, null), CancellationToken.None);
 
             Assert.Equal(RemoteFailure.InvalidResponse, playlist.Failure);

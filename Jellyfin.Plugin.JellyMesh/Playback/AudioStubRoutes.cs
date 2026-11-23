@@ -305,7 +305,7 @@ public sealed class AudioStubRoutes
     // The variant playlist of the session, read through its master, for a client that asks main.m3u8 by itself.
     private async Task<IActionResult> VariantAsync(HttpContext http, PlaybackSession session, string prefix, string token)
     {
-        var master = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false);
+        var master = await _coordinator.ReadPlaylistAsync(session, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false);
         if (!master.IsSuccess
             || HlsMaster.ReadVariants(master.Value!) is not [var variant, ..]
             || variant.Uri.StartsWith('/')

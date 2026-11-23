@@ -38,6 +38,7 @@ public sealed class PlaybackCoordinator
     private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
+    private readonly DeviceHasher _devices;
     private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
@@ -60,6 +61,7 @@ public sealed class PlaybackCoordinator
     /// <param name="lastServed">The last server that served each stub to each user.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="devices">What names the devices to the JellyMesh servers.</param>
     /// <param name="transcodes">The transcode manager, which closes the local transcodes of a removed server.</param>
     public PlaybackCoordinator(
         IRemoteServerRegistry registry,
@@ -69,6 +71,7 @@ public sealed class PlaybackCoordinator
         ILastServedSourceStore lastServed,
         TimeProvider clock,
         ILogger<PlaybackCoordinator> logger,
+        DeviceHasher devices,
         ITranscodeManager? transcodes = null)
     {
         _registry = registry;
@@ -78,6 +81,7 @@ public sealed class PlaybackCoordinator
         _lastServed = lastServed;
         _clock = clock;
         _logger = logger;
+        _devices = devices;
         _transcodes = transcodes;
     }
 
@@ -242,7 +246,7 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(stub);
 
-        var (content, refused, tried) = await ReadFileAsync(stub, method, range, cancellationToken).ConfigureAwait(false);
+        var (content, refused, tried) = await ReadFileAsync(stub, null, method, range, cancellationToken).ConfigureAwait(false);
         if (content is null && tried > 0 && refused == tried)
         {
             _filesAtLimit[stub.Id] = _clock.GetUtcNow();
@@ -280,7 +284,7 @@ public sealed class PlaybackCoordinator
         var (refused, tried) = (0, 0);
         foreach (var copy in order)
         {
-            var read = await ReadFileAsync(copy, method, range, cancellationToken).ConfigureAwait(false);
+            var read = await ReadFileAsync(copy, (userId, deviceId), method, range, cancellationToken).ConfigureAwait(false);
             (refused, tried) = (refused + read.Refused, tried + read.Tried);
             if (read.Content is not null)
             {
@@ -400,16 +404,18 @@ public sealed class PlaybackCoordinator
     /// <summary>
     /// Reads a playlist of a session.
     /// </summary>
-    /// <param name="serverId">The server.</param>
+    /// <param name="session">The session.</param>
     /// <param name="path">The path and query.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The text.</returns>
-    public Task<RemoteResult<string>> ReadPlaylistAsync(Guid serverId, string path, CancellationToken cancellationToken)
+    public Task<RemoteResult<string>> ReadPlaylistAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(session);
+
         return GatedAsync(
-            serverId,
+            session.Source.ServerId,
             Times.StreamOpen,
-            (endpoint, session, token) => _client.ReadPlaylistAsync(endpoint, session, path, token),
+            (endpoint, remote, token) => _client.ReadPlaylistAsync(endpoint, remote, path, session.RemoteDevice, token),
             cancellationToken);
     }
 
@@ -627,7 +633,7 @@ public sealed class PlaybackCoordinator
     private static string BookPath(StubSource source) => "/Items/" + Uri.EscapeDataString(source.ItemId) + "/File";
 
     // Reads the file of one stub from its sources, the one last chosen first; a stub stays on its server.
-    private async Task<(RemoteContent? Content, int Refused, int Tried)> ReadFileAsync(StubEntry stub, HttpMethod method, string? range, CancellationToken cancellationToken)
+    private async Task<(RemoteContent? Content, int Refused, int Tried)> ReadFileAsync(StubEntry stub, (Guid UserId, string? DeviceId)? reader, HttpMethod method, string? range, CancellationToken cancellationToken)
     {
         var chosen = ChosenFor(stub);
         IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
@@ -636,7 +642,8 @@ public sealed class PlaybackCoordinator
         foreach (var source in Ordered(sources, chosen?.Working.Source))
         {
             tried++;
-            var request = new RemoteStreamRequest(method, stub.Kind == StubKind.Book ? BookPath(source) : FilePath(source), range);
+            var device = reader is { } access ? DeviceFor(stub, source, access.UserId, access.DeviceId) : null;
+            var request = new RemoteStreamRequest(method, stub.Kind == StubKind.Book ? BookPath(source) : FilePath(source), range, Device: device);
             var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
             if (stream.IsSuccess)
             {
@@ -666,7 +673,7 @@ public sealed class PlaybackCoordinator
         return failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.Suspended or RemoteFailure.UnknownServer;
     }
 
-    private static RemotePlaybackRequest ToRemote(PlaybackOpenRequest request, StubSource source, bool keepIndexes, string? replaces)
+    private static RemotePlaybackRequest ToRemote(PlaybackOpenRequest request, StubSource source, bool keepIndexes, string? replaces, string? device)
     {
         return new RemotePlaybackRequest
         {
@@ -684,7 +691,8 @@ public sealed class PlaybackCoordinator
             AllowVideoStreamCopy = request.AllowVideoStreamCopy,
             AllowAudioStreamCopy = request.AllowAudioStreamCopy,
             AlwaysBurnInSubtitleWhenTranscoding = request.AlwaysBurnInSubtitleWhenTranscoding,
-            ReplacesPlaySessionId = replaces
+            ReplacesPlaySessionId = replaces,
+            Device = device
         };
     }
 
@@ -782,12 +790,19 @@ public sealed class PlaybackCoordinator
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
     }
 
+    // What names the device of a track to a JellyMesh remote, so that its streams share a slot there (row 511).
+    private string? DeviceFor(StubEntry stub, StubSource source, Guid userId, string? deviceId)
+    {
+        return stub.Kind == StubKind.Track && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
+    }
+
     private async Task<Attempt> TryRemoteAsync(PlaybackOpenRequest request, StubSource source, bool keepIndexes, PlaybackSession? previous, CancellationToken cancellationToken)
     {
         // A new PlaybackInfo on the same server takes over the slot of the stream it replaces: on a full server a change of
         // audio track would otherwise be refused by its own stream.
         var replaces = previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
-        var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
+        var device = DeviceFor(request.Stub, source, request.Identity.UserId, request.Identity.DeviceId);
+        var remoteRequest = ToRemote(request, source, keepIndexes, replaces, device);
         var end = EndOf(source.ServerId).Token;
         var answer = await GatedAsync(
             source.ServerId,
@@ -822,7 +837,7 @@ public sealed class PlaybackCoordinator
         PlaybackSession? session = null;
         try
         {
-            session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, cancellationToken).ConfigureAwait(false);
+            session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, device, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -856,15 +871,15 @@ public sealed class PlaybackCoordinator
         return new Attempt(new PlaybackInfoResponse { MediaSources = [built], PlaySessionId = session.Id }, true);
     }
 
-    private async Task<PlaybackSession?> OpenStreamKindAsync(PlaybackOpenRequest request, StubSource source, MediaSourceInfo remote, string remotePlaySessionId, CancellationToken cancellationToken)
+    private async Task<PlaybackSession?> OpenStreamKindAsync(PlaybackOpenRequest request, StubSource source, MediaSourceInfo remote, string remotePlaySessionId, string? device, CancellationToken cancellationToken)
     {
         var now = _clock.GetUtcNow();
         if (remote.SupportsDirectPlay)
         {
             // A JellyMesh remote counts this stream by its play session. A stock request stays as it always was.
             var path = FilePath(source, IsJellyMesh(source.ServerId) ? remotePlaySessionId : null);
-            return await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, path, ProbeRange), cancellationToken).ConfigureAwait(false)
-                ? new PlaybackSession(request.Identity, source, remotePlaySessionId, PlaybackStreamKind.Direct, path, now)
+            return await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, path, ProbeRange, Device: device), cancellationToken).ConfigureAwait(false)
+                ? new PlaybackSession(request.Identity, source, remotePlaySessionId, PlaybackStreamKind.Direct, path, now) { RemoteDevice = device }
                 : null;
         }
 
@@ -881,12 +896,12 @@ public sealed class PlaybackCoordinator
 
         var upstream = PlaybackUrls.WithoutToken(remote.TranscodingUrl);
         var kind = remote.TranscodingSubProtocol == MediaStreamProtocol.hls ? PlaybackStreamKind.Hls : PlaybackStreamKind.Progressive;
-        var session = new PlaybackSession(request.Identity, source, remotePlaySessionId, kind, upstream, now);
+        var session = new PlaybackSession(request.Identity, source, remotePlaySessionId, kind, upstream, now) { RemoteDevice = device };
         try
         {
             var works = kind == PlaybackStreamKind.Hls
                 ? await FirstSegmentWorksAsync(session, request.DeviceProfile, cancellationToken).ConfigureAwait(false)
-                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null), cancellationToken).ConfigureAwait(false);
+                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null, Device: device), cancellationToken).ConfigureAwait(false);
             if (works)
             {
                 return session;
@@ -905,7 +920,7 @@ public sealed class PlaybackCoordinator
 
     private async Task<bool> FirstSegmentWorksAsync(PlaybackSession session, DeviceProfile? profile, CancellationToken cancellationToken)
     {
-        var master = await ReadPlaylistAsync(session.Source.ServerId, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
+        var master = await ReadPlaylistAsync(session, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
         if (!master.IsSuccess)
         {
             return false;
@@ -920,7 +935,7 @@ public sealed class PlaybackCoordinator
 
         var folder = session.UpstreamFolder();
         var variantPath = folder + variant.Uri;
-        var playlist = await ReadPlaylistAsync(session.Source.ServerId, variantPath, cancellationToken).ConfigureAwait(false);
+        var playlist = await ReadPlaylistAsync(session, variantPath, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess || HlsMaster.FirstSegment(playlist.Value!) is not { } segment)
         {
             return false;
@@ -928,7 +943,7 @@ public sealed class PlaybackCoordinator
 
         var segmentFolder = variantPath.Split('?')[0];
         segmentFolder = segmentFolder[..(segmentFolder.LastIndexOf('/') + 1)];
-        return await CanOpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, segmentFolder + segment, null), cancellationToken).ConfigureAwait(false);
+        return await CanOpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, segmentFolder + segment, null, Device: session.RemoteDevice), cancellationToken).ConfigureAwait(false);
     }
 
     private Task<bool> CanReadFileAsync(StubSource source, CancellationToken cancellationToken)

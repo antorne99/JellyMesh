@@ -122,6 +122,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
             message.Headers.TryAddWithoutValidation(ProviderProtocol.ReplacesHeader, replaces);
         }
 
+        NameDevice(message, request.Device);
+
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
         {
@@ -168,12 +170,13 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     }
 
     /// <inheritdoc />
-    public async Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken)
+    public async Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, string? device, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(session);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, path);
+        NameDevice(message, device);
         var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
         return document.IsSuccess
             ? RemoteResult.Success(Encoding.UTF8.GetString(document.Value!))
@@ -202,6 +205,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         {
             message.Headers.TryAddWithoutValidation(ProviderProtocol.ProbeHeader, "1");
         }
+
+        NameDevice(message, request.Device);
 
         var client = _httpClientFactory.CreateClient(HttpClientName);
         HttpResponseMessage response;
@@ -396,6 +401,15 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         request.Headers.TryAddWithoutValidation("Authorization", JellyfinRemoteClient.AuthorizationHeader(endpoint, session));
         request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
         return request;
+    }
+
+    // Names the device of a track (row 511). The callers pass one for a JellyMesh remote only.
+    private static void NameDevice(HttpRequestMessage? message, string? device)
+    {
+        if (device is not null)
+        {
+            message?.Headers.TryAddWithoutValidation(ProviderProtocol.DeviceHeader, device);
+        }
     }
 
     private static RemoteFailure FailureOf(HttpResponseMessage response)

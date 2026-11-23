@@ -37,9 +37,10 @@ public interface IRemotePlaybackClient
     /// <param name="endpoint">The remote.</param>
     /// <param name="session">The session.</param>
     /// <param name="path">The path and query.</param>
+    /// <param name="device">The hash of the device a track plays on, for a JellyMesh remote only.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The text.</returns>
-    Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken);
+    Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, string? device, CancellationToken cancellationToken);
 
     /// <summary>
     /// Opens a stream. It ends when the headers arrive, so the token bounds the opening and not the transfer.

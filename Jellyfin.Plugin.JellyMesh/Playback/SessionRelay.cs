@@ -57,7 +57,7 @@ public sealed class SessionRelay
             return new StatusCodeResult(StatusCodes.Status502BadGateway);
         }
 
-        var playlist = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, path, cancellationToken).ConfigureAwait(false);
+        var playlist = await _coordinator.ReadPlaylistAsync(session, path, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess)
         {
             return Failed(http, session, path, playlist.Failure);
@@ -89,7 +89,7 @@ public sealed class SessionRelay
 
         var method = HttpMethods.IsHead(http.Request.Method) ? HttpMethod.Head : HttpMethod.Get;
         var range = http.Request.Headers.Range.ToString();
-        var request = new RemoteStreamRequest(method, path, string.IsNullOrEmpty(range) ? null : range);
+        var request = new RemoteStreamRequest(method, path, string.IsNullOrEmpty(range) ? null : range, Device: session.RemoteDevice);
         var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Provider;
+using Jellyfin.Plugin.JellyMesh.Security;
 using MediaBrowser.Common;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.MediaInfo;
@@ -939,6 +940,19 @@ public class PeerGuardFilterTests
         Elapse(StreamSlots.IdleTimeout);
         Assert.True(await FileAsync(DeviceTwo));
         VerifyNothingClosed();
+    }
+
+    // What a consumer sends and what a provider takes are the same value.
+    [Fact]
+    public async Task The_hashes_a_consumer_makes_group_its_reads_by_device()
+    {
+        var hasher = new DeviceHasher(new byte[32]);
+        var (server, user) = (Guid.NewGuid(), Guid.NewGuid());
+
+        Assert.True(await FileAsync(hasher.Hash(server, user, "phone")));
+        Assert.True(await FileAsync(hasher.Hash(server, user, "phone")));
+        Assert.False(await FileAsync(hasher.Hash(server, user, "tablet")));
+        Assert.Equal(1, Slots);
     }
 
     [Fact]
