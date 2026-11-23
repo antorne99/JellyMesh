@@ -954,6 +954,12 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
                 Restore(copy.FilePath);
                 var health = OpenFile(full: true);
+                if (health.State == StoreState.Unavailable)
+                {
+                    // The check of the copy may not have ended, so the note stays and the next open restores it again.
+                    return health;
+                }
+
                 if (health.State == StoreState.Damaged)
                 {
                     _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too and is passed over", Path.GetFileName(copy.FilePath));

@@ -222,6 +222,25 @@ public sealed class RecoveryLimitTests : IDisposable
         Assert.False(File.Exists(HeldPath));
     }
 
+    // A restore that stops at a passing error goes on at the next open, with the full check of the copy.
+    [Fact]
+    public async Task ARestoreAnErrorStopsGoesOnAtTheNextOpen()
+    {
+        var guard = new FailingGuard();
+        var database = Open(guard);
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromHours(1);
+        guard.FailsToKeep = path => path.EndsWith("-wal", StringComparison.Ordinal) && SetAside().Length > 0;
+        await DamageAsync(database);
+        Assert.Equal(StoreState.Unavailable, database.Health.State);
+        Assert.Null(database.Recovery);
+
+        guard.FailsToKeep = _ => false;
+        Assert.Equal(StoreHealth.Healthy, database.Retry());
+        Assert.NotNull(database.Recovery?.CopyDate);
+        Assert.Single(SetAside(), name => !name.EndsWith("-wal", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task ADamageADayAfterTheFirstRecoversByItself()
     {
@@ -373,6 +392,16 @@ public sealed class RecoveryLimitTests : IDisposable
 
         public FileStream CreatePrivate(string path) => Fails(path) ? throw new IOException("No space left on device") : _inner.CreatePrivate(path);
 
-        public void KeepPrivate(string path) => _inner.KeepPrivate(path);
+        public Func<string, bool> FailsToKeep { get; set; } = _ => false;
+
+        public void KeepPrivate(string path)
+        {
+            if (FailsToKeep(path))
+            {
+                throw new IOException("Input/output error");
+            }
+
+            _inner.KeepPrivate(path);
+        }
     }
 }
