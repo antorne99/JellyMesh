@@ -133,7 +133,7 @@ public static class TrackDedup
         var artist = string.Join('\t', artists.Select(name => Normalized(name, names)).Where(name => name.Length > 0));
         var album = Normalized(track.Album, names);
         var title = TitleNormalizer.Normalize(track.Title, null);
-        if (artist.Length == 0 || album.Length == 0 || title.Length == 0 || trackNumber is not { } number || track.RunTimeTicks is null)
+        if (artist.Length == 0 || album.Length == 0 || title.Length == 0 || trackNumber is not { } number || track.RunTimeTicks is not >= 0)
         {
             return null;
         }

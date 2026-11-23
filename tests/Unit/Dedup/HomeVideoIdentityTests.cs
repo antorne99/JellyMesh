@@ -46,6 +46,20 @@ public class HomeVideoIdentityTests
         Assert.Empty(Pairs([Video("k1", seconds: null)], Video("a1", seconds: null)));
     }
 
+    // A remote may send any number: one that is no duration matches nothing and never fails.
+    [Theory]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MinValue + 1)]
+    [InlineData(-1)]
+    [InlineData(0)]
+    public void ADurationThatIsNotPositiveMatchesNothing(long ticks)
+    {
+        var wrong = Video("a1") with { RunTimeTicks = ticks };
+
+        Assert.Empty(Pairs([Video("k1"), Video("k2", seconds: 1), wrong with { ItemId = "k3" }], wrong));
+        Assert.Empty(Pairs([Video("k1")], Video("a1") with { RunTimeTicks = long.MaxValue }));
+    }
+
     [Fact]
     public void EachSavedVideoFindsEveryCopyOfItsOwn()
     {

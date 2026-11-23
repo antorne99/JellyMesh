@@ -266,4 +266,14 @@ public class TrackDedupTests
         Assert.Equal(isSame ? ["1>a:a1"] : [], Pairs([saved], current));
         Assert.Empty(Pairs([saved], current with { Title = "Other" }, current with { RunTimeTicks = 190 * Second }, current with { Album = "Else" }));
     }
+
+    // A remote may send any number: a negative one is no duration, so the place matches nothing.
+    [Fact]
+    public void ANegativeDurationNeverMatchesByPlace()
+    {
+        var wrong = Track("a", "a1") with { RunTimeTicks = long.MinValue };
+
+        Assert.Equal(2, TrackDedup.Resolve([wrong, Track("b", "b1")]).Count);
+        Assert.Empty(Pairs([Saved("1")], wrong));
+    }
 }

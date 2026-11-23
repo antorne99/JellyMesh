@@ -32,11 +32,11 @@ public static class HomeVideoIdentity
             .ToList();
     }
 
-    // The normalized title, year and folder, or null without a title or duration. A missing year or folder equals a missing one.
+    // The normalized title, year and folder, or null without a title or a real duration. A missing year or folder equals a missing one.
     private static string? NameKey(HomeVideoItem video)
     {
         var title = TitleNormalizer.Normalize(video.Title, video.Year);
-        return title.Length == 0 || video.RunTimeTicks is null
+        return title.Length == 0 || video.RunTimeTicks is not > 0
             ? null
             : string.Create(CultureInfo.InvariantCulture, $"{title}\n{video.Year}\n{TitleNormalizer.Normalize(video.Folder, null)}");
     }
