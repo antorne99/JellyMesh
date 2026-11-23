@@ -499,7 +499,8 @@ public sealed class LegacyImport
             && WholeSources(series.Sources) && series.Seasons.All(season => season is { RelativePath: not null }))
         && state.Groups.All(group => group is { Id: not null, IdentityKey: not null, StubIds: not null, LocalItemIds: not null } && group.StubIds.All(id => id is not null))
         && state.Labels.Values.All(label => label is not null) && state.ServerNames.Values.All(name => name is not null)
-        && state.Renames.All(rename => rename is { StubId: not null, OldPath: not null });
+        && state.Renames.All(rename => rename is { StubId: not null, OldPath: not null })
+        && state.Splits is not null && state.Splits.All(split => split is { StubId: not null, FromStubId: not null });
 
     private static bool WholeSources(IReadOnlyList<StubSource> sources) =>
         sources.All(source => source is { ItemId: not null, MediaSourceId: not null });

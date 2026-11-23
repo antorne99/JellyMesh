@@ -188,7 +188,8 @@ public static class StubPlanner
         var removals = new List<StubEntry>();
         var unconfigured = Sweep(input, servers, removed, unclaimed, held, removals);
 
-        // Stubs of the older layouts, merged stubs and those still in doubt stay as they are.
+        // Stubs of the older layouts, merged stubs and those still in doubt stay as they are. So does a stub that another
+        // split from, until the watch state is handed over (§10 row 507).
         var stubs = input.State.Stubs
             .Where(stub => !written.ContainsKey(stub.Id))
             .Concat(works.Select(work => work.Entry))
@@ -198,9 +199,14 @@ public static class StubPlanner
             .Concat(seriesWorks.Select(work => work.Entry))
             .ToList();
 
+        var splits = SplitsOf(input, works, seriesWorks, stubs, series, removals);
+        var waiting = splits.Select(split => split.FromStubId).ToHashSet(StringComparer.Ordinal);
+        removals.RemoveAll(stub => stub.ServerId is { } server && servers.ContainsKey(server)
+            && (waiting.Contains(stub.Id) || (stub.SeriesStubId is { } owner && waiting.Contains(owner))));
+
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
         var groups = Groups(input, placed, stubs.Where(stub => legacy || IsCurrent(stub.RelativePath)).ToList(), removals.Select(stub => stub.Id).Concat(merged));
-        var state = (input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups, Labels = labels })
+        var state = (input.State with { Stubs = stubs, Series = series, RemovedServers = marks, Groups = groups, Labels = labels, Splits = splits })
             .WithServerNames(input.Servers.Select(server => (server.Id, server.Name)));
         return new StubPlan(state, works, seriesWorks, removals, HeldLibraries(input, held), unplaceable.Count)
         {
@@ -306,9 +312,47 @@ public static class StubPlanner
 
     // A version group holds one stub per server and local library: an older stub has the server alone.
     private static (Guid? ServerId, string Placement) SlotOf(StubPlanInput input, StubEntry stub)
-        => (stub.ServerId, FederatedPaths.RemoteLibraryOf(stub.RelativePath) is { } library && stub.ServerId is { } server
-            ? input.PlacementOf(server, library, TypeFolder.Of(stub.Kind))
+        => SlotOf(input, stub.ServerId, stub.RelativePath, TypeFolder.Of(stub.Kind));
+
+    private static (Guid? ServerId, string Placement) SlotOf(StubPlanInput input, Guid? serverId, string relativePath, TypeFolder type)
+        => (serverId, FederatedPaths.RemoteLibraryOf(relativePath) is { } library && serverId is { } server
+            ? input.PlacementOf(server, library, type)
             : string.Empty);
+
+    // The splits that still wait, and those of this plan: a new stub or series that takes a copy of one of its server in
+    // another local library. One whose new stub goes, or whose old one is gone, waits for nothing.
+    private static List<StubSplit> SplitsOf(StubPlanInput input, List<StubWork> works, List<SeriesWork> seriesWorks, List<StubEntry> stubs, List<SeriesStub> series, List<StubEntry> removals)
+    {
+        var added = works.Where(work => work.IsNew).Select(work => Copies(work.Entry)).ToList();
+        var addedSeries = seriesWorks.Where(work => work.IsNew).Select(work => CopiesOfSeries(work.Entry)).ToList();
+        if (input.State.Splits.Count == 0 && added.Count == 0 && addedSeries.Count == 0)
+        {
+            return [];
+        }
+
+        var splits = input.State.Splits
+            .Concat(SharedCopies(added, input.State.Stubs.Where(stub => IsCurrent(stub.RelativePath)).Select(Copies)))
+            .Concat(SharedCopies(addedSeries, input.State.Series.Where(entry => IsCurrent(entry.RelativePath)).Select(CopiesOfSeries)));
+        var known = stubs.Select(stub => stub.Id).Concat(series.Select(entry => entry.Id)).ToHashSet(StringComparer.Ordinal);
+        var removed = removals.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        return splits
+            .Where(split => known.Contains(split.StubId) && known.Contains(split.FromStubId) && !removed.Contains(split.StubId))
+            .Distinct()
+            .ToList();
+
+        SlotCopies Copies(StubEntry stub) => new(stub.Id, SlotOf(input, stub), stub.Sources);
+
+        SlotCopies CopiesOfSeries(SeriesStub entry) => new(entry.Id, SlotOf(input, entry.ServerId, entry.RelativePath, TypeFolder.Series), entry.Sources);
+    }
+
+    private static IEnumerable<StubSplit> SharedCopies(List<SlotCopies> added, IEnumerable<SlotCopies> existing)
+    {
+        var byCopy = existing.SelectMany(entry => entry.Sources.Select(source => (Key: (entry.Slot.ServerId, source.ItemId), Entry: entry))).ToLookup(pair => pair.Key, pair => pair.Entry);
+        return added.SelectMany(entry => entry.Sources
+            .SelectMany(source => byCopy[(entry.Slot.ServerId, source.ItemId)])
+            .Where(other => other.Slot != entry.Slot)
+            .Select(other => new StubSplit(entry.Id, other.Id)));
+    }
 
     // Adds a group of the stubs not in one yet, if it still has two copies.
     private static void AddGroup(List<VersionGroup> groups, HashSet<string> assigned, string id, string identityKey, List<string> stubIds, IReadOnlyList<Guid> local, string? primary)
@@ -870,6 +914,8 @@ public static class StubPlanner
     {
         public List<SeasonEpisode> Episodes { get; } = [];
     }
+
+    private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<StubSource> Sources);
 
     private sealed record SeasonEpisode(string Folder, int Season, Guid ServerId, IndexedItem Episode);
 

@@ -26,9 +26,14 @@ public sealed class StubMatcher
         ArgumentNullException.ThrowIfNull(stubs);
 
         _stubs = stubs.ToList();
-        foreach (var stub in _stubs)
+        // Two stubs of one title, after their local libraries became one: the one a plan gave the copies of both stays.
+        foreach (var stub in _stubs.OrderByDescending(stub => stub.Sources.Count).ThenBy(stub => stub.Id, StringComparer.Ordinal))
         {
             _byKey.TryAdd(stub.IdentityKey, stub);
+        }
+
+        foreach (var stub in _stubs)
+        {
             foreach (var source in stub.Sources)
             {
                 if (!_byItem.TryGetValue((source.ServerId, source.ItemId), out var holders))

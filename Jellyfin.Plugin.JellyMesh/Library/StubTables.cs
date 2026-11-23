@@ -117,6 +117,22 @@ internal static class StubTables
         """);
 
     /// <summary>
+    /// Creates the table of the splits that wait for their watch state, inside the transaction of a schema step.
+    /// </summary>
+    /// <param name="connection">The connection that writes.</param>
+    /// <param name="transaction">The transaction of the schema step.</param>
+    public static void AddSplits(SqliteConnection connection, SqliteTransaction transaction) => StoreCommands.Execute(
+        connection,
+        transaction,
+        """
+        CREATE TABLE stub_splits (
+            position INTEGER NOT NULL PRIMARY KEY,
+            stub_id TEXT NOT NULL,
+            from_stub_id TEXT NOT NULL
+        );
+        """);
+
+    /// <summary>
     /// Reads the whole registry.
     /// </summary>
     /// <param name="connection">A read connection.</param>
@@ -203,7 +219,8 @@ internal static class StubTables
             Labels = ReadNames(connection, transaction, "SELECT server_id, label FROM stub_labels;"),
             ServerNames = ReadNames(connection, transaction, "SELECT server_id, name FROM stub_server_names;"),
             RemovedServers = ReadRemoved(connection, transaction),
-            Renames = ReadRenames(connection, transaction)
+            Renames = ReadRenames(connection, transaction),
+            Splits = ReadSplits(connection, transaction)
         };
     }
 
@@ -226,7 +243,8 @@ internal static class StubTables
             Labels = rewrite || !SameNames(before.Labels, next.Labels),
             ServerNames = rewrite || !SameNames(before.ServerNames, next.ServerNames),
             RemovedServers = rewrite || !before.RemovedServers.SequenceEqual(next.RemovedServers),
-            Renames = rewrite || !before.Renames.SequenceEqual(next.Renames)
+            Renames = rewrite || !before.Renames.SequenceEqual(next.Renames),
+            Splits = rewrite || !before.Splits.SequenceEqual(next.Splits)
         };
 
         PlanRows(before.Stubs, next.Stubs, stub => stub.Id, SameStub, write.StubRows, write.StubOrdinals, write.StubDeletes);
@@ -299,6 +317,16 @@ internal static class StubTables
             {
                 var rename = state.Renames[position];
                 insert.Run(position, rename.StubId, rename.OldPath, StoreCommands.Text(rename.RemovedItemId), rename.Forgets);
+            }
+        }
+
+        if (write.Splits)
+        {
+            StoreCommands.Execute(connection, transaction, "DELETE FROM stub_splits;");
+            using var insert = StoreCommands.Prepared(connection, transaction, "INSERT INTO stub_splits (position, stub_id, from_stub_id) VALUES ($position, $stub, $from);", "$position", "$stub", "$from");
+            for (var position = 0; position < state.Splits.Count; position++)
+            {
+                insert.Run(position, state.Splits[position].StubId, state.Splits[position].FromStubId);
             }
         }
     }
@@ -610,6 +638,19 @@ internal static class StubTables
         return renames;
     }
 
+    private static List<StubSplit> ReadSplits(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var splits = new List<StubSplit>();
+        using var command = StoreCommands.Command(connection, transaction, "SELECT stub_id, from_stub_id FROM stub_splits ORDER BY position;");
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            splits.Add(new StubSplit(reader.GetString(0), reader.GetString(1)));
+        }
+
+        return splits;
+    }
+
     private static void Add<TKey, TValue>(Dictionary<TKey, List<TValue>> lists, TKey key, TValue value)
         where TKey : notnull
     {
@@ -661,8 +702,11 @@ internal static class StubTables
         /// <summary>Gets a value indicating whether the renames are written again.</summary>
         public bool Renames { get; init; }
 
+        /// <summary>Gets a value indicating whether the splits are written again.</summary>
+        public bool Splits { get; init; }
+
         /// <summary>Gets a value indicating whether there is nothing to write.</summary>
-        public bool IsEmpty => !Rewrite && !Groups && !Labels && !ServerNames && !RemovedServers && !Renames
+        public bool IsEmpty => !Rewrite && !Groups && !Labels && !ServerNames && !RemovedServers && !Renames && !Splits
             && StubRows.Count == 0 && StubOrdinals.Count == 0 && StubDeletes.Count == 0
             && SeriesRows.Count == 0 && SeriesOrdinals.Count == 0 && SeriesDeletes.Count == 0;
     }

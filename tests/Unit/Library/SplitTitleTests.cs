@@ -149,6 +149,177 @@ public sealed class SplitTitleTests : IDisposable
         _versions.Verify(linker => linker.LinkLocalAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // Row 507 (c).
+    [Fact]
+    public async Task AFilmThatSplitsGivesItsNewStubTheFullStateOfEachUserOnce()
+    {
+        await AddFilmAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Stubs);
+        Give(_anna, PathOf(old), Full());
+        Give(_bruno, PathOf(old), new UserItemData { Key = "k", PlaybackPositionTicks = 7, LastPlayedDate = _day });
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        var added = Assert.Single(Stubs, stub => stub.Id != old.Id);
+        AssertFull(Row(_anna, PathOf(added)));
+        AssertFull(Row(_anna, PathOf(old)));
+        Assert.Equal(7, Row(_bruno, PathOf(added)).PlaybackPositionTicks);
+
+        // Only once: what the user takes off later stays off.
+        Give(_anna, PathOf(added), new UserItemData { Key = "k" });
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Assert.False(Row(_anna, PathOf(added)).IsFavorite);
+        Assert.False(Row(_anna, PathOf(added)).Played);
+    }
+
+    [Fact]
+    public async Task ASplitWaitsForTheItemOfItsNewStubAlsoAcrossARestart()
+    {
+        await AddFilmAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Stubs);
+        Give(_anna, PathOf(old), Full());
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        var added = Assert.Single(Stubs, stub => stub.Id != old.Id);
+        await CleanAsync();
+        await _fixture.SyncAndMaterializeAsync();
+
+        using var reopened = new StubRegistry(_fixture.Database, _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+        AddItems();
+        await CleanAsync(reopened);
+
+        AssertFull(Row(_anna, PathOf(added)));
+    }
+
+    [Fact]
+    public async Task ASplitLeavesANewerStateOfTheNewStubAlone()
+    {
+        await AddFilmAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Stubs);
+        Give(_anna, PathOf(old), Full());
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        var added = Assert.Single(Stubs, stub => stub.Id != old.Id);
+        AddItems();
+        Give(_anna, PathOf(added), new UserItemData { Key = "k", PlaybackPositionTicks = 3, LastPlayedDate = _day.AddDays(1) });
+
+        await CleanAsync();
+
+        var row = Row(_anna, PathOf(added));
+        Assert.Equal((3, false), (row.PlaybackPositionTicks, row.Played));
+        Assert.True(row.IsFavorite);
+    }
+
+    // A new copy in another local library is a version, which only aligns "played" (row 63).
+    [Fact]
+    public async Task ANewCopyInAnotherLocalLibraryIsNoSplit()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
+        _server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsB);
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Give(_anna, PathOf(StubIn(TestLibraries.Films)), Full());
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.False(Row(_anna, PathOf(StubIn(TestLibraries.FilmsB))).IsFavorite);
+    }
+
+    [Fact]
+    public async Task TheEpisodesOfAnotherLocalLibraryMoveToASeriesOfTheirOwnWithTheirState()
+    {
+        await AddSeriesAsync(("e1", TestLibraries.Shows, 1, 1), ("e2", TestLibraries.ShowsB, 2, 1));
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var series = Assert.Single(_fixture.Registry.State.Series);
+        var old = Stubs.Single(stub => stub.SeasonNumber == 2);
+        Give(_anna, PathOf(old), Full());
+        Give(_anna, _fixture.Path_(series.RelativePath), new UserItemData { Key = "k", IsFavorite = true, Rating = 8 });
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.True(File.Exists(PathOf(old)));
+        await ScanAsync();
+        var added = Assert.Single(Stubs, stub => stub.SeasonNumber == 2 && stub.Id != old.Id);
+        var addedSeries = Assert.Single(_fixture.Registry.State.Series, entry => entry.Id != series.Id);
+        Assert.StartsWith(StubFixture.InLibrary(_server, TestLibraries.ShowsB), added.RelativePath, StringComparison.Ordinal);
+        Assert.Equal(addedSeries.Id, added.SeriesStubId);
+        AssertFull(Row(_anna, PathOf(added)));
+        var row = Row(_anna, _fixture.Path_(addedSeries.RelativePath));
+        Assert.Equal((true, 8d), (row.IsFavorite, row.Rating));
+
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.DoesNotContain(Stubs, stub => stub.Id == old.Id);
+        Assert.Contains(_fixture.Registry.State.Series, entry => entry.Id == series.Id);
+        Assert.True(File.Exists(PathOf(Stubs.Single(stub => stub.SeasonNumber == 1))));
+    }
+
+    [Fact]
+    public async Task AFilmThatJoinsHandsTheStateOverAndKeepsOneStub()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var left = StubIn(TestLibraries.Films);
+        var right = StubIn(TestLibraries.FilmsB);
+        Give(_anna, PathOf(left), new UserItemData { Key = "k", PlaybackPositionTicks = 3, LastPlayedDate = _day.AddDays(-1) });
+        Give(_anna, PathOf(right), Full());
+        Give(_bruno, PathOf(left), new UserItemData { Key = "k", IsFavorite = true });
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        var kept = Assert.Single(Stubs);
+        Assert.Equal(["a", "b"], kept.Sources.Select(source => source.ItemId).Order(StringComparer.Ordinal));
+        var row = Row(_anna, PathOf(kept));
+        Assert.Equal((true, true, _day), (row.Played, row.IsFavorite, row.LastPlayedDate));
+        Assert.True(Row(_bruno, PathOf(kept)).IsFavorite);
+        Assert.False(File.Exists(PathOf(kept.Id == left.Id ? right : left)));
+        Assert.Empty(_fixture.Registry.State.Groups);
+    }
+
+    [Fact]
+    public async Task ASeriesThatJoinsKeepsOneSeriesWithTheFavoriteAndTheEpisodesOfBoth()
+    {
+        await AddSeriesAsync(("e1", TestLibraries.Shows, 1, 1), ("e1b", TestLibraries.ShowsB, 1, 1));
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Assert.Equal(2, _fixture.Registry.State.Series.Count);
+        var seriesPaths = _fixture.Registry.State.Series.Select(series => _fixture.Path_(series.RelativePath)).ToList();
+        foreach (var path in seriesPaths)
+        {
+            Give(path == seriesPaths[0] ? _anna : _bruno, path, new UserItemData { Key = "k", IsFavorite = true, Rating = 8 });
+        }
+
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.Single(Stubs);
+        var kept = Assert.Single(_fixture.Registry.State.Series);
+        Assert.All(new[] { _anna, _bruno }, user => Assert.True(Row(user, _fixture.Path_(kept.RelativePath)).IsFavorite));
+        Assert.Single(seriesPaths, Directory.Exists);
+    }
+
     private static UserItemData Full() => new()
     {
         Key = "k",
@@ -157,15 +328,13 @@ public sealed class SplitTitleTests : IDisposable
         PlaybackPositionTicks = 42,
         LastPlayedDate = _day,
         IsFavorite = true,
-        Rating = 9,
-        AudioStreamIndex = 1,
-        SubtitleStreamIndex = 2
+        Rating = 9
     };
 
     private static void AssertFull(UserItemData row)
     {
         Assert.Equal((true, 2, 42L, (DateTime?)_day), (row.Played, row.PlayCount, row.PlaybackPositionTicks, row.LastPlayedDate));
-        Assert.Equal((true, (double?)9, (int?)1, (int?)2), (row.IsFavorite, row.Rating, row.AudioStreamIndex, row.SubtitleStreamIndex));
+        Assert.Equal((true, (double?)9), (row.IsFavorite, row.Rating));
     }
 
     private UserItemData Row(User user, string path) => _rows.GetValueOrDefault((user.Id, path)) ?? new UserItemData { Key = "k" };

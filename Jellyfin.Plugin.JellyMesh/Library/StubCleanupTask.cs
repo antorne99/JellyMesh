@@ -20,7 +20,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <summary>
 /// Runs after every library scan. When two copies of one server, shown apart until now, became one title, it hands the
 /// watch state of each user over to the stub that stays and only then removes the other: Jellyfin would not do it, and
-/// the rows of a deleted item stay behind a placeholder. A local copy no longer removes a stub (Q18 b). It is also where
+/// the rows of a deleted item stay behind a placeholder. A stub that split from another, in another local library, takes its
+/// watch state here once it has an item (§10 row 507). A local copy no longer removes a stub (Q18 b). It is also where
 /// a new stub series gets its refresh, since the item exists only after the scan, and where a new stub is first linked to
 /// its versions (Q145).
 /// </summary>
@@ -115,7 +116,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await MergeStubsAsync(root, _registry.State, cancellationToken).ConfigureAwait(false);
+            var state = await MergeStubsAsync(root, HandOverSplits(root, _registry.State, cancellationToken), cancellationToken).ConfigureAwait(false);
             state = RefreshNewSeries(root, state);
             if (!ReferenceEquals(state, _registry.State))
             {
@@ -196,6 +197,48 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
     }
 
+    // A stub or series that split takes the state of the one it split from, once: later each keeps its own (row 63). It waits
+    // until a scan has made both items.
+    private StubState HandOverSplits(string root, StubState state, CancellationToken cancellationToken)
+    {
+        if (state.Splits.Count == 0)
+        {
+            return state;
+        }
+
+        // No users may mean they cannot be read for now.
+        var users = _users.GetUsers().ToList();
+        var stubs = state.Stubs.ToDictionary(stub => stub.Id, stub => FederatedPaths.Resolve(root, stub.RelativePath), StringComparer.Ordinal);
+        var series = state.Series.ToDictionary(entry => entry.Id, entry => FederatedPaths.Resolve(root, entry.RelativePath), StringComparer.Ordinal);
+        var left = state.Splits.Where(split => users.Count == 0
+            || !(HandOverSplit(split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
+                || HandOverSplit(split, series, true, MergeSeries, users, cancellationToken))).ToList();
+        return left.Count == state.Splits.Count ? state : state with { Splits = left };
+    }
+
+    private bool HandOverSplit(StubSplit split, Dictionary<string, string> paths, bool isFolder, Func<UserItemData, UserItemData, bool> merge, List<User> users, CancellationToken cancellationToken)
+    {
+        if (!paths.TryGetValue(split.FromStubId, out var from)
+            || !paths.TryGetValue(split.StubId, out var to)
+            || _library.FindByPath(from, isFolder) is not { } source
+            || _library.FindByPath(to, isFolder) is not { } target)
+        {
+            return false;
+        }
+
+        try
+        {
+            HandOver(users, source, target, merge, cancellationToken);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            // It still waits, and the next scan tries again.
+            _logger.LogError("Cannot hand over the watch state of a split title: {Error}", exception.GetType().Name);
+            return false;
+        }
+    }
+
     private async Task<StubState> MergeStubsAsync(string root, StubState state, CancellationToken cancellationToken)
     {
         // One snapshot and one server list, so that the claims are those the materializer made.
@@ -267,24 +310,39 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         if (_library.FindByPath(FederatedPaths.Resolve(root, stub.RelativePath), false) is { } stubItem)
         {
-            foreach (var user in users)
-            {
-                if (_userData.GetUserData(user, stubItem) is { } data)
-                {
-                    HandOver(user, data, survivor, WatchStateMerge.Merge, cancellationToken);
-                }
-            }
+            HandOver(users, stubItem, survivor, WatchStateMerge.Merge, cancellationToken);
         }
 
+        HandOverSeries(root, state, stub, into, users, cancellationToken);
         return _remover.Remove(root, state, stub);
     }
 
-    private void HandOver(User user, UserItemData from, BaseItem target, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
+    // The series of the last merged episode goes with it, so the series that stays takes its favorite and rating.
+    private void HandOverSeries(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
     {
-        var data = _userData.GetUserData(user, target);
-        if (data is not null && merge(from, data))
+        if (stub.SeriesStubId is { } leaving
+            && !string.Equals(leaving, into.SeriesStubId, StringComparison.Ordinal)
+            && !state.Stubs.Any(other => other.Id != stub.Id && other.SeriesStubId == leaving)
+            && FindSeries(root, state, leaving) is { } source
+            && FindSeries(root, state, into.SeriesStubId) is { } target)
         {
-            _userData.SaveUserData(user, target, data, UserDataSaveReason.Import, cancellationToken);
+            HandOver(users, source, target, MergeSeries, cancellationToken);
+        }
+    }
+
+    private BaseItem? FindSeries(string root, StubState state, string? id) =>
+        state.Series.FirstOrDefault(entry => entry.Id == id) is { } series ? _library.FindByPath(FederatedPaths.Resolve(root, series.RelativePath), true) : null;
+
+    private static bool MergeSeries(UserItemData from, UserItemData to) => WatchStateTransfer.CarrySeries(from, [to]).Count > 0;
+
+    private void HandOver(List<User> users, BaseItem source, BaseItem target, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
+    {
+        foreach (var user in users)
+        {
+            if (_userData.GetUserData(user, source) is { } from && _userData.GetUserData(user, target) is { } data && merge(from, data))
+            {
+                _userData.SaveUserData(user, target, data, UserDataSaveReason.Import, cancellationToken);
+            }
         }
     }
 
