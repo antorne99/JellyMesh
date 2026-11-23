@@ -202,13 +202,13 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
-        if (view.Health == IndexHealth.Corrupt)
+        if (view.Health == IndexHealth.Corrupt || ReadPlacement() is not { } placement)
         {
             return state;
         }
 
         var users = _users.GetUsers().ToList();
-        foreach (var claim in StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs))
+        foreach (var claim in StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs, placement.KeyOf))
         {
             if (claim.Stub is not { } stub)
             {
@@ -217,7 +217,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
             try
             {
-                foreach (var merged in claim.Merged)
+                foreach (var merged in claim.Merged.Where(merged => IsTakenOver(merged, stub)))
                 {
                     state = await MergeAsync(root, state, merged, stub, users, cancellationToken).ConfigureAwait(false);
                 }
@@ -231,6 +231,24 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         return state;
     }
+
+    // Null when the libraries cannot be read: no stub is merged until the next scan.
+    private LibraryPlacement? ReadPlacement()
+    {
+        try
+        {
+            return LibraryPlacement.Read(_library, _store);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot read the libraries to merge the stubs: {Error}", exception.GetType().Name);
+            return null;
+        }
+    }
+
+    // Whether a sync already gave a copy of a merged stub to the one that stays: a library that changed since merges nothing.
+    private static bool IsTakenOver(StubEntry merged, StubEntry into) => merged.Sources.Any(source =>
+        into.Sources.Any(other => other.ServerId == source.ServerId && string.Equals(other.ItemId, source.ItemId, StringComparison.Ordinal)));
 
     private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
     {

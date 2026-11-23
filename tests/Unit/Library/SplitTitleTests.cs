@@ -1,0 +1,265 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Tests.Sync;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
+using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
+using Moq;
+using Xunit;
+
+namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
+
+/// <summary>One title of a server in two remote libraries, as the local libraries hold their folders (§10 rows 439 and 507).</summary>
+public sealed class SplitTitleTests : IDisposable
+{
+    private static readonly DateTime _day = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private readonly StubFixture _fixture = new();
+    private readonly Mock<IUserDataManager> _userData = new();
+    private readonly Mock<IVersionLinker> _versions = new();
+    private readonly CapturingLogger<StubCleanupTask> _logger = new();
+    private readonly CapturingLogger<LocalTitleLinker> _linkerLogger = new();
+    private readonly Dictionary<string, BaseItem> _items = new(StringComparer.Ordinal);
+    private readonly Dictionary<(Guid User, string Path), UserItemData> _rows = [];
+    private readonly User _anna = new("anna", "auth", "reset");
+    private readonly User _bruno = new("bruno", "auth", "reset");
+    private List<VirtualFolderInfo> _folders = [];
+    private RemoteServerInfo _server = null!;
+
+    public SplitTitleTests()
+    {
+        _fixture.Library.Setup(library => library.GetVirtualFolders()).Returns(() => [.. _folders]);
+        _fixture.Library
+            .Setup(library => library.FindByPath(It.IsAny<string>(), It.IsAny<bool?>()))
+            .Returns((string path, bool? _) => _items.GetValueOrDefault(path));
+        _fixture.Library
+            .Setup(library => library.DeleteItem(It.IsAny<BaseItem>(), It.IsAny<DeleteOptions>()))
+            .Callback<BaseItem, DeleteOptions>((item, _) => _items.Remove(item.Path));
+        _userData
+            .Setup(data => data.GetUserData(It.IsAny<User>(), It.IsAny<BaseItem>()))
+            .Returns((User user, BaseItem item) => WatchStateTransfer.Copy(Row(user, item.Path)));
+        _userData
+            .Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
+            .Callback<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>((user, item, data, _, _) => _rows[(user.Id, item.Path)] = WatchStateTransfer.Copy(data));
+        _versions.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+    }
+
+    private IReadOnlyList<StubEntry> Stubs => _fixture.Registry.State.Stubs;
+
+    public void Dispose() => _fixture.Dispose();
+
+    [Fact]
+    public async Task ATitleInTwoLocalLibrariesIsTwoStubsThatAreVersionsOfEachOther()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal("a", Assert.Single(StubIn(TestLibraries.Films).Sources).ItemId);
+        Assert.Equal("b", Assert.Single(StubIn(TestLibraries.FilmsB).Sources).ItemId);
+        Assert.Equal(Stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal), Assert.Single(_fixture.Registry.State.Groups).StubIds.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task ATitleInOneLocalLibraryIsOneStubWithTheOtherCopyAsItsSource()
+    {
+        await AddFilmAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(["a", "b"], Assert.Single(Stubs).Sources.Select(source => source.ItemId).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task TheScanDoesNotMergeTheStubsOfTwoLocalLibraries()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+
+        await ScanAsync();
+
+        Assert.Equal(2, Stubs.Count);
+        Assert.All(Stubs, stub => Assert.True(File.Exists(PathOf(stub))));
+    }
+
+    // A folder moved by hand is in no library for a moment, and the removal starts a scan.
+    [Fact]
+    public async Task ALibraryThatChangesWithNoSyncSinceMergesNothingAtTheScan()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Together(TestLibraries.Films);
+
+        await ScanAsync();
+
+        Assert.Equal(2, Stubs.Count);
+    }
+
+    [Fact]
+    public async Task ANewLocalFilmJoinsTheStubsOfBothLocalLibraries()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        var local = Guid.NewGuid();
+        _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = local.ToString("N"), Kind = ContentKind.Movie, Title = "Film", Year = 2020, Ids = new ContentIds("1") });
+
+        await Linker().LinkAsync(local, CancellationToken.None);
+
+        var group = Assert.Single(_fixture.Registry.State.Groups);
+        Assert.Equal([local], group.LocalItemIds);
+        Assert.Equal(Stubs.Select(stub => stub.Id).Order(StringComparer.Ordinal), group.StubIds.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task NothingIsPlannedWhileTheLibrariesCannotBeRead()
+    {
+        await AddFilmAsync();
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        var files = _fixture.Files;
+        var state = _fixture.Registry.State;
+        _fixture.Library.Setup(library => library.GetVirtualFolders()).Throws(new IOException("busy"));
+
+        await Assert.ThrowsAsync<IOException>(() => _fixture.Materializer.MaterializeAsync(CancellationToken.None));
+        await ScanAsync();
+        await Linker().LinkAsync(Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal(files, _fixture.Files);
+        Assert.Equal(state.Stubs.Select(stub => stub.RelativePath), Stubs.Select(stub => stub.RelativePath));
+        Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        Assert.Contains(_linkerLogger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
+        _versions.Verify(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>()), Times.Once);
+        _versions.Verify(linker => linker.LinkLocalAsync(It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static UserItemData Full() => new()
+    {
+        Key = "k",
+        Played = true,
+        PlayCount = 2,
+        PlaybackPositionTicks = 42,
+        LastPlayedDate = _day,
+        IsFavorite = true,
+        Rating = 9,
+        AudioStreamIndex = 1,
+        SubtitleStreamIndex = 2
+    };
+
+    private static void AssertFull(UserItemData row)
+    {
+        Assert.Equal((true, 2, 42L, (DateTime?)_day), (row.Played, row.PlayCount, row.PlaybackPositionTicks, row.LastPlayedDate));
+        Assert.Equal((true, (double?)9, (int?)1, (int?)2), (row.IsFavorite, row.Rating, row.AudioStreamIndex, row.SubtitleStreamIndex));
+    }
+
+    private UserItemData Row(User user, string path) => _rows.GetValueOrDefault((user.Id, path)) ?? new UserItemData { Key = "k" };
+
+    private void Give(User user, string path, UserItemData data) => _rows[(user.Id, path)] = data;
+
+    private string PathOf(StubEntry stub) => _fixture.Path_(stub.RelativePath);
+
+    private StubEntry StubIn(string libraryId) =>
+        Assert.Single(Stubs, stub => FederatedPaths.RemoteLibraryOf(stub.RelativePath) == libraryId);
+
+    private VirtualFolderInfo Local(string name, TypeFolder type, params string[] libraries) => new()
+    {
+        Name = name,
+        ItemId = name,
+        Locations = libraries.Select(library => FederatedFolderLayout.TypeFolderPath(_fixture.Root, _server.Id, library, type)).ToArray()
+    };
+
+    private void Together(params string[] libraries) => Together(TypeFolder.Movies, libraries);
+
+    private void Together(TypeFolder type, params string[] libraries) => _folders = [Local("Tutti", type, libraries)];
+
+    private void Apart(params string[] libraries) => Apart(TypeFolder.Movies, libraries);
+
+    private void Apart(TypeFolder type, params string[] libraries) => _folders = libraries.Select(library => Local("Di " + library, type, library)).ToList();
+
+    private async Task AddFilmAsync()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film B", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
+        _server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsB);
+    }
+
+    private async Task AddSeriesAsync(params (string Id, string Library, int Season, int Number)[] episodes)
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsB, "Serie B", "tvshows"));
+        foreach (var (id, library, season, number) in episodes)
+        {
+            _fixture.Sync.Client.Add(library, RemoteItemType.Series, TestItems.Series("s" + library));
+            _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, season, number));
+        }
+
+        _server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows, TestLibraries.ShowsB);
+    }
+
+    private LocalTitleLinker Linker() => new(
+        _fixture.Registry,
+        _fixture.Resolver,
+        _fixture.Sync.Index,
+        _fixture.Sync.Registry,
+        _fixture.Sync.Store,
+        _fixture.Library.Object,
+        _versions.Object,
+        _linkerLogger);
+
+    // A scan makes the items of the stubs, and the post-scan task runs after it.
+    private Task ScanAsync()
+    {
+        AddItems();
+        return CleanAsync();
+    }
+
+    private void AddItems()
+    {
+        foreach (var stub in Stubs)
+        {
+            _items.TryAdd(PathOf(stub), stub.Kind == StubKind.Movie ? new Movie { Id = Guid.NewGuid(), Path = PathOf(stub) } : new Episode { Id = Guid.NewGuid(), Path = PathOf(stub) });
+        }
+
+        foreach (var path in _fixture.Registry.State.Series.Select(series => _fixture.Path_(series.RelativePath)))
+        {
+            _items.TryAdd(path, new Series { Id = Guid.NewGuid(), Path = path });
+        }
+    }
+
+    private Task CleanAsync(StubRegistry? registry = null)
+    {
+        var users = new Mock<IUserManager>();
+        users.Setup(manager => manager.GetUsers()).Returns([_anna, _bruno]);
+        var task = new StubCleanupTask(
+            registry ?? _fixture.Registry,
+            _fixture.Resolver,
+            _fixture.Sync.Index,
+            _fixture.Sync.Registry,
+            _fixture.Sync.Store,
+            _fixture.Library.Object,
+            users.Object,
+            _userData.Object,
+            Mock.Of<IProviderManager>(),
+            Mock.Of<IFileSystem>(),
+            _fixture.Remover,
+            _logger,
+            _versions.Object);
+        return task.Run(new Progress<double>(), CancellationToken.None);
+    }
+}

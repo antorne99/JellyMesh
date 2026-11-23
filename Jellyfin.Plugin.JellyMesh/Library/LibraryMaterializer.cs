@@ -253,6 +253,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool writesCollections, bool verifyEveryStub, CancellationToken cancellationToken)
     {
+        // A failed read of the libraries stops the run before it writes anything: it would split or join titles at random.
+        var placement = LibraryPlacement.Read(_library, _store);
+
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
@@ -262,6 +265,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, isProtected, _urls.Build, _ => null)
         {
             WritesCollections = writesCollections,
+            PlacementOf = placement.KeyOf,
+
             // Only an empty registry, as after a damage, takes back the stub files of the 0.5 layout it finds.
             KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root)
         });
