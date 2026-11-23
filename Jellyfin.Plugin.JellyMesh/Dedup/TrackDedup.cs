@@ -23,25 +23,57 @@ public static class TrackDedup
     {
         ArgumentNullException.ThrowIfNull(tracks);
 
-        var items = tracks
-            .Where(track => track.Versions.Count > 0)
-            .DistinctBy(track => (track.ServerId, track.ItemId))
-            .OrderBy(track => track.ServerId, StringComparer.Ordinal)
-            .ThenBy(track => track.ItemId, StringComparer.Ordinal)
-            .ToList();
-        var names = new Dictionary<string, string>(StringComparer.Ordinal);
-        var positions = items.Select(item => PositionOf(item, names)).ToArray();
-        var sets = new Components(items);
-
-        JoinBy(items, sets, track => track.RecordingId);
-        JoinBy(items, sets, track => track.TrackId);
-        JoinByPosition(items, positions, sets);
+        var items = Sorted(tracks.Where(track => track.Versions.Count > 0));
+        var (sets, positions) = Group(items);
 
         return Enumerable.Range(0, items.Count)
             .GroupBy(sets.Find)
             .Select(group => Decide(group.ToList(), items, positions))
             .OrderBy(decision => decision.Identity.Key, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// Pairs each saved track with every current copy of it, by the rules of <see cref="Resolve"/>, whatever their versions.
+    /// </summary>
+    /// <param name="saved">The saved tracks.</param>
+    /// <param name="current">The current tracks.</param>
+    /// <returns>The pairs.</returns>
+    public static IReadOnlyList<(TrackItem Saved, TrackItem Current)> Pair(IReadOnlyCollection<TrackItem> saved, IReadOnlyCollection<TrackItem> current)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        ArgumentNullException.ThrowIfNull(current);
+        if (saved.Count == 0 || current.Count == 0)
+        {
+            return [];
+        }
+
+        var items = Sorted(current);
+        var copies = items.Count;
+        items.AddRange(saved);
+        var sets = Group(items).Sets;
+        var copiesOf = Enumerable.Range(0, copies).ToLookup(sets.Find);
+        return Enumerable.Range(copies, items.Count - copies)
+            .SelectMany(kept => copiesOf[sets.Find(kept)].Select(copy => (items[kept], items[copy])))
+            .ToList();
+    }
+
+    private static List<TrackItem> Sorted(IEnumerable<TrackItem> tracks) => tracks
+        .DistinctBy(track => (track.ServerId, track.ItemId))
+        .OrderBy(track => track.ServerId, StringComparer.Ordinal)
+        .ThenBy(track => track.ItemId, StringComparer.Ordinal)
+        .ToList();
+
+    // The groups of the copies of one track, with the album place of each copy.
+    private static (Components Sets, string?[] Positions) Group(List<TrackItem> items)
+    {
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        var positions = items.Select(item => PositionOf(item, names)).ToArray();
+        var sets = new Components(items);
+        JoinBy(items, sets, track => track.RecordingId);
+        JoinBy(items, sets, track => track.TrackId);
+        JoinByPosition(items, positions, sets);
+        return (sets, positions);
     }
 
     // Joins the copies sharing an ID, unless their groups hold different recordings.

@@ -225,4 +225,27 @@ public class TrackDedupTests
         Assert.Equal("Track|mbr:rec-1", Holding(expected, "a1").Identity.Key);
         Assert.Equal(["a", "c", "b"], Holding(expected, "a1").Backups.Prepend(Holding(expected, "a1").Winner!).Select(source => source.ServerId));
     }
+
+    private static string[] Pairs(TrackItem[] saved, params TrackItem[] current)
+        => TrackDedup.Pair(saved, current).Select(pair => pair.Saved.ItemId + ">" + pair.Current.ServerId + ":" + pair.Current.ItemId).Order(StringComparer.Ordinal).ToArray();
+
+    // Saved tracks have no version to rank.
+    private static TrackItem Saved(string item, string? recording = null, string? trackId = null, string title = "Song", long? seconds = 180)
+        => Track("kept", item, recording, trackId, title, seconds: seconds, playable: false);
+
+    [Fact]
+    public void ASavedTrackPairsWithEveryCurrentCopyByRecordingByTrackIdAndByPlace()
+    {
+        Assert.Equal(["1>a:a1", "1>b:b1"], Pairs([Saved("1", recording: "rec-1", title: "Old")], Track("a", "a1", recording: "REC-1"), Track("b", "b1", recording: "rec-1"), Track("b", "b2", recording: "rec-2")));
+        Assert.Equal(["1>a:a1", "1>b:b1"], Pairs([Saved("1", trackId: "trk-1", title: "Old")], Track("a", "a1", trackId: "trk-1"), Track("b", "b1"), Track("b", "b2", title: "Other")));
+        Assert.Equal(["1>a:a1", "2>a:a2"], Pairs([Saved("1"), Saved("2", title: "Other")], Track("a", "a1", seconds: 181), Track("a", "a2", title: "Other"), Track("b", "b1", seconds: 190)));
+    }
+
+    [Fact]
+    public void ASavedTrackPairsWithNoOtherRecordingAndWithoutADurationWithNoPlace()
+    {
+        Assert.Empty(Pairs([Saved("1", recording: "rec-1")], Track("a", "a1", recording: "rec-2")));
+        Assert.Empty(Pairs([Saved("1", seconds: null)], Track("a", "a1")));
+        Assert.Empty(Pairs([Saved("1", recording: "rec-1"), Saved("2", recording: "rec-1")]));
+    }
 }
