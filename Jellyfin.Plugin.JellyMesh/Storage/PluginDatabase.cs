@@ -132,7 +132,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         get
         {
             _ = Health;
-            return Volatile.Read(ref _note)?.Recovery;
+
+            // A restore not ended yet has no copy date to show.
+            return Volatile.Read(ref _note) is { Restoring: false } note ? note.Recovery : null;
         }
     }
 

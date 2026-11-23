@@ -314,6 +314,26 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Single(SetAside());
     }
 
+    // The banner is of a restore that ended: until then no copy date is known, and the state says what is wrong.
+    [Fact]
+    public async Task ARestoreNotEndedYetShowsNoBanner()
+    {
+        var guard = new DatabaseFailingGuard(DatabasePath);
+        var database = await WithACopyAsync(guard);
+        guard.Fails = true;
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => database.ReadAsync<int>((_, _) => throw new SqliteException("malformed", 11), CancellationToken.None));
+        await UntilAsync(() => database.Health.State == StoreState.Unavailable);
+
+        Assert.Null(database.Recovery);
+        guard.Fails = false;
+
+        Assert.Equal(StoreState.Healthy, database.Retry().State);
+        Assert.Equal("copied", await ItemsAsync(database));
+        Assert.Equal(_clock.Now - TimeSpan.FromHours(1), database.Recovery?.CopyDate);
+        Assert.Single(SetAside());
+    }
+
     [Fact]
     public async Task ADamageFoundWhileTheStoreClosesMovesNothing()
     {
@@ -393,6 +413,19 @@ public sealed class DamageOnAccessTests : IDisposable
 
         public FileStream CreatePrivate(string path) =>
             Fails && Path.GetFileName(path).StartsWith(PluginDatabase.FileName + ".recovery", StringComparison.Ordinal) ? throw new IOException("The file is locked") : _inner.CreatePrivate(path);
+
+        public void KeepPrivate(string path) => _inner.KeepPrivate(path);
+    }
+
+    // Cannot make the database file while it fails, as on a full disk.
+    private sealed class DatabaseFailingGuard(string databasePath) : IKeyFileGuard
+    {
+        private readonly IKeyFileGuard _inner = KeyFileGuards.ForThisSystem();
+
+        public bool Fails { get; set; }
+
+        public FileStream CreatePrivate(string path) =>
+            Fails && path == databasePath ? throw new IOException("No space left on device") : _inner.CreatePrivate(path);
 
         public void KeepPrivate(string path) => _inner.KeepPrivate(path);
     }
