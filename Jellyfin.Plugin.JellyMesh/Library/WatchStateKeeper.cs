@@ -524,26 +524,34 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
 
             var title = byId[match.Key];
-            var isSeries = title.Kind == KeptTitleKind.Series;
-            var items = match
-                .SelectMany(pair => paths[(isSeries, pair.ServerId, pair.ItemId)])
-                .Distinct()
-                .Select(path => _library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder))
-                .OfType<BaseItem>()
-                .Where(item => item.Id != title.OldItemId)
-                .ToList();
-            if (items.Count == 0)
+            try
             {
-                continue;
-            }
-
-            var people = users.ToDictionary(user => user.Id);
-            foreach (var state in title.Users)
-            {
-                if (people.TryGetValue(state.UserId, out var user) && PutBack(user, state, items, isSeries, cancellationToken))
+                var isSeries = title.Kind == KeptTitleKind.Series;
+                var items = match
+                    .SelectMany(pair => paths[(isSeries, pair.ServerId, pair.ItemId)])
+                    .Distinct()
+                    .Select(path => _library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder))
+                    .OfType<BaseItem>()
+                    .Where(item => item.Id != title.OldItemId)
+                    .ToList();
+                if (items.Count == 0)
                 {
-                    done.Add((title.Id, state.UserId));
+                    continue;
                 }
+
+                var people = users.ToDictionary(user => user.Id);
+                foreach (var state in title.Users)
+                {
+                    if (people.TryGetValue(state.UserId, out var user) && PutBack(user, state, items, isSeries, cancellationToken))
+                    {
+                        done.Add((title.Id, state.UserId));
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException and not StoreSuspendedException)
+            {
+                // The type only: a message could hold a path. The rows stay for a later run.
+                _logger.LogError("Cannot put back the kept watch state of a title: {Error}", exception.GetType().Name);
             }
         }
 

@@ -614,6 +614,27 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
+    // A title that cannot be found for an error waits for a later run and stops no other.
+    [Fact]
+    public async Task TheFailureOfOneTitleDoesNotStopTheOthers()
+    {
+        AddRemote(StubKind.Track);
+        AddRemote(StubKind.Book);
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Music, TestLibraries.Books);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (track, book) = (ItemOf(b, StubKind.Track), ItemOf(b, StubKind.Book));
+        await _kept.SaveAsync([KeptOf(StubKind.Track), KeptOf(StubKind.Book)], CancellationToken.None);
+        _fixture.Library.Setup(manager => manager.FindByPath(track.Path, It.IsAny<bool?>())).Throws(new IOException("/secret"));
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, book).Played);
+        Assert.Equal(KeptTitleKind.Track, Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Kind);
+        Assert.Contains("IOException", Assert.Single(_logger.Lines, line => line.Contains("Cannot put back", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
     // A kept title as the keeper saves the item of a stub of a kind, seen by Anna.
     private KeptTitle KeptOf(StubKind kind) => new()
     {
