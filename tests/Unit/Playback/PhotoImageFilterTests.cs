@@ -469,6 +469,43 @@ public class PhotoImageFilterTests
             => await Task.Delay(Timeout.Infinite, cancellationToken);
     }
 
+    // A client that closes its connection during the write ends the request quietly, and its place is free again.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_client_that_goes_away_ends_the_request(bool cancelled)
+    {
+        var filter = Filter();
+        for (var turn = 0; turn <= PlaybackLimits.PhotoImagesInMemory; turn++)
+        {
+            var (context, lifetime) = SlowRequest();
+            using var gone = new CancellationTokenSource();
+            lifetime.RequestAborted = gone.Token;
+            context.HttpContext.Response.Body = new GoneStream(cancelled ? gone : null);
+            await RunAsync(filter, context).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(lifetime.Aborted);
+        }
+
+        var after = Request();
+        await RunAsync(filter, after);
+        AssertServed(after);
+    }
+
+    // A client that closes its connection at the first write, seen as a cancelled request or as a broken pipe.
+    private sealed class GoneStream(CancellationTokenSource? gone) : MemoryStream
+    {
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (gone is null)
+            {
+                throw new IOException("Broken pipe");
+            }
+
+            await gone.CancelAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
     // A server that does not answer or refuses the login is not asked again for each photo of a page.
     [Theory]
     [InlineData(RemoteFailure.Unreachable, 1)]

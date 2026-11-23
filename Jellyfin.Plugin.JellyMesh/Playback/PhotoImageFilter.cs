@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -167,7 +168,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
                 await http.Response.Body.WriteAsync(content.Slice(sent, Math.Min(WriteBytes, content.Length - sent)), limit.Token).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (!http.RequestAborted.IsCancellationRequested)
+        catch (Exception exception) when (exception is OperationCanceledException or IOException)
         {
             http.Abort();
         }
