@@ -320,7 +320,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     }
 
     // Serves Download and File of a stub from its remote file, as a static stream of the stub reads it. File wants a user who
-    // sees the stub, Download also the download permission, as on stock; a file no source gives is a bare 503.
+    // sees the stub, Download also the download permission, as on stock; no source or no room for the user is a bare 503.
     private async Task<IActionResult> FileResultAsync(ActionExecutingContext context, string action, Guid itemId)
     {
         var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
@@ -345,6 +345,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (_stubs.Find(itemId) is not { } stub)
         {
             _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        using var read = await _coordinator.TryBeginFileReadAsync(user.Id).ConfigureAwait(false);
+        if (read is null)
+        {
+            _logger.LogInformation("{Action} of stub {StubId}: the user has {Count} sessions and file reads running, the most allowed: 503", action, stub.Id, PlaybackLimits.SessionsPerUser);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 

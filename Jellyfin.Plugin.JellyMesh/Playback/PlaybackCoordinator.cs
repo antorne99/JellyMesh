@@ -43,6 +43,8 @@ public sealed class PlaybackCoordinator
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
+    private readonly ConcurrencyLimit<Guid> _fileReads = new(PlaybackLimits.SessionsPerUser);
+    private readonly Lock _roomLock = new();
     private readonly SourceFailures _failures = new();
 
     // Fired when a server is being removed: its open streams end and nothing new opens on it (413).
@@ -238,6 +240,34 @@ public sealed class PlaybackCoordinator
             localToken);
         stream.IsExternalUrl = false;
         return session;
+    }
+
+    /// <summary>
+    /// Counts a File or Download read of a user in the session limit, like a playback: the oldest sessions not in use are
+    /// closed to make room (row 505). Dispose the result when the read ends.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <returns>The end of the read, null if the user is at the limit.</returns>
+    public async Task<IDisposable?> TryBeginFileReadAsync(Guid userId)
+    {
+        IDisposable? read;
+        IReadOnlyList<PlaybackSession> unused;
+        lock (_roomLock)
+        {
+            read = TakeRoom(userId, null, out unused) ? _fileReads.TryEnter(userId) : null;
+        }
+
+        try
+        {
+            await CloseRemotesAsync(unused).ConfigureAwait(false);
+        }
+        catch
+        {
+            read?.Dispose();
+            throw;
+        }
+
+        return read;
     }
 
     /// <summary>
@@ -673,21 +703,30 @@ public sealed class PlaybackCoordinator
     // not in use go first, the oldest before the others: a parked one costs a remote nothing.
     private async Task<bool> MakeRoomForAsync(Guid userId, PlaybackSession? replaced)
     {
-        var sessions = _sessions.All.Where(session => session.Identity.UserId == userId && session != replaced).ToList();
-        var excess = sessions.Count - PlaybackLimits.SessionsPerUser + 1;
-        if (excess <= 0)
+        bool room;
+        IReadOnlyList<PlaybackSession> unused;
+        lock (_roomLock)
         {
-            return true;
+            room = TakeRoom(userId, replaced, out unused);
         }
 
-        var unused = sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest).Take(excess).ToList();
-        foreach (var session in unused)
-        {
-            await CloseAsync(session.Id).ConfigureAwait(false);
-        }
-
-        return unused.Count == excess;
+        await CloseRemotesAsync(unused).ConfigureAwait(false);
+        return room;
     }
+
+    // Takes out the oldest sessions not in use over the limit, file reads counted in, and tells whether there is room. Called
+    // under the room lock; the caller closes the remote side of what came out.
+    private bool TakeRoom(Guid userId, PlaybackSession? replaced, out IReadOnlyList<PlaybackSession> unused)
+    {
+        var sessions = _sessions.All.Where(session => session.Identity.UserId == userId && session != replaced).ToList();
+        var excess = sessions.Count + _fileReads.Running(userId) - PlaybackLimits.SessionsPerUser + 1;
+        var chosen = sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest).Take(Math.Max(excess, 0)).ToList();
+        unused = chosen.Where(session => _sessions.Remove(session.Id) is not null).ToList();
+        return excess <= chosen.Count;
+    }
+
+    // Closes the remote side of sessions already out of the store, every one even if another fails.
+    private Task CloseRemotesAsync(IReadOnlyList<PlaybackSession> sessions) => Task.WhenAll(sessions.Select(CloseRemoteAsync));
 
     private bool IsJellyMesh(Guid serverId)
     {
