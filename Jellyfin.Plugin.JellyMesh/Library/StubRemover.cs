@@ -91,7 +91,7 @@ public sealed class StubRemover
             }
         }
 
-        var owners = state.Series.ToDictionary(entry => entry.Id, StringComparer.Ordinal);
+        var owners = state.Series.DistinctBy(entry => entry.Id).ToDictionary(entry => entry.Id, StringComparer.Ordinal);
         var goneSeries = new HashSet<string>(StringComparer.Ordinal);
         foreach (var series in episodes.Where(stub => stub.SeriesStubId is not null).GroupBy(stub => stub.SeriesStubId!, StringComparer.Ordinal))
         {
