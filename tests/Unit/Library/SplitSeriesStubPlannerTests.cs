@@ -170,6 +170,59 @@ public class SplitSeriesStubPlannerTests
         Assert.NotEqual(first.Series[0].Id, Assert.Single(third.Stubs, stub => stub.EpisodeNumber == 5).SeriesStubId);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnEpisodeOfANumberItsFolderHasFromTheOtherSeriesGetsItsOwnName(bool isFlat)
+    {
+        RemoteItem[] apart = [Series("s1", tvdb: "71"), Series("s2", tvdb: "72")];
+        RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2), Episode("s2", 3), Episode("s2", 4)];
+        var first = Sync(isFlat, StubState.Empty, [Series("s1", tvdb: "71"), Series("s2", tvdb: "71")], episodes);
+        var second = Sync(isFlat, first, apart, episodes);
+
+        var third = Sync(isFlat, second, apart, [.. episodes, Episode("s1", 3)]);
+
+        AssertKept(second, third);
+        var added = Added(second, third);
+        var taken = Assert.Single(second.Stubs, stub => stub.EpisodeNumber == 3).RelativePath;
+        var label = isFlat ? string.Empty : " - Casa";
+        Assert.Equal(taken.Replace("S01E03", $"S01E03 [{added.Id[..8]}]", StringComparison.Ordinal), added.RelativePath);
+        Assert.EndsWith($"S01E03 [{added.Id[..8]}]{label}.strm", added.RelativePath, StringComparison.Ordinal);
+
+        // The name stays as it is at the next sync.
+        AssertKept(third, Sync(isFlat, third, apart, [.. episodes, Episode("s1", 3)]));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnEpisodeOfTheOldNumberOfAnotherGetsItsOwnName(bool isFlat)
+    {
+        RemoteItem[] series = [Series("s1")];
+        var first = Sync(isFlat, StubState.Empty, series, [Episode("s1", 1)]);
+        var renumbered = Episode("s1", 1) with { IndexNumber = 2 };
+        var second = Sync(isFlat, first, series, [renumbered]);
+
+        var third = Sync(isFlat, second, series, [renumbered, Episode("s1", 1) with { Id = "new" }]);
+
+        AssertKept(first, third);
+        Assert.Contains($"S01E01 [{Added(second, third).Id[..8]}]", Added(second, third).RelativePath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEpisodePathThatDiffersOnlyInCaseIsTaken()
+    {
+        var first = Sync(StubState.Empty, [Series("s1")], [Episode("s1", 1)]);
+        var old = first with { Stubs = [first.Stubs[0] with { RelativePath = first.Stubs[0].RelativePath.Replace("Show S01E01", "SHOW S01E02", StringComparison.Ordinal) }] };
+
+        var next = Sync(old, [Series("s1")], [Episode("s1", 1), Episode("s1", 2)]);
+
+        Assert.Contains($"S01E02 [{Added(old, next).Id[..8]}]", Added(old, next).RelativePath, StringComparison.Ordinal);
+    }
+
+    private static StubEntry Added(StubState old, StubState next)
+        => Assert.Single(next.Stubs, stub => old.Stubs.All(entry => entry.Id != stub.Id));
+
     [Fact]
     public void ARowHeldByAnotherWorkIsNotTakenByItsSource()
     {

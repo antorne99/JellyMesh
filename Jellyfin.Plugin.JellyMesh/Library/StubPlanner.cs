@@ -76,7 +76,7 @@ public static class StubPlanner
             else
             {
                 var seriesPlan = SeriesPlanOf(input, content, winner, catalog, scope, seriesPlans);
-                works.Add(EpisodeWork(input, content, stub, winner, seriesPlan, catalog, null, null));
+                works.Add(EpisodeWork(input, content, stub, winner, seriesPlan, catalog, paths, null, null));
             }
         }
 
@@ -168,7 +168,7 @@ public static class StubPlanner
                     else
                     {
                         var seriesPlan = SeriesPlanOf(input, content, winner, catalog, scope, seriesPlans);
-                        placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, server.Id, label), content, winner));
+                        placed.Add((EpisodeWork(input, content, stub, winner, seriesPlan, catalog, paths, server.Id, label), content, winner));
                     }
                 }
 
@@ -571,13 +571,13 @@ public static class StubPlanner
         };
     }
 
-    private static StubWork EpisodeWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, SeriesPlan series, IndexItemLookup catalog, Guid? serverId, string? label)
+    private static StubWork EpisodeWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, SeriesPlan series, IndexItemLookup catalog, PathAllocator paths, Guid? serverId, string? label)
     {
         var season = content.Identity.SeasonNumber!.Value;
         var number = content.Identity.EpisodeNumber!.Value;
         var last = content.EpisodeNumberEnd;
         var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label);
+        var relative = stub?.RelativePath ?? paths.EpisodeStub(series, season, number, last, label, id);
         var stem = Path.ChangeExtension(relative, null);
 
         series.HasStubs |= stub?.SeriesStubId is null || string.Equals(stub.SeriesStubId, series.Entry.Id, StringComparison.Ordinal);
@@ -945,8 +945,8 @@ public static class StubPlanner
     }
 
     /// <summary>
-    /// Keeps folder names unique. Two different titles can reach the same name, with a different year missing or after
-    /// sanitizing, and they must not share a folder. Paths of stubs that exist never change.
+    /// Keeps folder names and episode files unique. Two different titles can reach the same name, with a different year missing
+    /// or after sanitizing, and they must not share a folder or a file. Paths of stubs that exist never change.
     /// </summary>
     private sealed class PathAllocator
     {
@@ -954,9 +954,9 @@ public static class StubPlanner
 
         public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series)
         {
-            foreach (var stub in stubs.Where(stub => stub.Kind == StubKind.Movie))
+            foreach (var stub in stubs)
             {
-                _taken.Add(Path.GetDirectoryName(stub.RelativePath)!);
+                _taken.Add(stub.Kind == StubKind.Movie ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
             }
 
             foreach (var entry in series)
@@ -972,6 +972,20 @@ public static class StubPlanner
         // The relative folder of a series, unique in its type folder.
         public string SeriesFolder(string typeFolder, string? title, int? year, string id)
             => Path.Combine(typeFolder, Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id));
+
+        // The path of an episode stub, unique in its series folder.
+        public string EpisodeStub(SeriesPlan series, int season, int number, int? last, string? label, string id)
+        {
+            var path = FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label);
+            if (_taken.Add(path))
+            {
+                return path;
+            }
+
+            var unique = FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label, id);
+            _taken.Add(unique);
+            return unique;
+        }
 
         private string Unique(string typeFolder, string name, string id)
         {
