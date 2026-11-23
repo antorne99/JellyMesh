@@ -31,6 +31,9 @@ public sealed class ProviderCatalog
     // How many parents of an item without a path are looked at for one.
     private const int MaxParents = 4;
 
+    // The page size of a search for hidden items, which no peer sees.
+    private const int SearchPageSize = 500;
+
     private static readonly ItemFields[] _fields =
     [
         ItemFields.ProviderIds,
@@ -54,6 +57,7 @@ public sealed class ProviderCatalog
     private readonly IDtoService _dto;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<ProviderCatalog> _logger;
+    private readonly HiddenItems _hidden = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ProviderCatalog"/> class.
@@ -191,10 +195,14 @@ public sealed class ProviderCatalog
             return Empty();
         }
 
-        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, ProviderLibraryTypes.KindOf(type), startIndex, limit));
+        var kind = ProviderLibraryTypes.KindOf(type);
+        if (startIndex == 0)
+        {
+            ForgetHidden(libraryId, kind);
+        }
 
-        // Should a stub get past the query, the page comes up short: the read fails and nothing leaks.
-        return ToResponse(caller, page.Items.Where(item => !IsFederated(item)).ToList(), page.TotalRecordCount);
+        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, startIndex, limit));
+        return ToResponse(caller, WithoutHidden(caller, libraryId, scope, kind, page.Items), page.TotalRecordCount);
     }
 
     /// <summary>
@@ -219,8 +227,8 @@ public sealed class ProviderCatalog
         var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, startIndex, limit);
         query.ItemIds = [.. collections.Keys];
         var page = _library.GetItemsResult(query);
-        var entries = page.Items
-            .Where(item => !IsFederated(item) && collections.ContainsKey(item.Id))
+        var entries = WithoutHidden(caller, libraryId, scope, BaseItemKind.Movie, page.Items)
+            .Where(item => collections.ContainsKey(item.Id))
             .Select(item => new ProviderCollectionEntry(item.Id.ToString("N"), collections[item.Id].Name, collections[item.Id].TmdbId))
             .ToList();
         return new ProviderCollectionsResponse(entries, page.TotalRecordCount);
@@ -309,20 +317,62 @@ public sealed class ProviderCatalog
     // A type no library gives reads as empty rather than refused, so that the read of the rest of the library goes on.
     private static ProviderItemsResponse Empty() => new([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
 
-    // A page of a library as the peer sees it, under the scope that leaves the federated folder out.
-    private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, int startIndex, int limit) => new(caller.User)
+    // A page of a library as the peer sees it, under the scope that leaves the federated folder out and without the
+    // items known to be hidden.
+    private InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, int startIndex, int limit) => new(caller.User)
     {
         ParentId = libraryId,
         Recursive = true,
         IncludeItemTypes = [kind],
         IsVirtualItem = false,
         AncestorIds = scope.AncestorIds,
-        ExcludeItemIds = scope.ExcludeItemIds,
+        ExcludeItemIds = [.. scope.ExcludeItemIds, .. _hidden.Of(libraryId, kind)],
         OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending), (ItemSortBy.SortName, SortOrder.Ascending)],
         StartIndex = startIndex,
         Limit = limit,
         EnableTotalRecordCount = true
     };
+
+    // Drops the stubs that got past the query of a page, which comes up short: that read fails and nothing leaks. The
+    // next one leaves out every hidden item of the library.
+    private List<BaseItem> WithoutHidden(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlyList<BaseItem> items)
+    {
+        var hidden = items.Where(IsFederated).Select(item => item.Id).ToHashSet();
+        if (hidden.Count > 0)
+        {
+            LearnHidden(caller, libraryId, scope, kind, hidden);
+        }
+
+        return items.Where(item => !hidden.Contains(item.Id)).ToList();
+    }
+
+    // Remembers the hidden items of a library once one not known yet came up, up to the most kept.
+    private void LearnHidden(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlySet<Guid> hidden)
+    {
+        var known = _hidden.Of(libraryId, kind);
+        if (known.Count >= HiddenItems.MaxPerType || known.IsSupersetOf(hidden))
+        {
+            return;
+        }
+
+        _hidden.KeepOnly(LibraryTypes().Keys.Select(Guid.Parse).ToHashSet());
+        var found = new HashSet<Guid>(hidden);
+        var start = 0;
+        QueryResult<BaseItem> page;
+        do
+        {
+            page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, start, SearchPageSize));
+            found.UnionWith(page.Items.Where(IsFederated).Select(item => item.Id));
+            start += SearchPageSize;
+        }
+        while (page.Items.Count > 0 && start < page.TotalRecordCount && known.Count + found.Count < HiddenItems.MaxPerType);
+
+        _hidden.Add(libraryId, kind, found);
+    }
+
+    // Forgets the hidden items of a library that are gone or no longer hidden.
+    private void ForgetHidden(Guid libraryId, BaseItemKind kind) =>
+        _hidden.Remove(libraryId, kind, _hidden.Of(libraryId, kind).Where(id => _library.GetItemById(id) is not { } item || !IsFederated(item)).ToList());
 
     // The consumer needs only the format of a book for its placeholder (D47), so no name or folder of this server leaves.
     private static string? ExtensionOf(string? path)

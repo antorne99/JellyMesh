@@ -29,6 +29,7 @@ public sealed class ProviderPagingTests : IDisposable
 {
     private const string Real = "/media/film";
     private const string Server = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e";
+    private const string Hidden = "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Film";
 
     private readonly ProviderFixture _provider = new();
     private readonly SyncFixture _consumer = new();
@@ -45,6 +46,7 @@ public sealed class ProviderPagingTests : IDisposable
         });
         _provider.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>()))
             .Returns<InternalItemsQuery>(query => Find(query).Select(item => item.Id).ToList());
+        _provider.Library.Setup(manager => manager.GetItemById(It.IsAny<Guid>())).Returns<Guid>(id => _items.Find(item => item.Id == id));
         _provider.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
             .Returns<IReadOnlyList<BaseItem>, DtoOptions, User?, BaseItem?, bool>((items, _, _, _, _) => items.Select(item => new BaseItemDto { Id = item.Id }).ToList());
         _consumer.Client.Rewrite = (query, _) =>
@@ -149,7 +151,8 @@ public sealed class ProviderPagingTests : IDisposable
 
         var read = await ReadAsync();
 
-        Assert.Equal(RemoteFailure.CatalogChanged, read.Failure);
+        Assert.Equal(RemoteFailure.None, read.Failure);
+        Assert.Equal(RealIds(), read.Value!.Select(item => item.ItemId).Order());
     }
 
     [Fact]
@@ -179,16 +182,173 @@ public sealed class ProviderPagingTests : IDisposable
     }
 
     [Fact]
-    public async Task A_hidden_film_below_a_library_path_fails_the_full_read_and_is_not_sent()
+    public async Task A_hidden_film_below_a_library_path_does_not_fail_the_full_read_and_is_not_sent()
     {
         WithLocations("/media");
-        Add("/media/film/A.mkv");
-        Add("/media/0f8fad5b-d9cb-469f-a165-70867728950e/Film/Title (2001)/Title (2001).mkv");
+        Add(Real + "/A.mkv");
+        Add(Hidden + "/Title (2001)/Title (2001).mkv");
 
         var read = await ReadAsync();
 
-        Assert.Equal(RemoteFailure.CatalogChanged, read.Failure);
+        Assert.Equal(RemoteFailure.None, read.Failure);
+        Assert.Equal(RealIds(), read.Value!.Select(item => item.ItemId).Order());
     }
+
+    [Fact]
+    public void A_page_that_meets_a_hidden_film_comes_up_short_and_the_next_read_counts_only_what_it_sends()
+    {
+        WithLocations("/media");
+        var real = Add(Real + "/A.mkv");
+        Add(Hidden + "/Title/Title.mkv");
+
+        var first = ReadPage();
+        var next = ReadPage();
+
+        Assert.Equal([real.Id], first.Items.Select(item => item.Id));
+        Assert.Equal(2, first.TotalRecordCount);
+        Assert.Equal([real.Id], next.Items.Select(item => item.Id));
+        Assert.Equal(1, next.TotalRecordCount);
+    }
+
+    [Fact]
+    public async Task Hidden_films_over_more_pages_than_a_read_has_attempts_do_not_fail_the_full_read()
+    {
+        WithLocations("/media");
+        for (var i = 0; i < RemoteCatalogReader.PageSize * 6; i++)
+        {
+            Add((i % 7 == 0 ? Hidden : Real) + "/" + i + "/" + i + ".mkv");
+        }
+
+        var read = await ReadAsync();
+
+        Assert.Equal(RemoteFailure.None, read.Failure);
+        Assert.Equal(RealIds(), read.Value!.Select(item => item.ItemId).Order());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(250)]
+    public async Task Hidden_films_in_a_row_over_many_pages_do_not_fail_the_full_read(int before)
+    {
+        WithLocations("/media");
+        for (var i = 0; i < before; i++)
+        {
+            Add(Real + "/a" + i + ".mkv");
+        }
+
+        for (var i = 0; i < RemoteCatalogReader.PageSize * 6; i++)
+        {
+            Add(Hidden + "/" + i + "/" + i + ".mkv");
+        }
+
+        Add(Real + "/Last.mkv");
+
+        var read = await ReadAsync();
+
+        Assert.Equal(RemoteFailure.None, read.Failure);
+        Assert.Equal(RealIds(), read.Value!.Select(item => item.ItemId).Order());
+    }
+
+    [Fact]
+    public async Task A_read_after_the_one_that_met_the_hidden_films_costs_only_its_own_pages()
+    {
+        WithLocations("/media");
+        Add(Real + "/A.mkv");
+        Add(Hidden + "/Title/Title.mkv");
+        await ReadAsync();
+        _provider.Library.Invocations.Clear();
+
+        var page = ReadPage();
+
+        Assert.Equal(1, page.TotalRecordCount);
+        _provider.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_film_no_longer_hidden_is_sent_by_the_next_read()
+    {
+        WithLocations("/media");
+        Add(Real + "/A.mkv");
+        var stub = Add(Real + "/B.strm");
+        stub.ShortcutPath = "http://127.0.0.1:8096/JellyMesh/Play/stub";
+        Assert.Single((await ReadAsync()).Value!);
+
+        stub.ShortcutPath = null;
+
+        Assert.Equal(2, ReadPage().TotalRecordCount);
+    }
+
+    [Fact]
+    public async Task A_hidden_film_that_is_gone_is_forgotten_and_the_others_stay_out()
+    {
+        WithLocations("/media");
+        Add(Real + "/A.mkv");
+        var gone = Add(Hidden + "/Gone/Gone.mkv");
+        var left = Add(Hidden + "/Left/Left.mkv");
+        await ReadAsync();
+        _items.Remove(gone);
+        ReadPage();
+        _provider.Library.Invocations.Clear();
+        ReadPage();
+
+        _provider.Library.Verify(manager => manager.GetItemsResult(It.Is<InternalItemsQuery>(query => query.ExcludeItemIds.SequenceEqual(new[] { left.Id }))), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_hidden_film_found_after_others_is_left_out_too()
+    {
+        WithLocations("/media");
+        Add(Hidden + "/Title/Title.mkv");
+        ReadPage();
+        Add(Real + "/A.mkv");
+        Add(Hidden + "/Other/Other.mkv");
+
+        var read = await ReadAsync();
+
+        Assert.Equal(RemoteFailure.None, read.Failure);
+        Assert.Equal(RealIds(), read.Value!.Select(item => item.ItemId).Order());
+    }
+
+    [Fact]
+    public void More_hidden_films_than_are_kept_still_fail_the_read_and_are_not_sent()
+    {
+        WithLocations("/media");
+        Add(Real + "/A.mkv");
+        for (var i = 0; i <= HiddenItems.MaxPerType; i++)
+        {
+            Add(Hidden + "/" + i + "/" + i + ".mkv");
+        }
+
+        ReadPage();
+        _provider.Library.Invocations.Clear();
+        var page = ReadPage();
+
+        Assert.Equal(RealIds(), page.Items.Select(item => item.Id.ToString("N")));
+        Assert.Equal(2, page.TotalRecordCount);
+        _provider.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Once);
+    }
+
+    [Fact]
+    public void A_page_of_collections_leaves_out_the_hidden_films_a_read_met()
+    {
+        WithLocations("/media");
+        var real = Add(Real + "/A.mkv");
+        var hidden = Add(Hidden + "/Title/Title.mkv");
+        _provider.Library.Setup(manager => manager.GetItemList(It.Is<InternalItemsQuery>(query => query.IncludeItemTypes.Contains(BaseItemKind.BoxSet)))).Returns(
+        [
+            new BoxSet { Name = "Saga", LinkedChildren = [new LinkedChild { ItemId = real.Id }, new LinkedChild { ItemId = hidden.Id }] }
+        ]);
+
+        var first = _provider.Catalog.ReadCollections(_provider.PeerCaller, ProviderFixture.SharedLibrary, 0, 10);
+        var next = _provider.Catalog.ReadCollections(_provider.PeerCaller, ProviderFixture.SharedLibrary, 0, 10);
+
+        Assert.Equal([real.Id.ToString("N")], first.Items.Select(entry => entry.Id));
+        Assert.Equal([real.Id.ToString("N")], next.Items.Select(entry => entry.Id));
+        Assert.Equal(1, next.TotalRecordCount);
+    }
+
+    private ProviderItemsResponse ReadPage() =>
+        _provider.Catalog.ReadLibrary(_provider.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, RemoteCatalogReader.PageSize);
 
     private async Task<RemoteResult<IReadOnlyList<IndexedItem>>> ReadAsync()
     {
