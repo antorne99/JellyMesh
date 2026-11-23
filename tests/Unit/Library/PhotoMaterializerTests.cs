@@ -113,11 +113,11 @@ public sealed class PhotoMaterializerTests : IDisposable
 
     private string ThumbnailOfTheStub() => PhotoThumbnails.PathOf(_fixture.Root, Assert.Single(_fixture.Registry.State.Stubs).Id)!;
 
-    // A JPEG with an EXIF segment, as a remote that sent its original file would give.
-    private static byte[] WithSecondApp0()
+    // Another clean JPEG: the placeholder with a restart interval.
+    private static byte[] WithRestartInterval()
     {
         var clean = PhotoPlaceholders.For("jpg");
-        return [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, (byte)'h', (byte)'i', .. clean[2..]];
+        return [0xFF, 0xD8, 0xFF, 0xDD, 0x00, 0x04, 0x00, 0x00, .. clean[2..]];
     }
 
     // The placeholder JPEG with the size of its frame changed.
@@ -260,12 +260,12 @@ public sealed class PhotoMaterializerTests : IDisposable
         Assert.Equal(old, await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
 
         _fixture.Sync.Client.ThumbnailFailure = RemoteFailure.None;
-        _fixture.Sync.Client.Thumbnail = WithSecondApp0();
+        _fixture.Sync.Client.Thumbnail = WithRestartInterval();
         await _fixture.SyncAndMaterializeAsync();
         await _fixture.SyncAndMaterializeAsync();
 
         Assert.Equal(3, PhotoReads());
-        Assert.Equal(WithSecondApp0(), await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
+        Assert.Equal(WithRestartInterval(), await File.ReadAllBytesAsync(ThumbnailOfTheStub()));
     }
 
     [Fact]

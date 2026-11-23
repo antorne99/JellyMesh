@@ -36,7 +36,7 @@ public sealed class PhotoThumbnailsTests
     [Fact]
     public void TheBytesOfAnApp1InsideAnotherSegmentAreNotOne()
     {
-        Assert.True(PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(0xE0, [0xFF, 0xE1, 0x00, 0x10]))));
+        Assert.True(PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(0xDB, [0xFF, 0xE1, 0x00, 0x10]))));
     }
 
     [Theory]
@@ -77,14 +77,35 @@ public sealed class PhotoThumbnailsTests
     [InlineData(0xED, false)]
     [InlineData(0xFE, false)]
     [InlineData(0xEF, false)]
-    [InlineData(0xE2, true)]
-    [InlineData(0xEE, true)]
+    [InlineData(0xE0, false)]
+    [InlineData(0xE2, false)]
+    [InlineData(0xEE, false)]
     [InlineData(0xDD, true)]
     [InlineData(0xC4, true)]
     [InlineData(0xC2, true)]
     public void OnlyTheSegmentsOfAPlainImageAreAllowed(byte marker, bool allowed)
     {
         Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(marker, [0x08, 0x00, 0x01, 0x00, 0x01, 0x00]))));
+    }
+
+    // Application data passes only as JFIF with no thumbnail, an ICC profile or the Adobe transform.
+    [Theory]
+    [InlineData(0xE0, "JFIF\0", 14, true)]
+    [InlineData(0xE0, "JFIF\0", 17, false)]
+    [InlineData(0xE0, "JFXX\0", 14, false)]
+    [InlineData(0xE0, "Exif\0", 14, false)]
+    [InlineData(0xE2, "ICC_PROFILE\0", 100, true)]
+    [InlineData(0xE2, "MPF\0", 100, false)]
+    [InlineData(0xE2, "FPXR\0", 100, false)]
+    [InlineData(0xEE, "Adobe", 12, true)]
+    [InlineData(0xEE, "Adobe", 100, false)]
+    [InlineData(0xEE, "GPS", 12, false)]
+    public void ApplicationDataIsAllowedOnlyAsTheEncoderWritesIt(byte marker, string identifier, int length, bool allowed)
+    {
+        var payload = new byte[length];
+        Encoding.ASCII.GetBytes(identifier).CopyTo(payload, 0);
+
+        Assert.Equal(allowed, PhotoThumbnails.IsCleanJpeg(Jpeg(Jfif, Segment(marker, payload))));
     }
 
     // The remote is asked for 640 pixels at most; a larger image never reaches the disk.

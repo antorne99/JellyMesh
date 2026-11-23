@@ -140,6 +140,11 @@ public static class PhotoThumbnails
                 return false;
             }
 
+            if (!IsPlainApplicationData(marker, bytes.Slice(i + 4, length - 2)))
+            {
+                return false;
+            }
+
             if (IsFrame(marker))
             {
                 // Precision, then height and width: neither may be above the side asked of the remote.
@@ -158,6 +163,15 @@ public static class PhotoThumbnails
 
         return false;
     }
+
+    // JFIF with no thumbnail, an ICC profile or the Adobe transform; a segment that is not application data passes.
+    private static bool IsPlainApplicationData(byte marker, ReadOnlySpan<byte> payload) => marker switch
+    {
+        0xE0 => payload.Length == 14 && payload.StartsWith("JFIF\0"u8),
+        0xE2 => payload.StartsWith("ICC_PROFILE\0"u8),
+        0xEE => payload.Length == 12 && payload.StartsWith("Adobe"u8),
+        _ => true
+    };
 
     private static bool IsFrame(byte marker) => marker is >= 0xC0 and <= 0xCF && marker is not (0xC4 or 0xC8 or 0xCC);
 
