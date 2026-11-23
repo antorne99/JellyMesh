@@ -132,6 +132,22 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
+    /// Tells whether a peer may see a version of an item it may reach: the item itself, or a real copy shared with it.
+    /// </summary>
+    /// <param name="caller">The peer.</param>
+    /// <param name="itemId">The item.</param>
+    /// <param name="versionId">The version, as its media source names it.</param>
+    /// <returns>Whether it may, false for a version that cannot be found.</returns>
+    public bool MaySeeVersion(PeerCaller caller, Guid itemId, string? versionId)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        return Guid.TryParse(versionId, out var id)
+            && !id.Equals(Guid.Empty)
+            && (id.Equals(itemId) || FindVisible(caller, id) is not null || IsFileOfVisible(caller, id));
+    }
+
+    /// <summary>
     /// Reads one page of a shared library.
     /// </summary>
     /// <param name="caller">The peer.</param>
@@ -246,10 +262,25 @@ public sealed class ProviderCatalog
             : new RemoteQuality(video.Height, video.Width, video.BitRate, video.Codec, video.VideoRange.ToString(), video.VideoRangeType.ToString());
     }
 
+    // A file next to the main one of an item, with no library of its own, is seen with that item.
+    private bool IsFileOfVisible(PeerCaller caller, Guid itemId)
+    {
+        return _library.GetItemById<BaseItem>(itemId, caller.User) is Video { OwnerId: var ownerId } file
+            && !ownerId.Equals(Guid.Empty)
+            && !IsFederated(file)
+            && _library.GetCollectionFolders(file).Count == 0
+            && FindVisible(caller, ownerId) is not null;
+    }
+
     private ProviderItemsResponse ToResponse(PeerCaller caller, IReadOnlyList<BaseItem> items, int total)
     {
         var options = new DtoOptions(false) { Fields = _fields, EnableImages = true, EnableUserData = false };
         var dtos = _dto.GetBaseItemDtos(items, options, caller.User);
+
+        foreach (var dto in dtos.Where(dto => dto.MediaSources is not null))
+        {
+            dto.MediaSources = [.. dto.MediaSources.Where(source => MaySeeVersion(caller, dto.Id, source.Id))];
+        }
 
         var quality = new Dictionary<string, RemoteQuality>(StringComparer.Ordinal);
         foreach (var source in dtos.SelectMany(dto => dto.MediaSources ?? []))
