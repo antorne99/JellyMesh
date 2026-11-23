@@ -28,6 +28,9 @@ internal static partial class StoreBackups
     /// <summary>The file that keeps the times of the last recoveries.</summary>
     public const string RecoveriesFileName = PluginDatabase.FileName + ".recoveries";
 
+    /// <summary>The file of a database that stays damaged until a retry.</summary>
+    public const string HeldFileName = PluginDatabase.FileName + ".held";
+
     private const string BackupMark = ".backup-";
     private const string DamagedMark = ".damaged-";
     private const string PartialMark = ".partial";

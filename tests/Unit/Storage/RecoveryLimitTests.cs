@@ -34,6 +34,8 @@ public sealed class RecoveryLimitTests : IDisposable
 
     private string DatabasePath => Path.Combine(Folder, PluginDatabase.FileName);
 
+    private string HeldPath => Path.Combine(Folder, "jellymesh.db.held");
+
     private string CountPath => Path.Combine(Folder, "jellymesh.db.recoveries");
 
     public void Dispose()
@@ -144,7 +146,6 @@ public sealed class RecoveryLimitTests : IDisposable
 
         var second = Open();
         Assert.Equal(StoreHealth.Healthy, second.Health);
-        Assert.Equal(StoreState.Damaged, (await DamageAsync(second)).State);
         second.Dispose();
 
         Spoil();
@@ -156,6 +157,71 @@ public sealed class RecoveryLimitTests : IDisposable
         Assert.Equal(StoreHealth.Healthy, third.Retry());
     }
 
+    // Damage found by an access, which a check at the next start may not see, still waits for Retry, which keeps a sound file.
+    [Fact]
+    public async Task AStoreThatWaitsForRetryStillDoesAfterARestart()
+    {
+        var first = Open();
+        await RecoverAsync(first, 3);
+        await first.WriteAsync(
+            (connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "CREATE TABLE kept (value TEXT);";
+                command.ExecuteNonQuery();
+            },
+            CancellationToken.None);
+        var reason = (await DamageAsync(first)).Reason;
+        first.Dispose();
+        _clock.Now += TimeSpan.FromDays(2);
+
+        var second = Open();
+        Assert.Equal(new StoreHealth(StoreState.Damaged, reason), second.Health);
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => CountAsync(second));
+        var aside = SetAside();
+
+        Assert.Equal(StoreHealth.Healthy, second.Retry());
+        var tables = await CountAsync(second);
+        Assert.Equal(aside, SetAside());
+        Assert.Equal(1, await second.ReadAsync(
+            (connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "SELECT count(*) FROM sqlite_master WHERE name = 'kept';";
+                return (long)command.ExecuteScalar()!;
+            },
+            CancellationToken.None));
+        second.Dispose();
+
+        var third = Open();
+        Assert.Equal(StoreHealth.Healthy, third.Health);
+        Assert.Equal(tables, await CountAsync(third));
+    }
+
+    // A wait for Retry that cannot be read is still one, and Retry checks the file it finds in full.
+    [Fact]
+    public async Task AWaitForRetryThatCannotBeReadIsStillOne()
+    {
+        Open().Dispose();
+        await File.WriteAllTextAsync(HeldPath, "x");
+        var database = Open();
+        Assert.Equal(StoreState.Damaged, database.Health.State);
+        Assert.Equal(StoreHealth.Healthy, database.Retry());
+        Assert.False(File.Exists(HeldPath));
+        database.Dispose();
+
+        await File.WriteAllTextAsync(HeldPath, "x");
+        Spoil();
+        var spoiled = Open();
+        Assert.Equal(StoreState.Damaged, spoiled.Health.State);
+        Assert.Empty(SetAside());
+        Assert.Equal(StoreHealth.Healthy, spoiled.Retry());
+        Assert.NotNull(spoiled.Recovery);
+        Assert.False(File.Exists(HeldPath));
+    }
+
     [Fact]
     public async Task ADamageADayAfterTheFirstRecoversByItself()
     {
@@ -165,9 +231,11 @@ public sealed class RecoveryLimitTests : IDisposable
         _clock.Now += TimeSpan.FromHours(22) - TimeSpan.FromMinutes(1);
         Assert.Equal(StoreState.Damaged, (await DamageAsync(database)).State);
         database.Dispose();
+        var restarted = Open();
+        Assert.Equal(StoreHealth.Healthy, restarted.Retry());
         _clock.Now += TimeSpan.FromMinutes(1);
 
-        Assert.Equal(StoreHealth.Healthy, await DamageAsync(Open()));
+        Assert.Equal(StoreHealth.Healthy, await DamageAsync(restarted));
     }
 
     // A clock set back leaves times ahead of it, which count for a day like those behind it and no longer.

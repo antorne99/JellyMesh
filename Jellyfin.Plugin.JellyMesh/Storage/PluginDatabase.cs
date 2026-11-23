@@ -144,6 +144,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     private string RecoveryPath => Path.Combine(_folder, StoreBackups.RecoveryFileName);
 
+    private string HeldPath => Path.Combine(_folder, StoreBackups.HeldFileName);
+
     private string RecoveriesPath => Path.Combine(_folder, StoreBackups.RecoveriesFileName);
 
     private int Latest => _migrations.Count;
@@ -765,11 +767,24 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         else
         {
-            health = Volatile.Read(ref _damage) ?? OpenFile();
+            // A store that waits for Retry does so past a restart too, and then its file is checked in full.
+            var held = ReadHeld();
+            if (held is not null && !retried)
+            {
+                return held;
+            }
+
+            health = Volatile.Read(ref _damage) ?? OpenFile(full: held is not null);
             health = health.State == StoreState.Damaged ? Recover(health, retried) : health;
         }
 
-        return ImportLegacy(health, retried, recovered: false);
+        health = ImportLegacy(health, retried, recovered: false);
+        if (!health.Suspended)
+        {
+            TryDelete(HeldPath, "wait for a retry");
+        }
+
+        return health;
     }
 
     // The data of 0.4 and 0.5 goes in before any service sees the store healthy; until it does, the store stays suspended
@@ -802,8 +817,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once
-    // its version is known and it passes the check. A restored copy is checked in full, and its indexes rebuilt if it fails.
-    private StoreHealth OpenFile(bool restored = false)
+    // its version is known and it passes the check. A full check rebuilds the indexes of a file that fails it.
+    private StoreHealth OpenFile(bool full = false)
     {
         SqliteConnection? writer = null;
         try
@@ -819,10 +834,10 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
                 }
 
-                passes = PassesCheck(probe, restored);
+                passes = PassesCheck(probe, full);
             }
 
-            if (!passes && !(restored && FilePassesFullCheck(_path)))
+            if (!passes && !(full && FilePassesFullCheck(_path)))
             {
                 _logger.LogWarning("The JellyMesh database failed its integrity check");
                 return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
@@ -881,14 +896,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             _logger.LogWarning(exception, "The times of the JellyMesh database recoveries cannot be read. Without a retry, sync and remote playback stay suspended");
             if (!retried)
             {
-                return damage with { Reason = damage.Reason + " The times of its recoveries cannot be read: " + ReasonOf(exception) };
+                return Hold(damage with { Reason = damage.Reason + " The times of its recoveries cannot be read: " + ReasonOf(exception) });
             }
         }
 
         if (!retried && earlier.Count >= StoreBackups.RecoveryLimit)
         {
             _logger.LogWarning("The JellyMesh database was recovered {Count} times in 24 hours, so it stays damaged until a retry. Sync and remote playback stay suspended", earlier.Count);
-            return damage with { Reason = damage.Reason + $" It was recovered {earlier.Count} times in 24 hours, so it stays damaged until a retry." };
+            return Hold(damage with { Reason = damage.Reason + $" It was recovered {earlier.Count} times in 24 hours, so it stays damaged until a retry." });
         }
 
         var target = StoreBackups.DamagedPath(_folder, now);
@@ -938,7 +953,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 }
 
                 Restore(copy.FilePath);
-                var health = OpenFile(restored: true);
+                var health = OpenFile(full: true);
                 if (health.State == StoreState.Damaged)
                 {
                     _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too and is passed over", Path.GetFileName(copy.FilePath));
@@ -1065,6 +1080,41 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         Volatile.Write(ref _note, note);
     }
 
+    // Keeps a store that waits for Retry damaged past a restart too.
+    private StoreHealth Hold(StoreHealth damage)
+    {
+        try
+        {
+            WriteWhole(HeldPath, damage.Reason);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "That the JellyMesh database waits for a retry cannot be written, so it ends at a restart");
+        }
+
+        return damage;
+    }
+
+    // The damage of a store that waits for Retry, null for one that does not. One that cannot be read still counts.
+    private StoreHealth? ReadHeld()
+    {
+        if (!File.Exists(HeldPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = new FileStream(HeldPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return new StoreHealth(StoreState.Damaged, JsonSerializer.Deserialize<string>(stream));
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Why the JellyMesh database waits for a retry cannot be read. Sync and remote playback stay suspended");
+            return new StoreHealth(StoreState.Damaged, "The database was found damaged and stays so until a retry.");
+        }
+    }
+
     // The recoveries of the last 24 hours, kept next to the database since they outlive it. A time ahead of the clock, which
     // may have been set back, counts for a day too.
     private List<DateTimeOffset> RecentRecoveries(DateTimeOffset now)
@@ -1109,15 +1159,17 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    private void TryDeleteNote()
+    private void TryDeleteNote() => TryDelete(RecoveryPath, "recovery note");
+
+    private void TryDelete(string path, string what)
     {
         try
         {
-            File.Delete(RecoveryPath);
+            File.Delete(path);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be deleted");
+            _logger.LogWarning(exception, "The JellyMesh database {What} cannot be deleted", what);
         }
     }
 
