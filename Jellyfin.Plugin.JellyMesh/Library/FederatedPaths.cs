@@ -181,6 +181,13 @@ public static partial class FederatedPaths
             : null;
     }
 
+    /// <summary>Gives the relative type folder that holds a path of the remote library layout, or null for the older layouts.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The relative path of the type folder, or null.</returns>
+    internal static string? TypeFolderPathOf(string relativePath) => RemoteLibraryOf(relativePath) is null
+        ? null
+        : Path.Combine(relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4)[..3]);
+
     /// <summary>Gives the server and type of the relative path of a type folder of a remote library, or null for any other path.</summary>
     /// <param name="relativePath">A path relative to the federated folder.</param>
     /// <returns>The server and the type folder, or null.</returns>

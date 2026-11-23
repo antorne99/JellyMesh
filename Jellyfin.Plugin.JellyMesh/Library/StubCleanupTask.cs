@@ -210,10 +210,13 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         var users = _users.GetUsers().ToList();
         var stubs = state.Stubs.ToDictionary(stub => stub.Id, stub => stub.RelativePath, StringComparer.Ordinal);
         var series = state.Series.ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
-        var left = state.Splits.Where(split => users.Count == 0
-            || !(HandOverSplit(root, split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
-                || HandOverSplit(root, split, series, true, MergeSeries, users, cancellationToken))).ToList();
+        var left = state.Splits.Where(split => IsKnown(split.StubId) && IsKnown(split.FromStubId)
+            && (users.Count == 0
+                || !(HandOverSplit(root, split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
+                    || HandOverSplit(root, split, series, true, MergeSeries, users, cancellationToken)))).ToList();
         return left.Count == state.Splits.Count ? state : state with { Splits = left };
+
+        bool IsKnown(string id) => stubs.ContainsKey(id) || series.ContainsKey(id);
     }
 
     private bool HandOverSplit(string root, StubSplit split, Dictionary<string, string> paths, bool isFolder, Func<UserItemData, UserItemData, bool> merge, List<User> users, CancellationToken cancellationToken)
@@ -225,8 +228,12 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         try
         {
-            if (_library.FindByPath(FederatedPaths.Resolve(root, from), isFolder) is not { } source
-                || _library.FindByPath(FederatedPaths.Resolve(root, to), isFolder) is not { } target)
+            if (_library.FindByPath(FederatedPaths.Resolve(root, from), isFolder) is not { } source)
+            {
+                return IsGone(root, from, isFolder);
+            }
+
+            if (_library.FindByPath(FederatedPaths.Resolve(root, to), isFolder) is not { } target)
             {
                 return false;
             }
@@ -240,6 +247,16 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             _logger.LogError("Cannot hand over the watch state of a split title: {Error}", exception.GetType().Name);
             return false;
         }
+    }
+
+    // Whether the file of a stub or the folder of a series is gone. A type folder without its marker, as on a disk that is not
+    // mounted, proves nothing.
+    private static bool IsGone(string root, string relativePath, bool isFolder)
+    {
+        var path = FederatedPaths.Resolve(root, relativePath);
+        return FederatedPaths.TypeFolderPathOf(relativePath) is { } folder
+            && File.Exists(Path.Combine(FederatedPaths.Resolve(root, folder), FederatedPaths.HiddenFileName))
+            && !(isFolder ? Directory.Exists(path) : File.Exists(path));
     }
 
     private async Task<StubState> MergeStubsAsync(string root, StubState state, CancellationToken cancellationToken)

@@ -554,6 +554,76 @@ public sealed class SplitTitleTests : IDisposable
         AssertFull(Row(_anna, second));
     }
 
+    // Row 537: the wait closes when the old stub or the new one goes.
+    [Fact]
+    public async Task ASplitClosesWhenTheCopiesOfItsOldStubAreGone()
+    {
+        var (old, added) = await WaitingSplitAsync();
+        Remove(TestLibraries.Films, RemoteItemType.Movie, "a");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Empty(_fixture.Registry.State.Splits);
+        Assert.Equal(added.Id, Assert.Single(Split).Id);
+        Assert.False(File.Exists(PathOf(old)));
+    }
+
+    [Fact]
+    public async Task ASplitClosesWhenItsNewStubIsGone()
+    {
+        var (old, _) = await WaitingSplitAsync();
+        Remove(TestLibraries.FilmsB, RemoteItemType.Movie, "b");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Empty(_fixture.Registry.State.Splits);
+        Assert.Equal(old.Id, Assert.Single(Split).Id);
+    }
+
+    [Fact]
+    public async Task ASplitClosesWhenTheFileOfItsOldStubIsGone()
+    {
+        var (old, _) = await WaitingSplitAsync();
+        File.Delete(PathOf(old));
+        _items.Remove(PathOf(old));
+
+        await CleanAsync();
+
+        Assert.Empty(_fixture.Registry.State.Splits);
+    }
+
+    // A disk not mounted holds no file either.
+    [Fact]
+    public async Task ASplitWaitsWhileTheFolderOfItsOldStubCannotBeSeen()
+    {
+        var (old, _) = await WaitingSplitAsync();
+        _items.Remove(PathOf(old));
+        Directory.Move(_fixture.Root, _fixture.Root + "-away");
+        try
+        {
+            await CleanAsync();
+        }
+        finally
+        {
+            Directory.Move(_fixture.Root + "-away", _fixture.Root);
+        }
+
+        Assert.Single(_fixture.Registry.State.Splits);
+    }
+
+    // The old item may come back with its folder, and its state with it.
+    [Fact]
+    public async Task ASplitWaitsWhileTheItemOfItsOldStubIsMissing()
+    {
+        var (old, _) = await WaitingSplitAsync();
+        AddItems();
+        _items.Remove(PathOf(old));
+
+        await CleanAsync();
+
+        Assert.Single(_fixture.Registry.State.Splits);
+    }
+
     private static UserItemData Full() => new()
     {
         Key = "k",
@@ -580,6 +650,8 @@ public sealed class SplitTitleTests : IDisposable
     private StubEntry StubIn(string libraryId) =>
         Assert.Single(Stubs, stub => FederatedPaths.RemoteLibraryOf(stub.RelativePath) == libraryId);
 
+    private IEnumerable<StubEntry> Split => Stubs.Where(stub => stub.Sources.Any(source => source.ItemId is "a" or "b"));
+
     private StubEntry StubOf(int first, int? last) => Assert.Single(Stubs, stub => (stub.EpisodeNumber, stub.EpisodeNumberEnd) == (first, last));
 
     // A file of the first two episodes, the worst or the best copy by its height.
@@ -592,6 +664,8 @@ public sealed class SplitTitleTests : IDisposable
 
         _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source(id, height, 500_000)] });
     }
+
+    private void Remove(string library, RemoteItemType type, string id) => _fixture.Sync.Client.Items[(library, type)].RemoveAll(item => item.Id == id);
 
     private Task<StubEntry> JoinDoubleAsync(int height, params string[] singles) => JoinDoubleAsync(height, singles, true);
 
@@ -613,6 +687,24 @@ public sealed class SplitTitleTests : IDisposable
         }
 
         return old;
+    }
+
+    // A film that split, before the scan that makes the item of its new stub.
+    private async Task<(StubEntry Old, StubEntry Added)> WaitingSplitAsync()
+    {
+        await AddFilmAsync();
+        Together(TestLibraries.Films, TestLibraries.FilmsB);
+
+        // A library that a removal leaves empty keeps its stubs, so each holds another film.
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("y", "Altro", 2021, "2"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("z", "Terzo", 2022, "3"));
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Split);
+        Apart(TestLibraries.Films, TestLibraries.FilmsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Single(_fixture.Registry.State.Splits);
+        return (old, Assert.Single(Split, stub => stub.Id != old.Id));
     }
 
     private VirtualFolderInfo Local(string name, TypeFolder type, params string[] libraries) => new()

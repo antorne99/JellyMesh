@@ -199,9 +199,11 @@ public static class StubPlanner
             .Concat(seriesWorks.Select(work => work.Entry))
             .ToList();
 
-        var splits = SplitsOf(input, works, seriesWorks, stubs, series, removals);
+        // A stub with no copy left on its server goes at once, and closes its wait (§10 row 537).
+        var lost = removals.Where(stub => stub.Sources.All(source => catalog.Find(source.ServerId, source.ItemId) is null)).Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        var splits = SplitsOf(input, works, seriesWorks, stubs, series, removals, lost);
         var waiting = splits.Select(split => split.FromStubId).ToHashSet(StringComparer.Ordinal);
-        removals.RemoveAll(stub => stub.ServerId is { } server && servers.ContainsKey(server)
+        removals.RemoveAll(stub => stub.ServerId is { } server && servers.ContainsKey(server) && !lost.Contains(stub.Id)
             && (waiting.Contains(stub.Id) || (stub.SeriesStubId is { } owner && waiting.Contains(owner))));
 
         var marks = input.State.RemovedServers.Where(removed.Contains).ToList();
@@ -327,7 +329,8 @@ public static class StubPlanner
         List<SeriesWork> seriesWorks,
         List<StubEntry> stubs,
         List<SeriesStub> series,
-        List<StubEntry> removals)
+        List<StubEntry> removals,
+        HashSet<string> lost)
     {
         var written = works.ToDictionary(work => work.Entry.Id, work => work.Entry, StringComparer.Ordinal);
         var narrowed = input.State.Stubs
@@ -352,7 +355,7 @@ public static class StubPlanner
         var known = stubs.Select(stub => stub.Id).Concat(series.Select(entry => entry.Id)).ToHashSet(StringComparer.Ordinal);
         var removed = removals.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
         return splits
-            .Where(split => known.Contains(split.StubId) && known.Contains(split.FromStubId) && !removed.Contains(split.StubId))
+            .Where(split => known.Contains(split.StubId) && known.Contains(split.FromStubId) && !removed.Contains(split.StubId) && !lost.Contains(split.FromStubId))
             .Distinct()
             .ToList();
 
