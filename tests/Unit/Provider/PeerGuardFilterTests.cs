@@ -1006,6 +1006,49 @@ public class PeerGuardFilterTests
         Assert.Equal(1, Slots);
     }
 
+    // The answer of PlaybackInfo through both filters, as on a server.
+    private async Task<bool> PlaybackInfoAsync(string playSession, StringValues device)
+    {
+        var action = ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo");
+        var http = new DefaultHttpContext();
+        http.Request.Method = "POST";
+        http.Request.Headers[ProviderProtocol.DeviceHeader] = device;
+        var route = new RouteData();
+        route.Values["itemId"] = Route(ProviderFixture.SharedTrack);
+        var actionContext = new ActionContext(http, route, action);
+        var resource = new ResourceExecutingContext(actionContext, new List<IFilterMetadata>(), new List<IValueProviderFactory>());
+        var arguments = new Dictionary<string, object?> { ["itemId"] = ProviderFixture.SharedTrack, ["playbackInfoDto"] = null };
+        var executing = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), arguments, new object());
+        var answer = new OkObjectResult(new PlaybackInfoResponse { PlaySessionId = playSession });
+        var ran = false;
+        await _filter.OnResourceExecutionAsync(resource, async () =>
+        {
+            await new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots, _fixture.Closer).OnActionExecutionAsync(executing, () =>
+            {
+                ran = true;
+                return Task.FromResult(new ActionExecutedContext(actionContext, new List<IFilterMetadata>(), new object()) { Result = answer });
+            });
+            return new ResourceExecutedContext(resource, new List<IFilterMetadata>());
+        });
+        return ran;
+    }
+
+    [Fact]
+    public async Task The_tracks_a_device_opens_with_playback_info_stream_in_one_slot()
+    {
+        Assert.True(await PlaybackInfoAsync("playing", DeviceOne));
+        Assert.True(await PlaybackInfoAsync("next", DeviceOne));
+        Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=playing"));
+
+        // Taken again from nothing: only the item that PlaybackInfo recorded keeps them together.
+        _fixture.Slots.ReleaseAll(_fixture.Peer.Id);
+        Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=playing"));
+        Assert.True(await FileAsync(DeviceOne, query: "?static=true&PlaySessionId=next"));
+
+        Assert.Equal(1, Slots);
+        Assert.False(await PlaybackInfoAsync("other", DeviceTwo));
+    }
+
     // Stock serves the job of a play session whatever item the route names.
     [Theory]
     [InlineData("Videos", "GetVideoStream", "?static=true&PlaySessionId=")]
