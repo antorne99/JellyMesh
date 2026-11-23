@@ -224,13 +224,36 @@ public sealed class FederationIndexTests : IDisposable
         }, CancellationToken.None);
         _database.Reopen();
 
-        Assert.True(await index.MergeServerAsync(_first, [Item("c")], _now, new SyncMark(_now, ["library"]), CancellationToken.None));
+        Assert.True(await index.MarkServerFailedAsync(_first, RemoteFailure.Unreachable, _now, CancellationToken.None));
 
         using var restarted = NewIndex();
         Assert.Equal(
             index.Snapshot.Servers.Single().Items.Select(item => item.ItemId),
             restarted.Snapshot.Servers.Single().Items.Select(item => item.ItemId));
         Assert.DoesNotContain(restarted.Snapshot.Servers.Single().Items, item => item.ItemId == "b");
+    }
+
+    // Row 512: a read of changes does not bring back what a restored copy lacks, so its changes and mark are refused.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangesReadBeforeTheDatabaseWasReopenedAreRefused(bool readAgain)
+    {
+        using var index = NewIndex();
+        var mark = new SyncMark(_now, ["library"]);
+        await index.ReplaceServerAsync(_first, [Item("a")], _now, mark, CancellationToken.None);
+        var generation = index.Snapshot.Generation;
+        _database.Reopen();
+        if (readAgain)
+        {
+            await index.ReplaceServerAsync(_second, [Item("x")], _now, null, CancellationToken.None);
+        }
+
+        Assert.False(await index.MergeServerAsync(_first, [Item("c")], _now, new SyncMark(_now.AddHours(1), ["library"]), generation, CancellationToken.None));
+
+        Assert.Equal(["a"], index.Snapshot.Find(_first)!.Items.Select(item => item.ItemId));
+        Assert.Equal(mark.ReadStartedUtc, index.Snapshot.Find(_first)!.Mark!.ReadStartedUtc);
+        Assert.NotEqual(generation, index.Snapshot.Generation);
     }
 
     [Fact]
@@ -412,7 +435,7 @@ public sealed class FederationIndexTests : IDisposable
         var later = _now.AddMinutes(15);
         var mark = new SyncMark(later, ["library"]);
 
-        Assert.True(await index.MergeServerAsync(_first, [Item("b") with { Name = "new name" }, Item("c")], later, mark, CancellationToken.None));
+        Assert.True(await index.MergeServerAsync(_first, [Item("b") with { Name = "new name" }, Item("c")], later, mark, index.Snapshot.Generation, CancellationToken.None));
 
         var catalog = index.Snapshot.Find(_first)!;
         Assert.Equal(["a", "b", "c"], catalog.Items.Select(item => item.ItemId));
@@ -436,8 +459,8 @@ public sealed class FederationIndexTests : IDisposable
         var later = _now.AddMinutes(15);
         var mark = new SyncMark(later, ["library"]);
 
-        Assert.True(await index.MergeServerAsync(_first, [], later, mark, CancellationToken.None));
-        Assert.True(await index.MergeServerAsync(_first, [Item("a", later)], later, mark, CancellationToken.None));
+        Assert.True(await index.MergeServerAsync(_first, [], later, mark, index.Snapshot.Generation, CancellationToken.None));
+        Assert.True(await index.MergeServerAsync(_first, [Item("a", later)], later, mark, index.Snapshot.Generation, CancellationToken.None));
 
         Assert.Equal(writes, _database.Writes);
         var catalog = index.Snapshot.Find(_first)!;
@@ -452,7 +475,7 @@ public sealed class FederationIndexTests : IDisposable
         await index.ReplaceServerAsync(_first, [Item("a")], _now, null, CancellationToken.None);
         var items = index.Snapshot.Find(_first)!.Items;
 
-        await index.MergeServerAsync(_first, [], _now.AddMinutes(15), new SyncMark(_now.AddMinutes(15), ["library"]), CancellationToken.None);
+        await index.MergeServerAsync(_first, [], _now.AddMinutes(15), new SyncMark(_now.AddMinutes(15), ["library"]), index.Snapshot.Generation, CancellationToken.None);
 
         Assert.Same(items, index.Snapshot.Find(_first)!.Items);
     }
@@ -465,7 +488,7 @@ public sealed class FederationIndexTests : IDisposable
         await index.MarkServerFailedAsync(_first, RemoteFailure.Unreachable, _now, CancellationToken.None);
         var before = index.Snapshot;
 
-        await index.MergeServerAsync(_first, [Item("b")], _now, new SyncMark(_now, []), CancellationToken.None);
+        await index.MergeServerAsync(_first, [Item("b")], _now, new SyncMark(_now, []), index.Snapshot.Generation, CancellationToken.None);
 
         Assert.Equal(before.Find(_first), index.Snapshot.Find(_first));
         Assert.False(index.Snapshot.IsAuthoritativeFor(_first));
@@ -476,7 +499,7 @@ public sealed class FederationIndexTests : IDisposable
     {
         using var index = NewIndex();
 
-        await index.MergeServerAsync(_first, [Item("a")], _now, new SyncMark(_now, []), CancellationToken.None);
+        await index.MergeServerAsync(_first, [Item("a")], _now, new SyncMark(_now, []), index.Snapshot.Generation, CancellationToken.None);
 
         Assert.Null(index.Snapshot.Find(_first));
     }

@@ -71,11 +71,17 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     }
 
     /// <inheritdoc />
-    public Task<bool> MergeServerAsync(Guid serverId, IReadOnlyList<IndexedItem> changed, DateTimeOffset syncedUtc, SyncMark mark, CancellationToken cancellationToken)
+    public Task<bool> MergeServerAsync(Guid serverId, IReadOnlyList<IndexedItem> changed, DateTimeOffset syncedUtc, SyncMark mark, long generation, CancellationToken cancellationToken)
     {
         return CommitAsync(
             current =>
             {
+                // Entries missing from a restored copy may be among those the read did not ask for again.
+                if (current.Generation != generation)
+                {
+                    throw new StoreSuspendedException("The database was opened again since the read started.");
+                }
+
                 if (current.Find(serverId) is not { State: ServerSyncState.Complete } catalog)
                 {
                     return current;
@@ -213,7 +219,8 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
                 (connection, transaction) =>
                 {
                     _readGeneration = _database.Generation;
-                    return IndexTables.Load(connection, transaction);
+                    var stored = IndexTables.Load(connection, transaction);
+                    return stored with { Snapshot = stored.Snapshot with { Generation = _readGeneration } };
                 },
                 cancellationToken).ConfigureAwait(false);
         }
@@ -225,7 +232,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException or InvalidOperationException or OverflowException or InvalidCastException)
         {
             _logger.LogError("The federation index in the database is damaged: {Error}. It is empty until a sync fills it again", exception.GetType().Name);
-            return new IndexTables.StoredIndex(IndexSnapshot.Empty(IndexHealth.Corrupt), []);
+            return new IndexTables.StoredIndex(IndexSnapshot.Empty(IndexHealth.Corrupt) with { Generation = _readGeneration }, []);
         }
     }
 

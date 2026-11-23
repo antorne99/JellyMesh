@@ -56,7 +56,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly IUnchangedSyncGate? _gate;
     private readonly IPluginDatabase? _database;
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
+    private readonly ConcurrentDictionary<Guid, (string Cursor, long Generation)> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
     private readonly ConcurrentDictionary<Guid, int> _runReads = new();
     private readonly UnreadablePasswords _unreadablePasswords = new();
@@ -706,6 +706,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private async Task SyncServerAsync(RemoteServerInfo server, CancellationToken cancellationToken)
     {
+        // Before the read: after a restore during it, the cursor is of an earlier opening and the next read is full again.
+        var generation = _database?.Generation ?? _index.Snapshot.Generation;
         var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
         if (!started.IsSuccess)
         {
@@ -740,13 +742,16 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var mark = new SyncMark(started.Value, server.ImportedLibraryIds);
         var saved = await _index.ReplaceServerAsync(server.Id, entries, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false);
         TrackSave(saved);
-        RememberCursor(server.Id, saved ? cursor : null);
+        RememberCursor(server.Id, saved ? cursor : null, generation);
     }
 
     private async Task SyncChangesAsync(RemoteServerInfo server, CancellationToken cancellationToken)
     {
-        var catalog = _index.Snapshot.Find(server.Id);
-        if (catalog is not { State: ServerSyncState.Complete, Mark: { } mark } || !CoversSameLibraries(mark, server))
+        // An index not yet read again from a restored database does not say what is missing.
+        var snapshot = _index.Snapshot;
+        var catalog = snapshot.Find(server.Id);
+        if (catalog is not { State: ServerSyncState.Complete, Mark: { } mark } || !CoversSameLibraries(mark, server)
+            || (_database is not null && _database.Generation != snapshot.Generation))
         {
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
             return;
@@ -754,7 +759,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         if (server.Mode == RemoteMode.JellyMesh)
         {
-            await SyncFeedAsync(server, catalog, cancellationToken).ConfigureAwait(false);
+            await SyncFeedAsync(server, catalog, snapshot.Generation, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -776,14 +781,14 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
-        TrackSave(await _index.MergeServerAsync(server.Id, KeepCollections(read.Value, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
+        TrackSave(await _index.MergeServerAsync(server.Id, KeepCollections(read.Value, catalog), _timeProvider.GetUtcNow(), next, snapshot.Generation, cancellationToken).ConfigureAwait(false));
     }
 
     // The change feed instead of polling. The mark still moves: if the remote stops being a JellyMesh one, polling goes on
-    // from here. Without a cursor, as after a restart of this server, only a full read can tell where things stand.
-    private async Task SyncFeedAsync(RemoteServerInfo server, ServerCatalog catalog, CancellationToken cancellationToken)
+    // from here. Without a cursor, as after a restart or a restored database, only a full read can tell where things stand.
+    private async Task SyncFeedAsync(RemoteServerInfo server, ServerCatalog catalog, long generation, CancellationToken cancellationToken)
     {
-        if (!_feedCursors.TryGetValue(server.Id, out var cursor))
+        if (!_feedCursors.TryGetValue(server.Id, out var place) || place.Generation != generation)
         {
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
             return;
@@ -797,7 +802,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         var known = catalog.Items.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
-        var read = await _reader.ReadFeedAsync(server, cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        var read = await _reader.ReadFeedAsync(server, place.Cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
             await MarkFailedAsync(server, read.Failure, cancellationToken).ConfigureAwait(false);
@@ -814,13 +819,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Items.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
-        var saved = await _index.MergeServerAsync(server.Id, KeepCollections(read.Value.Items, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
+        var saved = await _index.MergeServerAsync(server.Id, KeepCollections(read.Value.Items, catalog), _timeProvider.GetUtcNow(), next, generation, cancellationToken).ConfigureAwait(false);
         TrackSave(saved);
 
         // Not saved means not applied, so the old cursor reads the same changes again.
         if (saved)
         {
-            RememberCursor(server.Id, read.Value.Cursor);
+            RememberCursor(server.Id, read.Value.Cursor, generation);
         }
     }
 
@@ -862,7 +867,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             .ToList();
     }
 
-    private void RememberCursor(Guid serverId, string? cursor)
+    private void RememberCursor(Guid serverId, string? cursor, long generation)
     {
         if (cursor is null)
         {
@@ -870,7 +875,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         else
         {
-            _feedCursors[serverId] = cursor;
+            _feedCursors[serverId] = (cursor, generation);
         }
     }
 
