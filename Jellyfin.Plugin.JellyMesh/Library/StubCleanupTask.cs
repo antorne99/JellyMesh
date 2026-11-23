@@ -198,7 +198,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     }
 
     // A stub or series that split takes the state of the one it split from, once: later each keeps its own (row 63). It waits
-    // until a scan has made both items.
+    // until a scan has made both items, and until the state of a renamed server is at its new path.
     private StubState HandOverSplits(string root, StubState state, CancellationToken cancellationToken)
     {
         if (state.Splits.Count == 0)
@@ -210,8 +210,10 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         var users = _users.GetUsers().ToList();
         var stubs = state.Stubs.ToDictionary(stub => stub.Id, stub => stub.RelativePath, StringComparer.Ordinal);
         var series = state.Series.ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
+        var moving = state.Renames.Where(rename => rename.RemovedItemId is null).Select(rename => rename.StubId).ToHashSet(StringComparer.Ordinal);
         var left = state.Splits.Where(split => IsKnown(split.StubId) && IsKnown(split.FromStubId)
             && (users.Count == 0
+                || moving.Contains(split.FromStubId)
                 || !(HandOverSplit(root, split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
                     || HandOverSplit(root, split, series, true, MergeSeries, users, cancellationToken)))).ToList();
         return left.Count == state.Splits.Count ? state : state with { Splits = left };

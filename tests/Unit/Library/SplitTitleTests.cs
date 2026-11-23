@@ -655,6 +655,23 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Single(_fixture.Registry.State.Splits);
     }
 
+    // The state of a stub of a renamed server is still at its old path.
+    [Fact]
+    public async Task ASplitWaitsWhileItsOldStubMovesToTheNameOfItsServer()
+    {
+        var (old, added) = await WaitingSplitAsync();
+        Give(_anna, PathOf(old), Full());
+        await SaveRenamesAsync(new StubRename(old.Id, "old.strm"));
+
+        await ScanAsync();
+        Assert.Single(_fixture.Registry.State.Splits);
+
+        await SaveRenamesAsync(new StubRename(old.Id, "old.strm") { RemovedItemId = Guid.NewGuid() });
+        await ScanAsync();
+        Assert.Empty(_fixture.Registry.State.Splits);
+        AssertFull(Row(_anna, PathOf(added)));
+    }
+
     // The series is still on its server, so it keeps its state until the new one takes it.
     [Theory]
     [InlineData(false)]
@@ -742,6 +759,19 @@ public sealed class SplitTitleTests : IDisposable
         }
 
         _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source(id, height, 500_000)] });
+    }
+
+    private async Task SaveRenamesAsync(params StubRename[] renames)
+    {
+        await _fixture.Registry.EnterAsync(CancellationToken.None);
+        try
+        {
+            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Renames = renames }, CancellationToken.None);
+        }
+        finally
+        {
+            _fixture.Registry.Exit();
+        }
     }
 
     private void Remove(string library, RemoteItemType type, string id) => _fixture.Sync.Client.Items[(library, type)].RemoveAll(item => item.Id == id);
