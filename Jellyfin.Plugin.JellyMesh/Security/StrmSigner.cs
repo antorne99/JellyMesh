@@ -58,6 +58,17 @@ public sealed class StrmSigner
             && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Sign(stubId)), Encoding.UTF8.GetBytes(signature));
     }
 
+    /// <summary>
+    /// Derives the key of another purpose, which tells nothing about the signing key.
+    /// </summary>
+    /// <param name="label">The purpose.</param>
+    /// <returns>The key, the same as long as the signing key is.</returns>
+    public byte[] DeriveKey(string label)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+        return HKDF.DeriveKey(HashAlgorithmName.SHA256, _key, KeyLength, info: Encoding.UTF8.GetBytes(label));
+    }
+
     private static byte[] LoadOrCreate(string path, ILogger<StrmSigner> logger)
     {
         try
