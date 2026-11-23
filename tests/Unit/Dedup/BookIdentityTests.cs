@@ -95,6 +95,20 @@ public class BookIdentityTests
         Assert.Equal([("k4", "e1"), ("k4", "e2")], found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId)));
     }
 
+    // A book in more than one place is one copy, and so is one found by more than one ID.
+    [Fact]
+    public void OneBookInManyPlacesIsOneCopy()
+    {
+        var found = BookIdentity.Pair(
+            [Book("k1"), Book("k2", "Two", ids: [("ISBN", "3")])],
+            [Book("a1"), Book("a1"), Book("a1"), Book("c1", "Two", ids: [("ISBN", "3")]), Book("c1", "Two", ids: [("ISBN", "3")]), Book("c1", "Two", ids: [("ISBN", "3")])],
+            2,
+            CancellationToken.None);
+
+        Assert.Equal(0, found.Left);
+        Assert.Equal(["a1", "c1"], found.Pairs.Select(pair => pair.Current.ItemId));
+    }
+
     [Fact]
     public void ThePairingOfBooksCanBeCancelled()
         => Assert.Throws<System.OperationCanceledException>(() => BookIdentity.Pair([Book("k1")], [Book("a1")], 100, new CancellationToken(true)));

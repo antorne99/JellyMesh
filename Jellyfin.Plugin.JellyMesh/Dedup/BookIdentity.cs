@@ -23,8 +23,9 @@ public static class BookIdentity
     {
         ArgumentNullException.ThrowIfNull(saved);
         ArgumentNullException.ThrowIfNull(current);
-        var byId = current.SelectMany(book => IdKeys(book).Select(id => (Id: id, Book: book))).ToLookup(entry => entry.Id, entry => entry.Book, StringComparer.Ordinal);
-        var byData = current.Where(book => DataKey(book) is not null).ToLookup(book => DataKey(book)!, StringComparer.Ordinal);
+        var books = current.DistinctBy(book => (book.ServerId, book.ItemId, book.Extension)).ToList();
+        var byId = books.SelectMany(book => IdKeys(book).Select(id => (Id: id, Book: book))).ToLookup(entry => entry.Id, entry => entry.Book, StringComparer.Ordinal);
+        var byData = books.Where(book => DataKey(book) is not null).ToLookup(book => DataKey(book)!, StringComparer.Ordinal);
         var pairs = new List<(BookItem Saved, BookItem Current)>();
         var left = 0;
         foreach (var book in saved)

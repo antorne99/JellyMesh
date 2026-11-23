@@ -81,6 +81,20 @@ public class HomeVideoIdentityTests
         Assert.Equal([("k2", "b1"), ("k2", "b2")], found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId)));
     }
 
+    // Only the videos of the same duration are copies, and one in more than one place is one copy, whatever its versions.
+    [Fact]
+    public void VideosOfOtherDurationsAndOneVideoInManyPlacesAreNotManyCopies()
+    {
+        var found = HomeVideoIdentity.Pair(
+            [Video("k1")],
+            [Video("a9", seconds: 10), Video("a1", seconds: 62), Video("a1"), Video("a1", seconds: 58), Video("a8", seconds: 63), Video("a7", seconds: 57), Video("b1", seconds: 61), Video("a6", seconds: 600)],
+            2,
+            CancellationToken.None);
+
+        Assert.Equal(0, found.Left);
+        Assert.Equal(["a1", "b1"], found.Pairs.Select(pair => pair.Current.ItemId).Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public void ThePairingOfHomeVideosCanBeCancelled()
         => Assert.Throws<OperationCanceledException>(() => HomeVideoIdentity.Pair([Video("k1")], [Video("a1")], 100, new CancellationToken(true)));
