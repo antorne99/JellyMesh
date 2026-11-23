@@ -519,6 +519,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         try
         {
             VacuumInto(writer, partial);
+            if (!PassesCheck(writer))
+            {
+                throw new InvalidDataException("The database failed its integrity check, so it is not copied.");
+            }
+
             if (File.Exists(copy.FilePath))
             {
                 TryErase(copy.FilePath, "copy replaced");

@@ -360,6 +360,28 @@ public sealed class DamageOnAccessTests : IDisposable
         Assert.Single(SetAside());
     }
 
+    // VACUUM does not read the count of fragmented bytes of a page, which the integrity check does.
+    [Fact]
+    public async Task ADatabaseThatFailsItsCheckReplacesNoCopy()
+    {
+        var database = await WithACopyAsync();
+        _clock.Now += TimeSpan.FromDays(1);
+        await database.BackUpAsync(CancellationToken.None);
+        _clock.Now += TimeSpan.FromDays(1);
+        database.Dispose();
+        database = Open();
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        var copies = Copies();
+        var root = await database.ReadAsync((connection, transaction) => (long)Scalar(connection, "SELECT rootpage FROM sqlite_master WHERE name = 'items';", transaction)!, CancellationToken.None);
+        Spoil(((root - 1) * 4096) + 7, [3]);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => database.BackUpAsync(CancellationToken.None));
+
+        Assert.Equal(2, copies.Length);
+        Assert.Equal(copies, Copies());
+        Assert.Empty(Directory.GetFiles(Folder, "*.partial"));
+    }
+
     private string[] Copies() => Directory.GetFiles(Folder, PluginDatabase.FileName + ".backup-*").Order(StringComparer.Ordinal).ToArray();
 
     // Cannot write the recovery note while it fails.
