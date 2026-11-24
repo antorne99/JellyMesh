@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -20,6 +22,7 @@ public sealed class FederationStoreControllerTests
     private static readonly DateTimeOffset _recovered = new(2026, 11, 18, 3, 5, 0, TimeSpan.Zero);
 
     private readonly Mock<IPluginDatabase> _database = new();
+    private readonly Mock<IStubRegistry> _stubs = new();
 
     [Fact]
     public void EveryEndpointRequiresAnAdministrator()
@@ -120,6 +123,63 @@ public sealed class FederationStoreControllerTests
     }
 
     [Fact]
+    public async Task RetryReadsTheStubRegistryAgainBeforeItAnswers()
+    {
+        var order = new List<string>();
+        var read = new TaskCompletionSource();
+        _database.Setup(database => database.Health).Returns(StoreHealth.Healthy);
+        _database.Setup(database => database.Retry()).Callback(() => order.Add("retry")).Returns(StoreHealth.Healthy);
+        _stubs.Setup(stubs => stubs.ReloadAsync(It.IsAny<CancellationToken>())).Callback(() => order.Add("reload")).Returns(read.Task);
+
+        var answer = Controller().Retry(CancellationToken.None);
+
+        Assert.False(answer.IsCompleted);
+        read.SetResult();
+        await answer;
+        Assert.Equal(["retry", "reload"], order);
+    }
+
+    [Fact]
+    public async Task RetryThatLeavesTheStoreSuspendedReadsNoStubRegistry()
+    {
+        var suspended = new StoreHealth(StoreState.Unavailable, "The database cannot be opened: disk full.");
+        _database.Setup(database => database.Health).Returns(suspended);
+        _database.Setup(database => database.Retry()).Returns(suspended);
+
+        await Controller().Retry(CancellationToken.None);
+
+        _stubs.Verify(stubs => stubs.ReloadAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RetryAnswersWhenTheReadOfTheStubRegistryTakesTooLong()
+    {
+        _database.Setup(database => database.Health).Returns(StoreHealth.Healthy);
+        _database.Setup(database => database.Retry()).Returns(StoreHealth.Healthy);
+        _stubs.Setup(stubs => stubs.ReloadAsync(It.IsAny<CancellationToken>()))
+            .Returns((CancellationToken cancellation) => Task.Delay(Timeout.InfiniteTimeSpan, cancellation));
+
+        var store = await Controller(TimeSpan.FromMilliseconds(50)).Retry(CancellationToken.None);
+
+        Assert.Equal(StoreState.Healthy, store.State);
+    }
+
+    [Fact]
+    public async Task RetryOfACallerThatLeftIsCancelled()
+    {
+        using var left = new CancellationTokenSource();
+        _database.Setup(database => database.Health).Returns(StoreHealth.Healthy);
+        _database.Setup(database => database.Retry()).Returns(StoreHealth.Healthy);
+        _stubs.Setup(stubs => stubs.ReloadAsync(It.IsAny<CancellationToken>()))
+            .Returns((CancellationToken cancellation) => Task.Delay(Timeout.InfiniteTimeSpan, cancellation));
+
+        var answer = Controller().Retry(left.Token);
+        await left.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => answer);
+    }
+
+    [Fact]
     public void DismissingTheRestoreForgetsIt()
     {
         var result = Controller().DismissRecovery();
@@ -128,5 +188,5 @@ public sealed class FederationStoreControllerTests
         _database.Verify(database => database.DismissRecovery(), Times.Once);
     }
 
-    private FederationStoreController Controller() => new(_database.Object);
+    private FederationStoreController Controller(TimeSpan? reloadLimit = null) => new(_database.Object, _stubs.Object) { ReloadLimit = reloadLimit ?? TimeSpan.FromSeconds(30) };
 }

@@ -193,7 +193,7 @@ public sealed class StubLookup
         }
 
         return user.HasPermission(PermissionKind.IsAdministrator)
-            || (Find(itemId) is null && !HasVersions(itemId))
+            || (Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
             || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 
@@ -223,6 +223,29 @@ public sealed class StubLookup
         return _libraryManager.GetItemById(itemId) is Video video && PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId)
             ? _stubs.Find(stubId)
             : null;
+    }
+
+    /// <summary>
+    /// Finds the stub an item plays, by the URL of its <c>.strm</c> or else by its path, and tells a federated <c>.strm</c> that the
+    /// registry does not hold, which stock must not serve since it would send its signed URL.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <param name="isUnknown">Whether the item is a federated <c>.strm</c> with no stub in the registry.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? Resolve(Guid itemId, out bool isUnknown)
+    {
+        isUnknown = false;
+        if (_libraryManager.GetItemById(itemId) is not Video video)
+        {
+            return null;
+        }
+
+        // Before the search: a registry read in between would otherwise count as one that does not hold the stub.
+        var isUnread = _stubs.IsUnread;
+        var isOurs = PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId);
+        var stub = (isOurs ? _stubs.Find(stubId) : null) ?? (IsStrm(video.Path) ? _stubs.FindByPath(video.Path) : null);
+        isUnknown = stub is null && IsStrm(video.Path) && IsFederated(video, isOurs, isUnread);
+        return stub;
     }
 
     /// <summary>
@@ -295,6 +318,16 @@ public sealed class StubLookup
     // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
     private bool IsStrmInFolder(string? path)
         => IsStrm(path) && (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path));
+
+    // A .strm in the federated folder, or with our URL while the folder is not known or the registry is not read; while the
+    // folder is not known, also one Jellyfin has not read. Any other .strm is the administrator's.
+    private bool IsFederated(Video video, bool isOurs, bool isUnread)
+    {
+        var root = _store.ReadOr(config => config.FederatedFolderPath, null);
+        return FederatedPaths.IsInside(root, video.Path)
+            || (isOurs && (root is null || isUnread))
+            || (root is null && string.IsNullOrEmpty(video.ShortcutPath));
+    }
 
     private void AddAlternates(Dictionary<Guid, Video> members, Video video)
     {

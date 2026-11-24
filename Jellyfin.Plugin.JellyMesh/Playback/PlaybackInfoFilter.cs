@@ -115,8 +115,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // R:versioni §5: the version comes from the query, else from the body, as the stock action merges them.
         var arguments = new ArgumentReader(context.ActionArguments);
         var asked = arguments.Version(MediaSourceArgument);
-        var routeStub = _stubs.Find(route);
-        if (routeStub is null && (asked is not { } named || named.Equals(route) || _stubs.Find(named) is null) && !_stubs.HasVersions(route))
+        var routeStub = _stubs.Resolve(route, out var routeUnknown);
+        if (routeStub is null && !routeUnknown && (asked is not { } named || named.Equals(route) || !IsFederated(named)) && !_stubs.HasVersions(route))
         {
             await next().ConfigureAwait(false);
             return;
@@ -140,10 +140,24 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        var target = asked ?? (routeStub is null ? route : _versions.Choose(route, routeStub, user));
-        var targetStub = target.Equals(route) ? routeStub : _stubs.Find(target);
+        var target = asked ?? (routeStub is not null ? _versions.Choose(route, routeStub, user) : routeUnknown ? _versions.LinkedLocalCopy(route, user) ?? route : route);
+        var targetStub = _stubs.Resolve(target, out var targetUnknown);
+        if (targetUnknown)
+        {
+            _logger.LogWarning("PlaybackInfo of item {ItemId} is refused: the registry does not hold the stub of version {VersionId}", route, target);
+            context.Result = _refusal.Refuse(http, authorization.DeviceId ?? string.Empty, _coordinator.IsSuspended ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
+            return;
+        }
+
         if (targetStub is null && routeStub is null)
         {
+            // A client would read the local copy by the stub it opened, so it goes through the file route.
+            if (routeUnknown)
+            {
+                await AnswerLocalCopyAsync(context, next, new PlaybackIdentity(user.Id, authorization.DeviceId ?? string.Empty, route, route.ToString("N")), authorization.Token, target).ConfigureAwait(false);
+                return;
+            }
+
             await PlayStockVersionAsync(context, next, target, route).ConfigureAwait(false);
             return;
         }
@@ -205,6 +219,17 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
     }
 
+    private bool IsFederated(Guid itemId) => _stubs.Resolve(itemId, out var isUnknown) is not null || isUnknown;
+
+    // Keeps only the source of a local version, and never the one of a stub, which holds its signed URL.
+    private void KeepLocal(PlaybackInfoResponse response, Guid versionId)
+    {
+        KeepOnly(response, versionId);
+        response.MediaSources = response.MediaSources
+            .Where(source => !Guid.TryParse(source.Id, out var id) || id.Equals(versionId) || !_stubs.IsStub(id))
+            .ToList();
+    }
+
     // Stock answers for a local version under a local item. The GET action has no version to pin, so the answer is trimmed.
     private async Task PlayStockVersionAsync(ActionExecutingContext context, ActionExecutionDelegate next, Guid versionId, Guid route)
     {
@@ -212,14 +237,14 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var executed = await next().ConfigureAwait(false);
         if (executed.Result is ObjectResult { Value: PlaybackInfoResponse response } && executed.Exception is null && response.ErrorCode is null && response.MediaSources.Count > 0)
         {
-            KeepOnly(response, versionId);
+            KeepLocal(response, versionId);
             _logger.LogInformation("Item {ItemId} plays its local version {VersionId}, play session {PlaySessionId}", route, versionId, response.PlaySessionId);
             return;
         }
 
         if (executed.Result is ObjectResult { Value: PlaybackInfoResponse trimmed })
         {
-            KeepOnly(trimmed, versionId);
+            KeepLocal(trimmed, versionId);
         }
 
         _logger.LogWarning("Stock gave no PlaybackInfo for the local version {VersionId} of item {ItemId}: {Failure:l}", versionId, route, StockFailureOf(executed));
@@ -234,7 +259,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         source.IsRemote = false;
     }
 
-    private static bool CleanLocalCopyResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, Guid localItemId)
+    private static bool CleanLocalCopyResponse(PlaybackInfoResponse response, string localToken, Guid localItemId)
     {
         if (response.ErrorCode is not null || response.MediaSources.Count == 0)
         {
@@ -249,7 +274,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             if (source.SupportsDirectPlay || source.SupportsDirectStream || string.IsNullOrEmpty(source.TranscodingUrl))
             {
                 var container = PlaybackResponseBuilder.ContainerOf(source);
-                source.TranscodingUrl = PlaybackUrls.LocalFile(localItemId, source.Id, container, request.LocalToken);
+                source.TranscodingUrl = PlaybackUrls.LocalFile(localItemId, source.Id, container, localToken);
                 source.TranscodingSubProtocol = MediaStreamProtocol.http;
                 source.TranscodingContainer = container;
             }
@@ -298,22 +323,31 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
     private async Task PlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, Guid localItemId, Guid route)
     {
+        if (await AnswerLocalCopyAsync(context, next, request.Identity, request.LocalToken, localItemId).ConfigureAwait(false) is { } response)
+        {
+            _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
+        }
+    }
+
+    // Answers with the local copy of a title, or refuses and returns null.
+    private async Task<PlaybackInfoResponse?> AnswerLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackIdentity identity, string localToken, Guid localItemId)
+    {
         // The stock action answers for the local item. The source the client asked for is one of the stub.
         context.ActionArguments[ItemArgument] = localItemId;
         context.ActionArguments[MediaSourceArgument] = localItemId.ToString("N");
         var executed = await next().ConfigureAwait(false);
-        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, localItemId))
+        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, localToken, localItemId))
         {
-            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure:l}", localItemId, request.Stub.Id, StockFailureOf(executed));
+            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure:l}", localItemId, identity.StubId, StockFailureOf(executed));
             executed.Exception = null;
             executed.ExceptionHandled = true;
-            executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
-            return;
+            executed.Result = _refusal.Refuse(context.HttpContext, identity.DeviceId, PlaybackRefusal.FailedText);
+            return null;
         }
 
-        _logger.LogInformation("Title {StubId} plays from its local copy {LocalItemId}, play session {PlaySessionId}", request.Stub.Id, localItemId, response.PlaySessionId);
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
-        _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
+        _logger.LogInformation("Title {StubId} plays from its local copy {LocalItemId}, play session {PlaySessionId}", identity.StubId, localItemId, response.PlaySessionId);
+        _coordinator.RecordLocalPlaySession(identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, identity.DeviceId));
+        return response;
     }
 
     private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, Guid route)
