@@ -40,9 +40,9 @@ titles_of() { # <server>: every film and episode, one per line, with the IDs of 
     '.Items[] | {Id, Type} + (.MediaSources // [] | map({Id, File: ((.Path // "") | startswith("/media/"))}) |
       {Files: map(select(.File).Id), Stubs: map(select(.File | not).Id)})'
 }
-ask_version() { # <server> <token> <item> [version]: the status of PlaybackInfo, the versions in $WORK/asked, and its slot freed
+ask_version() { # <server> <token> <item> [version] [method]: the status of PlaybackInfo, the versions in $WORK/asked, and its slot freed
   local code session
-  code=$(as_peer "$1" "$2" POST "/Items/$3/PlaybackInfo${4:+?mediaSourceId=$4}")
+  code=$(as_peer "$1" "$2" "${5:-POST}" "/Items/$3/PlaybackInfo${4:+?mediaSourceId=$4}")
   jq -r '.MediaSources[]?.Id' "$WORK/body" 2>/dev/null | sort -u >"$WORK/asked"
   session=$(jq -r '.PlaySessionId // empty' "$WORK/body" 2>/dev/null)
   [ -z "$session" ] || as_peer "$1" "$2" DELETE "/JellyMesh/Provider/Streams/$session" >/dev/null
@@ -132,6 +132,16 @@ for s in a b; do
   done < <(jq -r '.Id as $item | select(.Stubs != [] or (.Files | length > 1)) | .Files | (if index($item) then $item else .[0] // empty end) as $real | .[] | "\($real) \(.)"' <<<"$titles")
   check "PlaybackInfo of a file version of $s, with that version and no other in the answer" 200,alone "$(tr ' ' '\n' <<<"$by_file" | grep . | sort -u | paste -sd' ' -)"
   [ "$s" = b ] || check "$s has a file version that is not the item asked, so the test can fail" yes "$(some "$other")"
+  for method in POST GET; do
+    unnamed='' outside=''
+    for item in $(cut -d' ' -f1 <<<"$pairs" | sort -u); do
+      own=$(jq -r --arg id "$item" 'select(.Files | index($id)) | .Files[]' <<<"$titles" | sort -u)
+      unnamed+="$(ask_version "$s" "$t" "$item" '' "$method"),$(some "$(comm -12 <(echo "$own") "$WORK/asked" | grep .)") "
+      outside+=$(comm -13 <(echo "$own") "$WORK/asked")$'\n'
+    done
+    check "$method PlaybackInfo of a title of $s with no version named, with a file version in the answer" 200,yes "$(tr ' ' '\n' <<<"$unnamed" | grep . | sort -u | paste -sd' ' -)"
+    check "versions in $method PlaybackInfo of $s with no version named that are not files of the title" 0 "$(grep -c . <<<"$outside")"
+  done
   by_item='' by_version=''
   while read -r item version type; do
     [ -n "$version" ] || continue
