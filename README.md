@@ -2,7 +2,7 @@
 
 # JellyMesh
 
-JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
+JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films, series, music, music videos, home videos, photos and books from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
 
 **Status: pre-release.** It runs on Jellyfin 12.4 and has been tested against real 12.4 servers with jellyfin-web, Android and TV clients, and QSV. The versions added in 0.5 have been tested on real 12.4 servers; how the Android TV and Swiftfin apps show them has only been read from their source. See [Limits](#limits).
 
@@ -10,12 +10,12 @@ Upgrading from 0.4? Read [Upgrading from 0.4](#upgrading-from-04) first: 0.5 mov
 
 ## What it does
 
-- Reads the film and series libraries you choose on other Jellyfin servers. Those servers can be stock Jellyfin.
+- Reads the libraries you choose on other Jellyfin servers, of the kinds in [Types of content](#types-of-content). Those servers can be stock Jellyfin.
 - Gives each server its own `Film` and `Serie` folders inside a federated folder you choose. You add them to your libraries, or let JellyMesh create a library for each server, as described in [Server folders and libraries](#server-folders-and-libraries).
 - Shows a title once in each library, with the copies of every server and your own copy as versions. A local copy is the primary version; otherwise the best quality is, compared by resolution, then HDR, video bitrate and codec, with bitrates within 5% counted as a tie. See [Versions](#versions).
 - Lets an admin merge films and series it can't match safely, as described in [Merging duplicates by hand](#merging-duplicates-by-hand).
 - Completes series per episode: in a series library that holds your series and the `Serie` folders of the servers, episodes you lack appear inside your own series.
-- Writes a `.strm`, a `.nfo` and local images for each title, and a `season.nfo` and poster for each season, inside the federated folder. Remote YouTube trailers and intro and credits segments come along, and so do remote collections if you turn them on.
+- Writes a `.strm`, a `.nfo` and local images for each title, and a `season.nfo` and poster for each season, inside the federated folder. Tracks, audiobooks, books and photos differ, as described in [Types of content](#types-of-content). Remote YouTube trailers and intro and credits segments come along, and so do remote collections if you turn them on.
 - At playback, sends the real client's device profile to the remote, which decides between direct play and transcode and does any transcoding on its own hardware. Your server proxies the stream.
 - Falls back when a remote cannot serve, as described in [Stream limit and fallback](#stream-limit-and-fallback).
 - Keeps watch state on your server.
@@ -25,7 +25,7 @@ Upgrading from 0.4? Read [Upgrading from 0.4](#upgrading-from-04) first: 0.5 mov
 ## What it doesn't do
 
 - It does not copy media files. Only images are stored locally, and playback needs the remote to be reachable.
-- It does not handle anything but films and series.
+- It does not import anything but the kinds of library in [Types of content](#types-of-content).
 - It writes files only inside the federated folder. It never renames or deletes a library it did not create, and it changes the folders of your libraries only when you ask it to: the [automatic libraries](#automatic-libraries) of a server, the [automatic migration](#upgrading-from-04) from 0.4, and **Add them automatically** for servers you connect later. Each of these adds or removes only JellyMesh's own folders and leaves other folders and settings alone.
 - It does not sync watch state to other servers.
 - It does not set up the connection between your servers. A remote's URL is whatever you enter, and the plugin assumes nothing about the network in between.
