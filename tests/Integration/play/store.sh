@@ -5,6 +5,7 @@
 # the file intact and suspends JellyMesh; a data folder Jellyfin cannot write suspends it until "Retry" finds it writable.
 # Rows 512, 523-526 and 536: damage found while the server runs restarts from the copy; a broken index is rebuilt; a fourth
 # damage in 24 hours waits for "Retry", past a restart, with no new remote playback or peer access, and open streams go on.
+# After that restart no route opens a federated film, and "Retry" serves it again without a sync.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-store] [PORT=18530] store.sh   (KEEP=1 leaves them up)
 set -euo pipefail
 PREFIX=${PREFIX:-jm-store}
@@ -66,8 +67,25 @@ playback() {
   post local "/Items/$film/PlaybackInfo?UserId=$(user_id local admin)&AutoOpenLiveStream=false" "$DIRECT" >"$WORK/playback"
   echo "$(status) $(jq -r '(.MediaSources // []) | length' "$WORK/playback" 2>/dev/null || true)"
 }
-film_code() { # the status of the first bytes of the federated film as it is, for the admin
-  curl -s -o /dev/null -m 60 -w '%{http_code}' -H 'Range: bytes=0-99' "http://127.0.0.1:$PORT/Videos/$film/stream?static=true&mediaSourceId=$film&ApiKey=$(token_of local)"
+# route <who> <method> <path> [body]: the status of a request of admin, viewer or nobody, marked when the answer shows the
+# path the server itself plays.
+route() {
+  local who=$1 method=$2 path=$3 body=${4:-} auth=$AUTH code
+  case $who in admin) auth="$AUTH, Token=\"$(token_of local)\"" ;; viewer) auth="$AUTH, Token=\"$(cat "$WORK/token-viewer-plain")\"" ;; esac
+  : >"$WORK/route"
+  code=$(curl -s -o "$WORK/route" -m 60 -w '%{http_code}' -X "$method" -H "$ACCEPT" -H "Authorization: $auth" -H 'Content-Type: application/json' \
+    -H 'Range: bytes=0-99999' ${body:+-d "$body"} "http://127.0.0.1:$PORT$path" || true)
+  echo "$code$(grep -aqF 'JellyMesh/Play/' "$WORK/route" && echo +path || true)"
+}
+# routes <who>: what that user gets on each route that can open the federated film.
+routes() {
+  local who=$1 file="mediaSourceId=$film" info sources
+  info=$(route "$who" POST "/Items/$film/PlaybackInfo?AutoOpenLiveStream=false" "$DIRECT")
+  sources=$(jq -r '(.MediaSources // []) | length' "$WORK/route" 2>/dev/null || true)
+  echo "PlaybackInfo $info ${sources:-0}, stream $(route "$who" GET "/Videos/$film/stream?static=true&$file")," \
+    "File $(route "$who" GET "/Items/$film/File"), Download $(route "$who" GET "/Items/$film/Download")," \
+    "HLS $(route "$who" GET "/Videos/$film/master.m3u8?$file&VideoCodec=h264&AudioCodec=aac")" \
+    "$(route "$who" GET "/Videos/$film/main.m3u8?$file&VideoCodec=h264&AudioCodec=aac")"
 }
 peer_token() {
   curl -sS -X POST -H "$ACCEPT" -H 'Content-Type: application/json' -H "Authorization: $PEER_AUTH" \
@@ -124,6 +142,10 @@ scan local
 film=$(stub_item local "$TITLE")
 check "the federated film is in a library" true "$([ -n "$film" ] && echo true || echo false)"
 check "and plays" "200 1" "$(playback)"
+for who in admin viewer; do
+  check "each route answers $who" "PlaybackInfo 200 1, stream 206, File 206, Download 206, HLS 200 200" "$(routes "$who")"
+done
+check "and no one without a login" "PlaybackInfo 401 0, stream 401, File 401, Download 401, HLS 401 401" "$(routes nobody)"
 friend=$(user local friend)
 shared=$(get local /JellyMesh/Admin/Peers/Options | jq -r '.Libraries[] | select(.Name == "Film") | .Id')
 req local PUT "/JellyMesh/Admin/Peers/$friend" "$(jq -nc --arg l "$shared" '{SharedLibraryIds: [$l], MaxStreams: 1}')" >/dev/null
@@ -215,16 +237,22 @@ login local
 check "a restart leaves it damaged" "Damaged 3" "$(state) $(set_aside)"
 check "no peer access" 503 "$(peer_code)"
 check "a user who is not an admin gets 503" 503 "$(viewer_code)"
-check "the film opens for no one, an admin included" refused "$(film_code | grep -q '^2' && echo opened || echo refused)"
+for who in admin viewer; do
+  check "no route opens the film for $who" "PlaybackInfo 503 0, stream 503, File 503, Download 503, HLS 503 503" "$(routes "$who")"
+done
+check "nor for someone without a login" "PlaybackInfo 401 0, stream 401, File 401, Download 401, HLS 401 401" "$(routes nobody)"
 first=$(in_data "ls $DATA | grep -E '^jellymesh.db.damaged-[0-9]+(-[0-9]+)?$' | sort | head -1")
 check "Retry restarts from the copy" Healthy "$(post local /JellyMesh/Admin/Store/Retry | jq -r .State)"
 check "the last 3 damaged files stay" "3 gone" "$(set_aside) $(in_data "test -e $DATA/$first && echo there || echo gone")"
 check "nothing waits for Retry" gone "$(in_data "test -e $DATA/jellymesh.db.held && echo there || echo gone")"
+for who in admin viewer; do
+  check "with no sync each route answers $who" "PlaybackInfo 200 1, stream 206, File 206, Download 206, HLS 200 200" "$(routes "$who")"
+done
+check "and no one without a login" "PlaybackInfo 401 0, stream 401, File 401, Download 401, HLS 401 401" "$(routes nobody)"
 check "the setting is the copy's" 900 "$(interval)"
 sync_now local
 check "the server syncs again" true "$(get local /JellyMesh/Admin/Sync | jq '[.Servers[] | .Error == null] | all')"
 check "the federated film plays" "200 1" "$(playback)"
-check "and opens for the admin" 206 "$(film_code)"
 check "the connected server is served" 200 "$(peer_code)"
 post local /JellyMesh/Admin/Store/Recovery/Dismiss >/dev/null
 
