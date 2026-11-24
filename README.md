@@ -201,6 +201,31 @@ Choose **Rename** on a server's card. The new name shows in the version list and
 
 Under **Catalog**, **Sync history** lists the last 50 syncs and the last 7 nightly reconciliations: start, duration, kind and outcome, and for each server the titles read, created, updated and removed, and the errors. JellyMesh also writes to Jellyfin's activity log when a server goes offline or is reachable again, when a sync fails, when saved passwords no longer decrypt, and once for each completed sync: about 96 entries a day at the default interval. Neither shows server addresses or tokens.
 
+## Types of content
+
+JellyMesh imports these kinds of library from other servers. Each imported library gets the folder below inside the federated folder, and a local library that holds the folder has the type below. The libraries JellyMesh makes already have it.
+
+| Remote library | Folder | Type of the local library | Read from it |
+|---|---|---|---|
+| Films | `Film` | Movies | Films |
+| Series | `Serie` | Shows | Series, seasons and episodes |
+| Music | `Musica` | Music | Tracks |
+| Music videos | `Video musicali` | Music videos | Music videos |
+| Home videos | `Video domestici` | Home videos and photos | Videos and their folders |
+| Books | `Libri` | Books | Ebooks, PDFs and comics |
+| No type (mixed) | `Film` and `Serie` | Movies for `Film` and Shows for `Serie`, or no type for both | Films and series only; anything else in it is left out |
+
+- Playlists and channels are not imported.
+- Between JellyMesh servers, libraries of films, series, music, music videos, home videos, ebooks and comics, and libraries with no type, can be shared.
+- Films, series and music videos are matched across servers and shown once. The rest is never merged with a copy on another server or with a local one.
+- Metadata protection covers every type. JellyMesh writes no `.nfo` for tracks and books: it writes their metadata in Jellyfin itself, and locks the whole item when protection is on.
+
+### Music videos and home videos
+
+Music videos have a `.strm`, a `.nfo` and images like films. Copies on several servers are matched by a shared provider ID, or otherwise by the same artists and title when their years agree, and become [versions](#versions) of one title. Playback falls back as for films.
+
+Home videos keep the folders they have on the remote. They are not matched with other copies, so the same video on two servers shows twice in a library that holds both.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.
