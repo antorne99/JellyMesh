@@ -81,6 +81,8 @@ public class RemoteErrorTests
     [InlineData("&#34;AccessToken&#34;:&#34;" + OtherToken + "&#34;")]
     [InlineData("&#x22;AccessToken&#x22;:&#x22;" + OtherToken + "&#x22;")]
     [InlineData("{\"tokens\":[\"" + OtherToken + "\"]}")]
+    [InlineData("{\"tokens\":{\"a\":\"" + OtherToken + "\"}}")]
+    [InlineData("http:\\/\\/a:" + OtherToken + "@host")]
     [InlineData("pwd=" + OtherToken)]
     [InlineData("{\"NewPw\":\"" + OtherToken + "\"}")]
     [InlineData("X-Api-Key: " + OtherToken)]
@@ -105,6 +107,7 @@ public class RemoteErrorTests
     [InlineData("a b&c=d+e", "a+b%26c%3dd%2be")]
     [InlineData("<pass>word", "\x5cu003Cpass\x5cu003Eword")]
     [InlineData("<pass>word", "&lt;pass&gt;word")]
+    [InlineData("pass+word", "pass&#x2B;word")]
     [InlineData("pass/word", "pass\\/word")]
     [InlineData("a\tb-password", "a\tb-password")]
     public async Task ABodyThatHoldsThePasswordIsNotShown(string password, string echoed)
@@ -171,6 +174,30 @@ public class RemoteErrorTests
 
         Assert.InRange(result.Detail.Length, 1, 40_000);
         Assert.Contains("cut at 2000 lines", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(' ')]
+    [InlineData('\t')]
+    public async Task ABodyOfManySpacesIsCleanedInTime(char space)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("before token:" + new string(space, 64_000) + ",", HttpStatusCode.InternalServerError));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Contains("before", result.Error!.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ALongExceptionMessageIsCutWithoutPartOfASecret()
+    {
+        var message = new string('x', (72 * 1024) - 120) + TestValues.Token + new string('x', 1000);
+        var handler = new StubHandler(_ => throw new HttpRequestException(message));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.InRange(result.Error!.ToString().Length, 60_000, 70_000);
+        Assert.DoesNotContain(TestValues.Token[..8], result.Error.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -45,6 +45,9 @@ public static partial class ErrorText
     /// </summary>
     internal const int MaxLines = 2000;
 
+    // Cleaned past the cut, so that a secret across it is still whole when it is removed.
+    private const int Margin = 8 * 1024;
+
     private const string LineStart = "\n    ";
 
     /// <summary>
@@ -69,6 +72,12 @@ public static partial class ErrorText
         }
 
         text = WithoutUnsafe(text);
+        if (text.Length > MaxLength + Margin)
+        {
+            text = text[..(MaxLength + Margin)];
+            dropped = secrets.Select(LongestForm).Append(dropped).Max();
+        }
+
         foreach (var form in secrets.SelectMany(FormsOf).Distinct(StringComparer.Ordinal).OrderByDescending(form => form.Length))
         {
             if (!text.Contains(form, StringComparison.OrdinalIgnoreCase))
@@ -175,6 +184,7 @@ public static partial class ErrorText
     // A secret as it is, in JSON, in a URL, in HTML or in base64.
     private static IEnumerable<string> EncodingsOf(string secret)
     {
+        secret = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(secret));
         yield return secret;
         foreach (var encoder in new[] { JavaScriptEncoder.Default, JavaScriptEncoder.UnsafeRelaxedJsonEscaping })
         {
@@ -188,11 +198,12 @@ public static partial class ErrorText
         yield return Uri.EscapeDataString(url);
         yield return WebUtility.UrlEncode(secret);
         yield return WebUtility.HtmlEncode(secret);
+        yield return HtmlEncoder.Default.Encode(secret);
         yield return Convert.ToBase64String(Encoding.UTF8.GetBytes(secret));
     }
 
     [GeneratedRegex(
-        """(?<name>(?:tokens?|api[_-]?key|(?<![A-Za-z])(?:new|current|old)?pw|pwd|passw(?:or)?d|(?:[?&]|&amp;|%26)sig)(?:\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22)?\]?\s*(?:[:=]\s*(?:>|&gt;)?|>|&gt;|%3[AD])\s*)(?:(?<quote>\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22).*?(?:(?<!\\)\k<quote>|$)|\[[^\]]*|[^\s&,;"'<>}\])]+)""",
+        """(?<name>(?:tokens?|api[_-]?key|(?<![A-Za-z])(?:new|current|old)?pw|pwd|passw(?:or)?d|(?:[?&]|&amp;|%26)sig)(?:\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22)?\]?\s*(?:[:=](?:\s*(?:>|&gt;))?|>|&gt;|%3[AD])\s*)(?:(?<quote>\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22).*?(?:(?<!\\)\k<quote>|$)|\[[^\]]*|\{[^}]*|[^\s&,;"'<>}\])]+)""",
         RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 2000)]
     private static partial Regex NamedSecret();
@@ -200,6 +211,6 @@ public static partial class ErrorText
     [GeneratedRegex("""(?<name>\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]{8,}""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex AuthorizationScheme();
 
-    [GeneratedRegex("""://[^/\s"'<>]{1,512}@""", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    [GeneratedRegex(""":(?:\\?/){2}[^/\s"'<>]{1,512}@""", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex UserInfo();
 }
