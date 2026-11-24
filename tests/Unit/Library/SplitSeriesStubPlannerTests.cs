@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -32,6 +33,9 @@ public class SplitSeriesStubPlannerTests
         => Sync(false, state, series, episodes, merges);
 
     private static StubState Sync(bool isFlat, StubState state, RemoteItem[] series, RemoteItem[] episodes, params ManualMerge[] merges)
+        => Plan(isFlat, state, series, episodes, merges).State;
+
+    private static StubPlan Plan(bool isFlat, StubState state, RemoteItem[] series, RemoteItem[] episodes, params ManualMerge[] merges)
     {
         var catalog = new ServerCatalog
         {
@@ -75,7 +79,7 @@ public class SplitSeriesStubPlannerTests
         Assert.Equal(next.Stubs.Count, next.Stubs.Select(stub => stub.RelativePath).Distinct().Count());
         Assert.All(next.Series, entry => Assert.Contains(next.Stubs, stub => stub.SeriesStubId == entry.Id));
         Assert.All(next.Stubs, stub => Assert.Contains(next.Series, entry => entry.Id == stub.SeriesStubId));
-        return next;
+        return plan;
     }
 
     private static ResolvedSource Source(RemoteSource source)
@@ -227,6 +231,207 @@ public class SplitSeriesStubPlannerTests
 
         Assert.Contains($"S01E02 [{Added(old, next).Id[..8]}]", Added(old, next).RelativePath, StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ASeriesWhoseRowIsGoneGetsItAgainInTheFolderOfItsStubs(bool isFlat)
+    {
+        RemoteItem[] series = [Series("s1")];
+        var old = WithoutRows(Sync(isFlat, StubState.Empty, series, [Episode("s1", 1), Episode("s1", 2)]), "Show (2020)", "Show (2020) [12345678]");
+
+        var plan = Plan(isFlat, old, series, [Episode("s1", 1), Episode("s1", 2), Episode("s1", 3)]);
+
+        var row = Assert.Single(plan.Series);
+        Assert.False(row.IsNew);
+        Assert.True(row.Entry.NeedsRefresh);
+        Assert.Null(row.Entry.ContentHash);
+        Assert.Single(row.Seasons);
+        Assert.EndsWith(Path.Combine("Show (2020) [12345678]", "tvshow.nfo"), row.NfoPath, StringComparison.Ordinal);
+        Assert.All(old.Stubs, stub => Assert.Equal(stub.RelativePath, Assert.Single(plan.State.Stubs, entry => entry.Id == stub.Id).RelativePath));
+        Assert.All(plan.State.Stubs, stub => Assert.Equal(row.Entry.RelativePath, FolderOf(stub)));
+
+        var next = Plan(isFlat, plan.State, series, [Episode("s1", 1), Episode("s1", 2), Episode("s1", 3)]);
+        Assert.Equal(row.Entry.Id, Assert.Single(next.Series).Entry.Id);
+        AssertKept(plan.State, next.State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ANewSeriesOfTheSameNameLeavesTheFolderOfARowThatIsGone(bool isFlat)
+    {
+        var old = WithoutRows(Sync(isFlat, StubState.Empty, [Series("s1", tvdb: "71")], [Episode("s1", 1)]));
+
+        var next = Sync(isFlat, old, [Series("s0", tvdb: "70"), Series("s1", tvdb: "71")], [Episode("s0", 1), Episode("s1", 1)]);
+
+        Assert.Equal(2, next.Series.Count);
+        var kept = Assert.Single(next.Stubs, stub => stub.Id == old.Stubs[0].Id);
+        Assert.Equal(FolderOf(kept), Assert.Single(next.Series, entry => entry.Id == kept.SeriesStubId).RelativePath);
+        Assert.NotEqual(FolderOf(kept), FolderOf(Added(old, next)));
+    }
+
+    [Fact]
+    public void AStubInTheFolderOfAnotherRowJoinsItWhenItsOwnIsGone()
+    {
+        RemoteItem[] series = [Series("s1", tvdb: "71"), Series("s2", tvdb: "72")];
+        var first = Sync(StubState.Empty, series, [Episode("s1", 1), Episode("s2", 2)]);
+        var kept = Assert.Single(first.Stubs, stub => stub.EpisodeNumber == 1);
+        var row = Assert.Single(first.Series, entry => entry.Id == kept.SeriesStubId);
+        var old = first with
+        {
+            Series = [row],
+            Stubs = first.Stubs.Select(stub => stub.Id == kept.Id ? stub : stub with { RelativePath = kept.RelativePath.Replace("S01E01", "S01E02", StringComparison.Ordinal) }).ToList()
+        };
+
+        var second = Sync(old, series, [Episode("s1", 1), Episode("s2", 2)]);
+        Assert.Equal(row.Id, Assert.Single(second.Series).Id);
+        Assert.All(second.Stubs, stub => Assert.Equal(row.Id, stub.SeriesStubId));
+
+        var third = Sync(second, series, [Episode("s1", 1), Episode("s2", 2), Episode("s2", 3)]);
+        Assert.Equal(2, third.Series.Count);
+        AssertKept(second, third);
+    }
+
+    [Fact]
+    public void TwoSeriesInOneFolderWithoutARowGetOne()
+    {
+        RemoteItem[] apart = [Series("s1", tvdb: "71"), Series("s2", tvdb: "72")];
+        RemoteItem[] episodes = [Episode("s1", 1), Episode("s2", 2)];
+        var old = WithoutRows(Sync(StubState.Empty, [Series("s1", tvdb: "71"), Series("s2", tvdb: "71")], episodes));
+
+        var next = Sync(old, apart, episodes);
+
+        Assert.Equal(FolderOf(old.Stubs[0]), Assert.Single(next.Series).RelativePath);
+        AssertKept(next, Sync(next, apart, episodes));
+    }
+
+    [Fact]
+    public void AStubInAFolderWithoutARowStaysInItWhenItsWorkHasAnotherFolder()
+    {
+        // The first series was split: its second part is in the folder of the other one, whose row is gone.
+        RemoteItem[] series = [Series("s1", tvdb: "71"), Series("s2", tvdb: "72")];
+        RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2), Episode("s2", 3)];
+        var first = Sync(StubState.Empty, series, episodes);
+        var other = Assert.Single(first.Stubs, stub => stub.EpisodeNumber == 3);
+        var folder = FolderOf(other);
+        var row = Assert.Single(first.Series, entry => entry.RelativePath != folder);
+        var old = first with
+        {
+            Series = [row],
+            Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { SeriesStubId = other.SeriesStubId, RelativePath = other.RelativePath.Replace("S01E03", "S01E02", StringComparison.Ordinal) } : stub).ToList()
+        };
+
+        var next = Sync(old, series, episodes);
+
+        Assert.Equal(2, next.Series.Count);
+        AssertInTheirFolder(next);
+        AssertKept(next, Sync(next, series, episodes));
+    }
+
+    [Fact]
+    public void TwoFoldersOfOneWorkWithoutARowGetOneEach()
+    {
+        RemoteItem[] series = [Series("s1")];
+        RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2)];
+        var first = WithoutRows(Sync(StubState.Empty, series, episodes));
+        var old = first with
+        {
+            Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { RelativePath = stub.RelativePath.Replace("Show (2020)", "Show", StringComparison.Ordinal) } : stub).ToList()
+        };
+
+        var second = Plan(false, old, series, episodes);
+        AssertInTheirFolder(second.State);
+        Assert.Equal(2, second.State.Series.Count);
+
+        // The work stays with one of them.
+        var third = Plan(false, second.State, series, episodes);
+        Assert.Equal(Assert.Single(second.Series).Entry.Id, Assert.Single(third.Series).Entry.Id);
+        AssertKept(second.State, third.State);
+    }
+
+    [Fact]
+    public void AStubThatWaitsInAFolderWithoutARowGetsItsRowToo()
+    {
+        RemoteItem[] series = [Series("s1")];
+        var first = WithoutRows(Sync(StubState.Empty, series, [Episode("s1", 1), Episode("s1", 2)]));
+
+        // The second stub waits for its removal: its episode is of the first one now.
+        var old = first with { Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { IdentityKey = "old", Sources = first.Stubs[0].Sources } : stub).ToList() };
+
+        var next = Sync(old, series, [Episode("s1", 1)]);
+
+        Assert.Single(next.Series);
+        Assert.Equal(2, next.Stubs.Count);
+        AssertInTheirFolder(next);
+    }
+
+    [Fact]
+    public void AStubInNoSeriesFolderGetsNoRowThere()
+    {
+        RemoteItem[] series = [Series("s1")];
+        var first = WithoutRows(Sync(StubState.Empty, series, [Episode("s1", 1)]));
+        var old = first with { Stubs = [first.Stubs[0] with { RelativePath = first.Stubs[0].RelativePath.Replace(Path.Combine("Serie", "Show (2020)"), "Serie", StringComparison.Ordinal) }] };
+
+        var next = Sync(old, series, [Episode("s1", 1)]);
+
+        var row = Assert.Single(next.Series);
+        Assert.EndsWith(Path.Combine("Serie", "Show (2020)"), row.RelativePath, StringComparison.Ordinal);
+        Assert.Equal((row.Id, old.Stubs[0].RelativePath), (next.Stubs[0].SeriesStubId, next.Stubs[0].RelativePath));
+    }
+
+    [Fact]
+    public void ASeriesWhoseServerMadeItsItemsAgainGetsItsRowInTheFolderOfItsStubs()
+    {
+        var old = WithoutRows(Sync(StubState.Empty, [Series("s1")], [Episode("s1", 1)]));
+
+        var next = Sync(old, [Series("s9")], [Episode("s9", 1)]);
+
+        Assert.Single(next.Series);
+        AssertInTheirFolder(next);
+    }
+
+    [Fact]
+    public void AnEpisodeWithoutASeriesGetsItsRowInItsFolder()
+    {
+        RemoteItem[] episodes = [Episode("s1", 1) with { SeriesId = null }];
+        var old = WithoutRows(Sync(StubState.Empty, [], episodes));
+
+        var next = Plan(false, old, [], episodes);
+
+        AssertInTheirFolder(next.State);
+        Assert.Single(next.Series);
+    }
+
+    [Fact]
+    public void AWorkOfAnotherKeyKeepsItsRowBeforeOneMadeAgain()
+    {
+        RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2)];
+        var first = Sync(StubState.Empty, [Series("s1")], episodes);
+        var old = first with
+        {
+            Series = first.Series.Select(entry => entry with { ContentHash = "written" }).ToList(),
+            Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { SeriesStubId = "gone", RelativePath = stub.RelativePath.Replace("Show (2020)", "Show", StringComparison.Ordinal) } : stub).ToList()
+        };
+        var second = Sync(old, [Series("s1")], episodes);
+        Assert.Equal(2, second.Series.Count);
+
+        var third = Plan(false, second, [Series("s1", tvdb: "71")], episodes);
+
+        Assert.Equal(first.Series[0].Id, Assert.Single(third.Series).Entry.Id);
+    }
+
+    private static void AssertInTheirFolder(StubState state)
+        => Assert.All(state.Stubs, stub => Assert.Equal(FolderOf(stub), Assert.Single(state.Series, entry => entry.Id == stub.SeriesStubId).RelativePath));
+
+    // The registry after the rows of its series went, with their folder under another name.
+    private static StubState WithoutRows(StubState state, string folder = "", string? other = null) => state with
+    {
+        Series = [],
+        Stubs = other is null ? state.Stubs : state.Stubs.Select(stub => stub with { RelativePath = stub.RelativePath.Replace(folder, other, StringComparison.Ordinal) }).ToList()
+    };
+
+    private static string FolderOf(StubEntry stub) => Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!;
 
     private static StubEntry Added(StubState old, StubState next)
         => Assert.Single(next.Stubs, stub => old.Stubs.All(entry => entry.Id != stub.Id));

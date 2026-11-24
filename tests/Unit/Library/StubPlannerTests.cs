@@ -641,7 +641,7 @@ public class StubPlannerTests
         var plan = Plan(
             [Episode("w", 1, 1, Source(_serverA, "d")), Episode("w", 1, 2, Source(_serverA, "d"))],
             [Catalog(_serverA, ServerSyncState.Complete, SeriesItem("s"), EpisodeItem("d", "s", 1, 1) with { IndexNumberEnd = 2 })],
-            new StubState { Stubs = [existing] });
+            new StubState { Stubs = [existing], Series = [new SeriesStub { Id = "series1", RelativePath = Path.Combine("Serie", "Show (2020)"), WorkKey = "w" }] });
 
         var stub = Assert.Single(plan.Stubs);
         Assert.False(stub.IsNew);
