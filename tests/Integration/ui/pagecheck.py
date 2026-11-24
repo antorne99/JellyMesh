@@ -354,6 +354,7 @@ def actions(s, width):
     u.button(stock, "save").click()
     shown = u.wait_message(page)
     check(name + " an edit with no change saves with no question", "Saved stock." in shown and page.locator(u.CONFIRM).count() == 0, shown)
+    check(name + " a save read by the remote says nothing is wrong", "does not answer" not in shown, shown)
     check(name + " a saved edit closes its form", until(page, lambda: stock.locator(u.EDIT_FORM).count() == 0))
 
     u.clear_message(page)
@@ -3328,6 +3329,7 @@ def edit_form(s, width):
     options = mode.locator("option").all_inner_texts()
     check(name + " offers the three modes", options == ["By type", "By remote library", "None"], options)
     check(name + " ticks the imported libraries", stock.locator(u.LIBRARY + ":checked").count() == 2)
+    check(name + " a remote that answers well has no warning", "answered with a problem" not in form.inner_text(), form.inner_text())
     healthy(page, name)
     u.shot(page, f"edit-form-{width}")
 
@@ -3360,6 +3362,18 @@ def edit_form(s, width):
 
     u.button(stock, "close").click()
     check(name + " Close drops the form", form.count() == 0)
+
+    fake(page, "Servers/*", lambda data: data.update(RemoteWarning="Timeout"), "PUT")
+    u.open_edit(page, stock)
+    u.button(stock, "save").click()
+    outcome(page, name + " a save the remote did not answer", "Done", "Saved stock. It does not answer now (no answer in time).")
+    page.unroute("**/JellyMesh/Admin/Servers/*")
+    until(page, lambda: form.count() == 0)
+    u.clear_message(page)
+    u.open_edit(page, stock)
+    u.button(stock, "save").click()
+    shown = outcome(page, name + " a save the remote answered", "Done", "Saved stock.")
+    check(name + " a save the remote answered says nothing is wrong", "does not answer" not in shown, shown)
     healthy(page, name)
     u.close(page)
 
@@ -3412,7 +3426,7 @@ def edit_locks(s, width):
     check(name + " a locked name looks locked", form.get_by_label("Name", exact=True).evaluate("node => getComputedStyle(node).borderTopStyle") == "dashed")
     check(name + " the card does not repeat the rename", not stock.locator(".jmRenameCancel").is_visible() and not stock.locator(".jmRenameNote").is_visible())
     check(name + " a pending rename leaves the URL", not form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
-    check(name + " a problem on the remote is a warning", "answered with a problem" in form.inner_text(), form.inner_text())
+    check(name + " a problem on the remote is a warning", "answered with a problem (no answer in time)" in form.inner_text(), form.inner_text())
     check(name + " a problem on the remote still lists the libraries", stock.locator(u.LIBRARY).count() == 2)
     cancel = form.get_by_role("button", name="Cancel the pending rename", exact=True)
     check(name + " a pending rename can be cancelled from the form", cancel.is_visible())

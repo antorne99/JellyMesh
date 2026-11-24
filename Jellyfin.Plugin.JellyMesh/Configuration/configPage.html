@@ -2827,6 +2827,11 @@
                     return connectionLabels[value] || unknownProblem;
                 }
 
+                // Names the problem the remote had during an edit, or gives nothing when it had none.
+                function remoteWarning(answer) {
+                    return answer.RemoteWarning && answer.RemoteWarning !== 'None' ? connectionLabel(answer.RemoteWarning) : '';
+                }
+
                 function modeLabel(value) {
                     return modeLabels[value] || modeLabels.Unknown;
                 }
@@ -3382,8 +3387,9 @@
                             }
 
                             showLibraries(check);
-                            if (check.RemoteWarning) {
-                                addFormNote(accessNotes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: current.Name, problem: connectionLabel(check.RemoteWarning) }), true);
+                            var problem = remoteWarning(check);
+                            if (problem) {
+                                addFormNote(accessNotes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: current.Name, problem: problem }), true);
                             }
 
                             return null;
@@ -3530,8 +3536,9 @@
                     row.jmEdit = function (toLibraries, quiet) {
                         row.open = true;
                         var opened = serverForm(edit, server, function (saved) {
-                            showMessage(saved.RemoteWarning
-                                ? t('Saved {server}. It does not answer now ({problem}).', { server: saved.Name, problem: connectionLabel(saved.RemoteWarning) })
+                            var problem = remoteWarning(saved);
+                            showMessage(problem
+                                ? t('Saved {server}. It does not answer now ({problem}).', { server: saved.Name, problem: problem })
                                 : t('Saved {server}.', { server: saved.Name }));
                             return loadStatus();
                         });
