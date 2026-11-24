@@ -220,6 +220,20 @@ public class RemoteErrorTests
     }
 
     [Fact]
+    public void APasswordInAUrlAcrossTheCutIsNotShown()
+    {
+        var removed = " token=" + new string('y', 60_000);
+        for (var at = 1; at < 40; at++)
+        {
+            var start = new string('x', (72 * 1024) - "System.InvalidOperationException: ".Length - removed.Length - at - "://u:".Length);
+
+            var text = ErrorText.Of(new InvalidOperationException(start + removed[..^1] + " ://u:" + new string('P', 60) + "@host/"));
+
+            Assert.DoesNotContain("PPPP", text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task ALongExceptionMessageIsCutBeforeItsSecretsAreRemoved()
     {
         var message = string.Concat(Enumerable.Repeat(TestValues.Token + " ", 4000)) + "the-very-end";
