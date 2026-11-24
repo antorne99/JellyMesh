@@ -316,11 +316,13 @@ public partial class PlaybackFiltersTests
 
     // Row 186: what is left of a former federated folder is stock's, once the registry says it does not hold it.
     [Theory]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    public async Task A_stub_of_a_former_folder_is_stock_only_while_the_registry_is_read(bool unread, bool stock)
+    [InlineData("/federata", false, true)]
+    [InlineData("/federata", true, false)]
+    [InlineData("", false, true)]
+    [InlineData("", true, false)]
+    public async Task A_stub_of_a_former_folder_is_stock_only_while_the_registry_is_read(string folder, bool unread, bool stock)
     {
-        _settings.Configuration.FederatedFolderPath = "/federata";
+        _settings.Configuration.FederatedFolderPath = folder;
         _stubs.Setup(stubs => stubs.IsUnread).Returns(unread);
         ItemOf(_unknownId, "/vecchia/S/Film/A/A.strm", OurUrl("gone"));
 
