@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,6 +29,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private const int Corrupt = 11;
     private const int NotADatabase = 26;
 
+    // SQLITE_CONSTRAINT, as from a unique index rebuilt over equal rows.
+    private const int Constraint = 19;
+
     private static readonly string[] _walFiles = ["-wal", "-shm"];
 
     // What goes aside with a damaged file: its logs belong to it, and SQLite would read them into the file taking its place.
@@ -48,10 +52,18 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private static readonly StoreHealth _closed = new(StoreState.Unavailable, "The database is closed.");
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "A call after Dispose still waits on the gate and is refused as closed; the semaphore never makes a wait handle.")]
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    // Guards the health and the fields below it; held for an instant, never around SQLite, a file or the gate.
+    private readonly Lock _access = new();
     private volatile bool _disposed;
     private long _generation;
     private SqliteConnection? _writer;
     private StoreHealth? _health;
+
+    // The damage an access found, until a recovery replaces the file; the recovery waits for the reads still in progress.
+    private StoreHealth? _damage;
+    private bool _recoveryWaits;
+    private int _readers;
     private RecoveryNote? _note;
 
     /// <summary>
@@ -124,11 +136,17 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         get
         {
             _ = Health;
-            return Volatile.Read(ref _note)?.Recovery;
+
+            // A restore not ended yet has no copy date to show.
+            return Volatile.Read(ref _note) is { Restoring: false } note ? note.Recovery : null;
         }
     }
 
     private string RecoveryPath => Path.Combine(_folder, StoreBackups.RecoveryFileName);
+
+    private string HeldPath => Path.Combine(_folder, StoreBackups.HeldFileName);
+
+    private string RecoveriesPath => Path.Combine(_folder, StoreBackups.RecoveriesFileName);
 
     private int Latest => _migrations.Count;
 
@@ -141,12 +159,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _gate.Wait();
         try
         {
-            if (_health is { Suspended: false } healthy)
+            lock (_access)
             {
-                return healthy;
+                if (_health is { } health && (!health.Suspended || _recoveryWaits))
+                {
+                    return health;
+                }
             }
 
-            return SetHealth(Open());
+            return Reopen(retried: true);
         }
         finally
         {
@@ -179,30 +200,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     public Task<T> ReadAsync<T>(Func<SqliteConnection, SqliteTransaction, T> read, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
-        return Task.Run(
-            () =>
-            {
-                ThrowIfSuspended(Health);
-                using var connection = Connect(_connectionString, queryOnly: true);
-                using var transaction = connection.BeginTransaction(deferred: true);
-                return read(connection, transaction);
-            },
-            cancellationToken);
+        return Task.Run(() => Read(read), cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
+    public Task<T> WriteAsync<T>(Func<SqliteConnection, SqliteTransaction, T> write, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(write);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return Write(write);
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        return WithGateAsync(() => Write(write), cancellationToken);
     }
 
     /// <inheritdoc />
@@ -219,77 +224,39 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<bool> TruncateWalAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return TruncateWal();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<bool> TruncateWalAsync(CancellationToken cancellationToken) => WithGateAsync(TruncateWal, cancellationToken);
 
     /// <inheritdoc />
-    public async Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return BackUp();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+    public Task<StoreBackup> BackUpAsync(CancellationToken cancellationToken) => WithGateAsync(BackUp, cancellationToken);
 
     /// <inheritdoc />
-    public async Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+    public Task DeleteExpiredDamagedAsync(CancellationToken cancellationToken) => WithGateAsync(
+        () =>
         {
-            ThrowIfSuspended(_health ?? SetHealth(Open()));
+            _ = Writer();
             DeleteExpiredDamaged();
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+            PruneDamaged();
+            return true;
+        },
+        cancellationToken);
 
     /// <inheritdoc />
-    public async Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+    public Task<bool> DeleteExpiredMigratedAsync(CancellationToken cancellationToken) => WithGateAsync(
+        () =>
         {
             var writer = Writer();
             return _legacy?.DeleteExpired(writer, _time.GetUtcNow()) ?? true;
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+        },
+        cancellationToken);
 
     /// <inheritdoc />
-    public async Task<DateTimeOffset?> MigratedKeptUntilAsync(CancellationToken cancellationToken)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+    public Task<DateTimeOffset?> MigratedKeptUntilAsync(CancellationToken cancellationToken) => WithGateAsync(
+        () =>
         {
             var writer = Writer();
             return _legacy?.KeptUntil(writer);
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
+        },
+        cancellationToken);
 
     /// <inheritdoc />
     public void Dispose()
@@ -339,6 +306,58 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return command.ExecuteScalar();
     }
 
+    // The full check also compares the indexes with their tables, which the quick one leaves out.
+    private static bool PassesCheck(SqliteConnection connection, bool full, SqliteTransaction? transaction = null) =>
+        string.Equals(Convert.ToString(Scalar(connection, full ? "PRAGMA integrity_check;" : "PRAGMA quick_check;", transaction), CultureInfo.InvariantCulture), "ok", StringComparison.Ordinal);
+
+    // The full check. A file it fails is checked again with every index rebuilt, in one transaction kept only if it passes,
+    // so a rebuild that mends nothing leaves the file as it was (row 523). Reads go on meanwhile, and writes wait.
+    private bool PassesFullCheck(SqliteConnection connection)
+    {
+        try
+        {
+            if (PassesCheck(connection, full: true))
+            {
+                return true;
+            }
+
+            using var transaction = connection.BeginTransaction(deferred: false);
+            Scalar(connection, "REINDEX;", transaction);
+            if (!PassesCheck(connection, full: true, transaction))
+            {
+                return false;
+            }
+
+            transaction.Commit();
+        }
+        catch (SqliteException exception) when (IsDamage(exception) || exception.SqliteErrorCode == Constraint)
+        {
+            return false;
+        }
+
+        _logger.LogWarning("The indexes of {File} did not match their tables and were rebuilt", Path.GetFileName(connection.DataSource));
+        return true;
+    }
+
+    // The full check of a file nothing else reads. A copy can be made again, so the journal of its rebuild stays in memory.
+    private bool FilePassesFullCheck(string path, bool isCopy = true)
+    {
+        try
+        {
+            using var connection = Connect(new SqliteConnectionStringBuilder(_connectionString) { DataSource = path }.ToString());
+            if (isCopy)
+            {
+                Scalar(connection, "PRAGMA journal_mode = MEMORY;");
+            }
+
+            return PassesFullCheck(connection);
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            return false;
+        }
+    }
+
     private static void ThrowIfSuspended(StoreHealth health)
     {
         if (health.Suspended)
@@ -347,16 +366,25 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Each healthy open, the first one included, counts as a new generation.
+    // Each healthy open, the first one included, counts as a new generation. A closed store stays closed.
     private StoreHealth SetHealth(StoreHealth health)
     {
-        if (!health.Suspended)
+        lock (_access)
         {
-            Interlocked.Increment(ref _generation);
-        }
+            health = _disposed ? _closed : health;
+            if (!health.Suspended)
+            {
+                Interlocked.Increment(ref _generation);
+            }
 
-        Volatile.Write(ref _health, health);
-        return health;
+            if (!health.Suspended)
+            {
+                _damage = null;
+            }
+
+            Volatile.Write(ref _health, health);
+            return health;
+        }
     }
 
     private StoreHealth OpenFirst()
@@ -364,11 +392,136 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _gate.Wait();
         try
         {
-            return _health ?? SetHealth(Open());
+            return _health ?? Reopen();
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    // Opens the file and takes its health, leaving no writer behind a store closed meanwhile; called with the gate held.
+    private StoreHealth Reopen(bool retried = false)
+    {
+        var health = SetHealth(Open(retried));
+        if (_disposed)
+        {
+            _writer?.Dispose();
+            _writer = null;
+        }
+
+        return health;
+    }
+
+    private static bool IsDamage(SqliteException exception) => exception.SqliteErrorCode is Corrupt or NotADatabase;
+
+    // Suspends the store for damage an access found, so that one recovery sets the file aside and restarts it (row 512).
+    private StoreSuspendedException MarkDamaged(SqliteException exception)
+    {
+        bool marked;
+        lock (_access)
+        {
+            marked = _health is { Suspended: false };
+            if (marked)
+            {
+                _damage = new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception));
+                _recoveryWaits = true;
+                Volatile.Write(ref _health, _damage);
+            }
+        }
+
+        if (marked)
+        {
+            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            StartRecovery();
+        }
+
+        return new StoreSuspendedException("The JellyMesh database is damaged.", exception);
+    }
+
+    // Starts the recovery that waits once no read is in progress: none sees the file change under it, or its logs go with it.
+    private void StartRecovery()
+    {
+        lock (_access)
+        {
+            if (!_recoveryWaits || _readers > 0)
+            {
+                return;
+            }
+
+            _recoveryWaits = false;
+        }
+
+        _ = Task.Run(RecoverDamaged);
+    }
+
+    private void RecoverDamaged()
+    {
+        _gate.Wait();
+        try
+        {
+            // A retry or the closing of the store may have come first.
+            if (Volatile.Read(ref _damage) is not null && !_disposed)
+            {
+                Reopen();
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "The damaged JellyMesh database cannot be replaced yet. Sync and remote playback stay suspended");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    // Runs on the one writer. Damage it meets suspends the store; every other error goes to the caller as it is.
+    private async Task<T> WithGateAsync<T>(Func<T> access, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return access();
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            throw MarkDamaged(exception);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    // A read counts until its connection is closed, so a recovery does not start before it ends.
+    private T Read<T>(Func<SqliteConnection, SqliteTransaction, T> read)
+    {
+        _ = Health;
+        lock (_access)
+        {
+            ThrowIfSuspended(_health!);
+            _readers++;
+        }
+
+        try
+        {
+            using var connection = Connect(_connectionString, queryOnly: true);
+            using var transaction = connection.BeginTransaction(deferred: true);
+            return read(connection, transaction);
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            throw MarkDamaged(exception);
+        }
+        finally
+        {
+            lock (_access)
+            {
+                _readers--;
+            }
+
+            StartRecovery();
         }
     }
 
@@ -403,7 +556,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 _logger.LogDebug("The JellyMesh database log was busy at open; it is emptied at the next credential change or nightly copy");
             }
         }
-        catch (SqliteException exception)
+        catch (SqliteException exception) when (!IsDamage(exception))
         {
             _logger.LogWarning("The JellyMesh database log could not be emptied at open: {Error}", exception.Message);
         }
@@ -411,9 +564,15 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     // VACUUM INTO makes its file 0644 and refuses one that is not empty (F23), so it fills an empty private file, under a
     // name a recovery never takes until it is complete. It runs outside any transaction, on the writer with the gate held.
+    // The database is checked in full first, and one that fails its check is replaced (row 523).
     private StoreBackup BackUp()
     {
         var writer = Writer();
+        if (!PassesFullCheck(writer))
+        {
+            throw new SqliteException("The database failed its integrity check.", Corrupt);
+        }
+
         var now = _time.GetUtcNow();
         var copy = new StoreBackup(StoreBackups.BackupPath(_folder, now), DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds()));
         var partial = StoreBackups.PartialPath(copy.FilePath);
@@ -425,9 +584,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _guard.CreatePrivate(partial).Dispose();
         try
         {
-            using var command = Command(writer, "VACUUM INTO $path;");
-            command.Parameters.AddWithValue("$path", partial);
-            command.ExecuteNonQuery();
+            VacuumInto(writer, partial);
+            if (!FilePassesFullCheck(partial))
+            {
+                throw new InvalidDataException("The copy failed its integrity check, so it is not kept.");
+            }
+
+            ThrowIfSuspended(_health!);
             if (File.Exists(copy.FilePath))
             {
                 TryErase(copy.FilePath, "copy replaced");
@@ -450,6 +613,26 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         return copy;
     }
 
+    // Fills a file with the content of the database. Damage of that file, when the database passes its check, only fails it.
+    private void VacuumInto(SqliteConnection writer, string path)
+    {
+        try
+        {
+            using var command = Command(writer, "VACUUM INTO $path;");
+            command.Parameters.AddWithValue("$path", path);
+            command.ExecuteNonQuery();
+        }
+        catch (SqliteException exception) when (IsDamage(exception))
+        {
+            if (!PassesFullCheck(writer))
+            {
+                throw;
+            }
+
+            throw new InvalidDataException("The copy is damaged: " + ReasonOf(exception), exception);
+        }
+    }
+
     // Overwrites and deletes each damaged file and log once 30 days have passed since the date in its name (D35).
     private void DeleteExpiredDamaged()
     {
@@ -468,6 +651,22 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             {
                 _logger.LogWarning("The damaged JellyMesh database file {File} cannot be overwritten and deleted yet: {Error}", Path.GetFileName(file.FilePath), exception.Message);
             }
+        }
+    }
+
+    // Overwrites and deletes all but the last damaged files set aside (row 525). The one the page still names stays.
+    private void PruneDamaged()
+    {
+        try
+        {
+            foreach (var file in StoreBackups.DamagedToPrune(_folder, Volatile.Read(ref _note)?.DamagedFile))
+            {
+                TryErase(file, "damaged file");
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("The damaged JellyMesh database files cannot be listed: {Error}", exception.Message);
         }
     }
 
@@ -511,8 +710,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     // The writer of a healthy store, opening it first if nothing has; called with the gate held.
     private SqliteConnection Writer()
     {
-        var health = _health ?? SetHealth(Open());
-        ThrowIfSuspended(health);
+        ThrowIfSuspended(_health ?? Reopen());
         return _writer!;
     }
 
@@ -534,8 +732,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held.
-    private StoreHealth Open()
+    // Permissions, then the file, which is set aside and replaced when damaged; called with the gate held. A file an access
+    // read as damaged is not opened again, since the check at open may not see that damage.
+    private StoreHealth Open(bool retried)
     {
         if (_disposed)
         {
@@ -572,16 +771,29 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         else
         {
-            health = OpenFile();
-            health = health.State == StoreState.Damaged ? Recover(health) : health;
+            // A store that waits for Retry does so past a restart too, and then its file is checked in full.
+            var held = ReadHeld();
+            if (held is not null && !retried)
+            {
+                return held;
+            }
+
+            health = Volatile.Read(ref _damage) ?? OpenFile(full: held is not null, isCopy: false);
+            health = health.State == StoreState.Damaged ? Recover(health, retried) : health;
         }
 
-        return ImportLegacy(health);
+        health = ImportLegacy(health, retried, recovered: false);
+        if (!health.Suspended)
+        {
+            TryDelete(HeldPath, "wait for a retry");
+        }
+
+        return health;
     }
 
     // The data of 0.4 and 0.5 goes in before any service sees the store healthy; until it does, the store stays suspended
     // and the next open tries again, with every old file where it was (row 426).
-    private StoreHealth ImportLegacy(StoreHealth health)
+    private StoreHealth ImportLegacy(StoreHealth health, bool retried, bool recovered)
     {
         if (health.Suspended || _legacy is null || _writer is null)
         {
@@ -593,6 +805,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             _legacy.Run(_writer, _time.GetUtcNow());
             return health;
         }
+        catch (SqliteException exception) when (IsDamage(exception) && !recovered)
+        {
+            _writer.Dispose();
+            _writer = null;
+            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            return ImportLegacy(Recover(new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception)), retried), retried, recovered: true);
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             _writer.Dispose();
@@ -602,13 +821,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     }
 
     // Version and integrity read-only, then WAL and the schema steps on the writer. The file is opened for writes only once
-    // its version is known and it passes the check. Every connection is closed when it returns.
-    private StoreHealth OpenFile()
+    // its version is known and it passes the check. A full check rebuilds the indexes of a file that fails it.
+    private StoreHealth OpenFile(bool full = false, bool isCopy = true)
     {
         SqliteConnection? writer = null;
         try
         {
             int version;
+            bool passes;
             using (var probe = Connect(_readOnlyConnectionString))
             {
                 version = Convert.ToInt32(Scalar(probe, "PRAGMA user_version;"), CultureInfo.InvariantCulture);
@@ -618,12 +838,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     return new StoreHealth(StoreState.NewerSchema, $"The database has schema version {version}; this build knows up to {Latest}.");
                 }
 
-                var check = Convert.ToString(Scalar(probe, "PRAGMA quick_check;"), CultureInfo.InvariantCulture);
-                if (!string.Equals(check, "ok", StringComparison.Ordinal))
-                {
-                    _logger.LogWarning("The JellyMesh database failed its integrity check");
-                    return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
-                }
+                passes = PassesCheck(probe, full);
+            }
+
+            if (!passes && !(full && FilePassesFullCheck(_path, isCopy)))
+            {
+                _logger.LogWarning("The JellyMesh database failed its integrity check");
+                return new StoreHealth(StoreState.Damaged, "The database failed its integrity check.");
             }
 
             writer = Connect(_connectionString);
@@ -648,7 +869,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             writer = null;
             return StoreHealth.Healthy;
         }
-        catch (SqliteException exception) when (exception.SqliteErrorCode is Corrupt or NotADatabase)
+        catch (SqliteException exception) when (IsDamage(exception))
         {
             _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
             return new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception));
@@ -665,10 +886,30 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
     // Writes the note, then sets the damaged file aside with its logs and replaces it (row 427). The note comes first, so a
     // recovery cut short at any point goes on at the next open; without it, or when the file cannot be set aside, nothing
-    // moves, nothing new is made and the store stays damaged.
-    private StoreHealth Recover(StoreHealth damage)
+    // moves, nothing new is made and the store stays damaged. Past the limit of a day it waits for Retry (row 525).
+    private StoreHealth Recover(StoreHealth damage, bool retried)
     {
         var now = _time.GetUtcNow();
+        IReadOnlyList<DateTimeOffset> earlier = [];
+        try
+        {
+            earlier = RecentRecoveries(now);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "The times of the JellyMesh database recoveries cannot be read. Without a retry, sync and remote playback stay suspended");
+            if (!retried)
+            {
+                return Hold(damage with { Reason = damage.Reason + " The times of its recoveries cannot be read: " + ReasonOf(exception) });
+            }
+        }
+
+        if (!retried && earlier.Count >= StoreBackups.RecoveryLimit)
+        {
+            _logger.LogWarning("The JellyMesh database was recovered {Count} times in 24 hours, so it stays damaged until a retry. Sync and remote playback stay suspended", earlier.Count);
+            return Hold(damage with { Reason = damage.Reason + $" It was recovered {earlier.Count} times in 24 hours, so it stays damaged until a retry." });
+        }
+
         var target = StoreBackups.DamagedPath(_folder, now);
         var damaged = Path.GetFileName(target);
         try
@@ -681,8 +922,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return damage with { Reason = damage.Reason + " The recovery note cannot be written: " + ReasonOf(exception) };
         }
 
+        var failure = " The times of its recoveries cannot be written: ";
         try
         {
+            WriteWhole(RecoveriesPath, earlier.TakeLast(StoreBackups.RecoveryLimit - 1).Append(now).ToList());
+            failure = " It cannot be set aside: ";
             SetAside(target);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -690,9 +934,10 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             TryDeleteNote();
             Volatile.Write(ref _note, null);
             _logger.LogWarning(exception, "The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended");
-            return damage with { Reason = damage.Reason + " It cannot be set aside: " + ReasonOf(exception) };
+            return damage with { Reason = damage.Reason + failure + ReasonOf(exception) };
         }
 
+        Volatile.Write(ref _damage, null);
         return Replace(now, damaged);
     }
 
@@ -712,7 +957,13 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                 }
 
                 Restore(copy.FilePath);
-                var health = OpenFile();
+                var health = OpenFile(full: true);
+                if (health.State == StoreState.Unavailable)
+                {
+                    // The check of the copy may not have ended, so the note stays and the next open restores it again.
+                    return health;
+                }
+
                 if (health.State == StoreState.Damaged)
                 {
                     _logger.LogWarning("The JellyMesh database copy {Copy} is damaged too and is passed over", Path.GetFileName(copy.FilePath));
@@ -720,7 +971,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
                     continue;
                 }
 
-                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the server list", damaged, copy.CreatedAt);
+                _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and restarted from the copy of {Date}. Check the servers and peers", damaged, copy.CreatedAt);
                 return Complete(health, new RecoveryNote(recoveredAt, damaged, copy.CreatedAt));
             }
 
@@ -732,7 +983,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             return Unavailable("The damaged database was set aside, and no copy or empty database can take its place yet", exception);
         }
 
-        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty", damaged);
+        _logger.LogWarning("The damaged JellyMesh database was set aside as {File} and, with no copy, restarted empty. Check the servers and peers", damaged);
         return Complete(OpenFile(), new RecoveryNote(recoveredAt, damaged, null));
     }
 
@@ -743,6 +994,11 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         try
         {
             WriteNote(note);
+            if (!health.Suspended)
+            {
+                PruneDamaged();
+            }
+
             return health;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -827,21 +1083,76 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
     }
 
-    // Keeps the recovery for the page in a private file, so it outlives a restart. It is written aside, flushed and moved over
-    // the old note, so the note on disk is always whole.
+    // Keeps the recovery for the page in a private file, so it outlives a restart.
     private void WriteNote(RecoveryNote note)
     {
-        var temporary = RecoveryPath + ".tmp";
+        WriteWhole(RecoveryPath, note);
+        Volatile.Write(ref _note, note);
+    }
+
+    // Keeps a store that waits for Retry damaged past a restart too.
+    private StoreHealth Hold(StoreHealth damage)
+    {
+        try
+        {
+            WriteWhole(HeldPath, damage.Reason);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "That the JellyMesh database waits for a retry cannot be written, so it ends at a restart");
+        }
+
+        return damage;
+    }
+
+    // The damage of a store that waits for Retry, null for one that does not. One that cannot be read still counts.
+    private StoreHealth? ReadHeld()
+    {
+        if (!File.Exists(HeldPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = new FileStream(HeldPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return new StoreHealth(StoreState.Damaged, JsonSerializer.Deserialize<string>(stream));
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Why the JellyMesh database waits for a retry cannot be read. Sync and remote playback stay suspended");
+            return new StoreHealth(StoreState.Damaged, "The database was found damaged and stays so until a retry.");
+        }
+    }
+
+    // The recoveries of the last 24 hours, kept next to the database since they outlive it. A time ahead of the clock, which
+    // may have been set back, counts for a day too.
+    private List<DateTimeOffset> RecentRecoveries(DateTimeOffset now)
+    {
+        if (!File.Exists(RecoveriesPath))
+        {
+            return [];
+        }
+
+        using var stream = new FileStream(RecoveriesPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var times = JsonSerializer.Deserialize<List<DateTimeOffset>>(stream) ?? throw new JsonException("The times are missing.");
+        return times.Where(time => (now - time).Duration() < StoreBackups.RecoveryWindow).ToList();
+    }
+
+    // Writes a private file aside, flushes it and moves it over the old one, so the file on disk is always whole.
+    private void WriteWhole<T>(string path, T value)
+    {
+        var temporary = path + ".tmp";
         try
         {
             File.Delete(temporary);
             using (var stream = _guard.CreatePrivate(temporary))
             {
-                JsonSerializer.Serialize(stream, note);
+                JsonSerializer.Serialize(stream, value);
                 stream.Flush(true);
             }
 
-            File.Move(temporary, RecoveryPath, overwrite: true);
+            File.Move(temporary, path, overwrite: true);
         }
         catch
         {
@@ -851,24 +1162,24 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogDebug(exception, "A temporary JellyMesh recovery note cannot be deleted");
+                _logger.LogDebug(exception, "A temporary JellyMesh recovery file cannot be deleted");
             }
 
             throw;
         }
-
-        Volatile.Write(ref _note, note);
     }
 
-    private void TryDeleteNote()
+    private void TryDeleteNote() => TryDelete(RecoveryPath, "recovery note");
+
+    private void TryDelete(string path, string what)
     {
         try
         {
-            File.Delete(RecoveryPath);
+            File.Delete(path);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be deleted");
+            _logger.LogWarning(exception, "The JellyMesh database {What} cannot be deleted", what);
         }
     }
 

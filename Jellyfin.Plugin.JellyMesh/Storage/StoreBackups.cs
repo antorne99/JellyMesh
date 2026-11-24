@@ -16,16 +16,31 @@ internal static partial class StoreBackups
     /// <summary>How many copies stay (row 427).</summary>
     public const int Kept = 2;
 
-    /// <summary>How long a damaged file set aside stays (D35).</summary>
-    public static readonly TimeSpan DamagedKept = TimeSpan.FromDays(30);
+    /// <summary>How many damaged files set aside stay (row 525).</summary>
+    public const int DamagedFilesKept = 3;
+
+    /// <summary>How many recoveries may start within <see cref="RecoveryWindow"/> without a retry (row 525).</summary>
+    public const int RecoveryLimit = 3;
+
+    /// <summary>The file that keeps the last recovery for the page until the admin dismisses it.</summary>
+    public const string RecoveryFileName = PluginDatabase.FileName + ".recovery";
+
+    /// <summary>The file that keeps the times of the last recoveries.</summary>
+    public const string RecoveriesFileName = PluginDatabase.FileName + ".recoveries";
+
+    /// <summary>The file of a database that stays damaged until a retry.</summary>
+    public const string HeldFileName = PluginDatabase.FileName + ".held";
 
     private const string BackupMark = ".backup-";
     private const string DamagedMark = ".damaged-";
     private const string PartialMark = ".partial";
     private const string TimeFormat = "yyyyMMddHHmmss";
 
-    /// <summary>The file that keeps the last recovery for the page until the admin dismisses it.</summary>
-    public const string RecoveryFileName = PluginDatabase.FileName + ".recovery";
+    /// <summary>How long a damaged file set aside stays (D35).</summary>
+    public static readonly TimeSpan DamagedKept = TimeSpan.FromDays(30);
+
+    /// <summary>How long a recovery counts for <see cref="RecoveryLimit"/>.</summary>
+    public static readonly TimeSpan RecoveryWindow = TimeSpan.FromHours(24);
 
     /// <summary>
     /// Gets the path of the copy made at a time.
@@ -147,7 +162,7 @@ internal static partial class StoreBackups
         {
             var match = DamagedName().Match(Path.GetFileName(path));
             if (match.Success
-                && DateTimeOffset.TryParseExact(match.Groups[1].Value, TimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var time))
+                && DateTimeOffset.TryParseExact(match.Groups["date"].Value, TimeFormat, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var time))
             {
                 files.Add(new StoreBackup(path, time));
             }
@@ -155,6 +170,23 @@ internal static partial class StoreBackups
 
         return files;
     }
+
+    /// <summary>
+    /// Lists the damaged files past the last <see cref="DamagedFilesKept"/>, with their logs. The one shown on the page is
+    /// always among those that stay.
+    /// </summary>
+    /// <param name="folder">The plugin data folder.</param>
+    /// <param name="shown">The name of the file the page shows, or null.</param>
+    /// <returns>The paths of the files that go.</returns>
+    public static IReadOnlyList<string> DamagedToPrune(string folder, string? shown) =>
+        ListDamaged(folder)
+            .GroupBy(file => DamagedName().Match(Path.GetFileName(file.FilePath)).Groups["file"].Value, StringComparer.Ordinal)
+            .OrderByDescending(group => string.Equals(group.Key, shown, StringComparison.Ordinal))
+            .ThenByDescending(group => group.First().CreatedAt)
+            .ThenByDescending(group => DamagedName().Match(group.Key).Groups["number"] is { Success: true } number ? int.Parse(number.Value, CultureInfo.InvariantCulture) : 1)
+            .Skip(DamagedFilesKept)
+            .SelectMany(group => group.Select(file => file.FilePath))
+            .ToList();
 
     /// <summary>
     /// Writes zeros over the whole file and flushes them to disk, then deletes it; a link is only deleted, never written
@@ -178,7 +210,7 @@ internal static partial class StoreBackups
         File.Delete(path);
     }
 
-    [GeneratedRegex(@"^jellymesh\.db\.damaged-([0-9]{14})(?:-[0-9]+)?(?:-wal|-journal)?$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?<file>jellymesh\.db\.damaged-(?<date>[0-9]{14})(?:-(?<number>[0-9]{1,9}))?)(?:-wal|-journal)?\z", RegexOptions.CultureInvariant)]
     private static partial Regex DamagedName();
 
     private static string Stamp(DateTimeOffset time) => time.UtcDateTime.ToString(TimeFormat, CultureInfo.InvariantCulture);

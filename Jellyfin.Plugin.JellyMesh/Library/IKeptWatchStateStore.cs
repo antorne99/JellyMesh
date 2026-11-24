@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Storage;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -11,6 +12,11 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public interface IKeptWatchStateStore
 {
+    /// <summary>
+    /// Gets the opening of the database; the numbers of the titles of an earlier one may be those of other titles.
+    /// </summary>
+    long Generation { get; }
+
     /// <summary>
     /// Tells whether any title is kept, so that a server that never removed one writes nothing for it.
     /// </summary>
@@ -37,9 +43,11 @@ public interface IKeptWatchStateStore
     /// Deletes these users' state of these titles, then the titles left with no user.
     /// </summary>
     /// <param name="rows">The title and user of each state put back.</param>
+    /// <param name="generation">The <see cref="Generation"/> the titles were read in; another one now deletes nothing.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
-    Task ForgetAsync(IReadOnlyCollection<(long TitleId, Guid UserId)> rows, CancellationToken cancellationToken);
+    /// <exception cref="StoreSuspendedException">The database was opened again since the titles were read.</exception>
+    Task ForgetAsync(IReadOnlyCollection<(long TitleId, Guid UserId)> rows, long generation, CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes the titles saved before a time and the state of users no longer there, then the titles left with no user.

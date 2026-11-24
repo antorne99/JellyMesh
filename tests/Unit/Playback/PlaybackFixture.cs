@@ -11,6 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
@@ -272,10 +273,18 @@ internal sealed class CoordinatorFixture
     public CoordinatorFixture(ILastServedSourceStore? lastServed = null, ILogger<PlaybackCoordinator>? logger = null)
     {
         LastServed = lastServed ?? new InMemoryLastServedStore();
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
+        Database.Setup(database => database.Health).Returns(() => Health);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, Database.Object, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
     }
 
     public Mock<ITranscodeManager> Transcodes { get; } = new();
+
+    public Mock<IPluginDatabase> Database { get; } = new();
+
+    public StoreHealth Health { get; set; } = StoreHealth.Healthy;
+
+    /// <summary>Makes the plugin database one found damaged by an access.</summary>
+    public void Damage() => Health = new StoreHealth(StoreState.Damaged, "test");
 
     public ILastServedSourceStore LastServed { get; }
 

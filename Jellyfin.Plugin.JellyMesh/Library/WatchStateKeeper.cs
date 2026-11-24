@@ -172,6 +172,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                 _logger.LogInformation("Forgot the kept watch state of {Count} titles nobody used", pruned);
             }
 
+            var generation = _kept.Generation;
             var titles = await _kept.ReadAsync(cancellationToken).ConfigureAwait(false);
             var root = _store.Read(config => config.FederatedFolderPath);
             if (titles.Count == 0 || users.Count == 0 || root.Length == 0)
@@ -180,7 +181,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
 
             var done = Restore(root, titles, users, cancellationToken);
-            await _kept.ForgetAsync(done, cancellationToken).ConfigureAwait(false);
+            await _kept.ForgetAsync(done, generation, cancellationToken).ConfigureAwait(false);
             if (done.Count > 0)
             {
                 _logger.LogInformation("Put back the kept watch state of {Count} titles", done.Select(row => row.TitleId).Distinct().Count());

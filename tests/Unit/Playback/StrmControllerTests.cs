@@ -58,6 +58,15 @@ public sealed class StrmControllerTests : IDisposable
         Assert.Single(_fixture.Client.Opened);
     }
 
+    [Fact]
+    public async Task With_the_database_damaged_the_file_is_not_read()
+    {
+        _fixture.Damage();
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, await CallAsync(StubId, _signer.Sign(StubId)));
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
     [Theory]
     [InlineData("172.17.0.1", null)]
     [InlineData("198.51.100.9", null)]

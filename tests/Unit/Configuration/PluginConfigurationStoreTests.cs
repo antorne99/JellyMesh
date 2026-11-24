@@ -682,6 +682,24 @@ public sealed class PluginConfigurationStoreTests : IDisposable
         Assert.Equal(1, changes);
     }
 
+    // A change planned on the rows read before a restore must not mix with the restored ones.
+    [Fact]
+    public void AChangePlannedBeforeTheDatabaseWasOpenedAgainIsRefused()
+    {
+        var database = new SpyDatabase(Open());
+        var store = Store(database);
+        store.Update(config => config.Servers.Add(new RemoteServerConfig { Id = Guid.NewGuid(), Name = "Casa" }));
+
+        Assert.Throws<StoreSuspendedException>(() => store.Update(config =>
+        {
+            config.Servers.Clear();
+            database.Reopened++;
+        }));
+
+        Assert.Equal("Casa", Assert.Single(store.Read(config => config.Servers.ToList())).Name);
+        Assert.Equal("Casa", Assert.Single(Store().Read(config => config.Servers.ToList())).Name);
+    }
+
     [Fact]
     public void ADatabaseOpenedAgainThatCannotBeReadKeepsTheLoadedConfiguration()
     {

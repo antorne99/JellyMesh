@@ -179,10 +179,11 @@ public sealed class StoreBackupTests : IDisposable
         _clock.Now += TimeSpan.FromDays(1);
 
         guard.Spoil = true;
-        await Assert.ThrowsAsync<SqliteException>(() => database.BackUpAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => database.BackUpAsync(CancellationToken.None));
 
         Assert.Equal(["jellymesh.db.backup-20261118030000", "jellymesh.db.backup-20261119030000"], Copies());
         Assert.Equal(StoreState.Healthy, database.Health.State);
+        Assert.Equal(1, database.Generation);
     }
 
     // A clock set back keeps the copy just written, and the copies dated after it go.
@@ -561,6 +562,44 @@ public sealed class StoreBackupTests : IDisposable
         Assert.Equal(["jellymesh.db.damaged-20261001030000-wal.link", "jellymesh.db.damaged-20261001030000.link"], DamagedFiles());
         AssertZeroed(link, 10000);
         AssertZeroed(log, 300);
+    }
+
+    // Row 525 prunes as row 474 deletes: the file and its logs are overwritten first.
+    [Fact]
+    public async Task ADamagedFilePastTheLastThreeIsOverwrittenBeforeItGoes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var database = Open();
+        var link = HardLink(Plant("jellymesh.db.damaged-20261110030000", 10000));
+        var log = HardLink(Plant("jellymesh.db.damaged-20261110030000-wal", 300));
+        Plant("jellymesh.db.damaged-20261111030000");
+        Plant("jellymesh.db.damaged-20261112030000");
+        Plant("jellymesh.db.damaged-20261113030000");
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+        Assert.Equal(3, DamagedFiles().Count(name => !name.EndsWith(".link", StringComparison.Ordinal)));
+        AssertZeroed(link, 10000);
+        AssertZeroed(log, 300);
+    }
+
+    // A file among the last three still goes after 30 days.
+    [Fact]
+    public async Task TheLastThreeDamagedFilesAlsoGoAfterThirtyDays()
+    {
+        var database = Open();
+        Assert.Equal(StoreState.Healthy, database.Health.State);
+        Plant("jellymesh.db.damaged-20261018030000");
+        Plant("jellymesh.db.damaged-20261110030000");
+        Plant("jellymesh.db.damaged-20261111030000");
+
+        await database.DeleteExpiredDamagedAsync(CancellationToken.None);
+
+        Assert.Equal(["jellymesh.db.damaged-20261110030000", "jellymesh.db.damaged-20261111030000"], DamagedFiles());
     }
 
     // A date ahead of the clock, as a clock running fast writes, counts from the first night that sees it.

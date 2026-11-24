@@ -11,7 +11,7 @@ public enum StoreState
     /// <summary>The file has a schema newer than this build knows, so it is left untouched.</summary>
     NewerSchema,
 
-    /// <summary>The file fails the integrity check or SQLite reads it as corrupt, and it could not be set aside.</summary>
+    /// <summary>The file fails the integrity check or SQLite reads it as corrupt, and it is being, or could not be, set aside.</summary>
     Damaged,
 
     /// <summary>The file cannot be opened or kept private, for example for permissions or a full disk.</summary>

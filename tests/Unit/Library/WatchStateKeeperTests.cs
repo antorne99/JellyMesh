@@ -237,6 +237,34 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // The numbers of a database that came back from its copy meanwhile may be those of other titles.
+    [Fact]
+    public async Task ADatabaseReopenedWhileTheStateGoesBackForgetsNothing()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        Watch(_anna, FilmItem(a));
+        await RemoveAsync(a);
+        FilmItem(await AddAndMaterializeAsync("A", TestLibraries.Films));
+        var reopened = false;
+        _userData.Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                if (!reopened)
+                {
+                    reopened = true;
+                    _fixture.Database.Reopen();
+                }
+            });
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("Put back", StringComparison.Ordinal));
+        await _keeper.RestoreAsync(CancellationToken.None);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task TheStateGoesRightAwayToAServerThatAlreadyHasTheContent()
     {

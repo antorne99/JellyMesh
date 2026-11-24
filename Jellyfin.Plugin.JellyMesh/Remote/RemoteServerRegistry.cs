@@ -187,11 +187,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             // A call that logged in since the save holds the kept login. The remote revokes this one only for the same
             // user, so it is ended here, a refused token counting as ended.
-            if (runtime.Session is not null)
+            if (runtime.Kept is not null)
             {
                 await EndUnusedLoginAsync(endpoint, login.Value!, server.Name, refusedIsEnded: true).ConfigureAwait(false);
             }
-            else if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
+            else if (!runtime.TryKeep(new KeptLogin(login.Value!, normalizedUrl, encrypted)) || !IsConfigured(serverId))
             {
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, login.Value!, server.Name, freshMayBeRevoked: true).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.UnknownServer);
@@ -393,14 +393,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         // Not disposed here: a call may still hold its login gate. The registry disposes the rest.
-        var session = _runtimes.TryRemove(serverId, out var runtime) ? runtime.Forget() : null;
-        if (session is null)
+        var kept = _runtimes.TryRemove(serverId, out var runtime) ? runtime.Forget() : null;
+        if (kept is null)
         {
             await EndDeviceWithoutLiveLoginAsync(removed, runtime).ConfigureAwait(false);
         }
         else
         {
-            await EndRemovedSessionAsync(removed, session).ConfigureAwait(false);
+            await EndRemovedSessionAsync(removed, kept).ConfigureAwait(false);
         }
 
         return true;
@@ -565,7 +565,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var server = _store.Read(config => config.Servers
             .Where(candidate => candidate.Id == serverId)
-            .Select(candidate => new StoredServer(candidate.Id, candidate.Name, candidate.Url))
+            .Select(candidate => new StoredServer(candidate.Id, candidate.Name))
             .FirstOrDefault());
         if (server is null)
         {
@@ -573,12 +573,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         var runtime = RuntimeOf(serverId);
-        var endpoint = EndpointOf(serverId, server.Url);
 
-        var result = await CallOnceAsync(server, endpoint, runtime, null, call, cancellationToken).ConfigureAwait(false);
+        var result = await CallOnceAsync(server, runtime, null, call, cancellationToken).ConfigureAwait(false);
         if (result.Attempt.Failure == RemoteFailure.AuthenticationFailed && result.Session is not null)
         {
-            result = await CallOnceAsync(server, endpoint, runtime, result.Session, call, cancellationToken).ConfigureAwait(false);
+            result = await CallOnceAsync(server, runtime, result.Session, call, cancellationToken).ConfigureAwait(false);
         }
 
         Record(runtime, server.Name, result.Attempt.Failure, countsForActivity);
@@ -736,7 +735,15 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return Refuse(unstored, FieldOf(unstored)).Refusal;
             }
 
-            Record(RuntimeOf(plan.ServerId), plan.Name, RemoteFailure.None, countsForActivity: true);
+            var runtime = RuntimeOf(plan.ServerId);
+
+            // The live login goes on at the new address only when the saved Server Id was checked there (row 434).
+            if (plan.Saved.JellyfinServerId.Length > 0)
+            {
+                runtime.Move(plan.Saved.Url, plan.Url);
+            }
+
+            Record(runtime, plan.Name, RemoteFailure.None, countsForActivity: true);
             _logger.LogInformation("Saved the edit of remote server {ServerName}", LogText.Clean(plan.Name));
             return RemoteResult.Success(read.Value!.Report);
         }
@@ -749,7 +756,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // Saves an edit with a new user or password: logs in on the kept device under the login gate, as for new credentials,
     // and keeps that login only once the edit is saved; a refused or unsaved edit ends it (413, 419).
     // Returns the login it replaced, if any.
-    private async Task<(RemoteResult<RemoteEditReport> Result, RemoteSession? Replaced)> SaveEditWithNewLoginAsync(EditPlan plan, CancellationToken cancellationToken)
+    private async Task<(RemoteResult<RemoteEditReport> Result, KeptLogin? Replaced)> SaveEditWithNewLoginAsync(EditPlan plan, CancellationToken cancellationToken)
     {
         var serverId = plan.ServerId;
         var endpoint = EndpointOf(serverId, plan.Url);
@@ -766,7 +773,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var kept = false;
         RemoteEditReport report;
-        RemoteSession? replaced;
+        KeptLogin? replaced;
         try
         {
             var login = await LogInAsync(endpoint, plan.Credentials, plan.Name, cancellationToken).ConfigureAwait(false);
@@ -821,8 +828,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var found = unstored == RemoteFailure.None;
 
             // As in GetSessionAsync: a removal that ended meanwhile must not leave this login behind (413).
-            replaced = runtime.Session;
-            if (!found || !runtime.TryKeep(session) || !IsConfigured(serverId))
+            replaced = runtime.Kept;
+            if (!found || !runtime.TryKeep(new KeptLogin(session, plan.Url, encrypted)) || !IsConfigured(serverId))
             {
                 await EndLoginOfRemovedAsync(serverId, runtime, endpoint, session, plan.Name).ConfigureAwait(false);
                 return (Refuse(RemoteFailure.UnknownServer, RemoteEditField.None).Refusal, null);
@@ -848,7 +855,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     // After a new user is saved: stops the streams of the server, then ends the login of the old user within the logout
     // limit, the live one or, without it, one made with the old credentials on the same device (row 434, 413).
-    private async Task EndOldUserAsync(EditPlan plan, RemoteSession? replaced, Func<Task>? stopStreams)
+    private async Task EndOldUserAsync(EditPlan plan, KeptLogin? replaced, Func<Task>? stopStreams)
     {
         // Together, so that both end within one limit (row 434).
         var name = LogText.Clean(plan.Name);
@@ -875,17 +882,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     // Ends the live login of the old user, or logs it in and out on the kept device; never throws.
-    private async Task LogOutOldUserAsync(EditPlan plan, string? name, RemoteSession? replaced)
+    private async Task LogOutOldUserAsync(EditPlan plan, string? name, KeptLogin? replaced)
     {
-        // A new address is the same server only when the saved Server Id was checked there; else the old user stays where it was.
-        var endpoint = EndpointOf(plan.ServerId, plan.Saved.JellyfinServerId.Length > 0 ? plan.Url : plan.Saved.Url);
+        // A new address is the same server only when the saved Server Id was checked there; else the old user stays where it
+        // was, as does a login made at another address than the saved one.
+        var known = plan.Saved.JellyfinServerId.Length > 0 ? plan.Url : plan.Saved.Url;
+        var endpoint = EndpointOf(plan.ServerId, replaced is null || replaced.Url == plan.Saved.Url ? known : replaced.Url);
         using var limit = new CancellationTokenSource(LogoutLimit);
         RemoteFailure failure;
         try
         {
             if (replaced is not null)
             {
-                failure = await LogOutUntilAsync(endpoint, replaced, limit).ConfigureAwait(false);
+                failure = await LogOutUntilAsync(endpoint, replaced.Session, limit).ConfigureAwait(false);
             }
             else if (plan.Stored is { } old && old.Username != plan.Credentials.Username)
             {
@@ -1120,25 +1129,24 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     private async Task<SessionAttempt<T>> CallOnceAsync<T>(
         StoredServer server,
-        RemoteEndpoint endpoint,
         ServerRuntime runtime,
         RemoteSession? refused,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken)
     {
-        var session = await GetSessionAsync(server, endpoint, runtime, refused, cancellationToken).ConfigureAwait(false);
-        if (!session.IsSuccess)
+        var open = await GetSessionAsync(server, runtime, refused, cancellationToken).ConfigureAwait(false);
+        if (open.Value is not { } opened)
         {
-            return new SessionAttempt<T>(RemoteResult.Fail<T>(session.Failure), null);
+            return new SessionAttempt<T>(RemoteResult.Fail<T>(open.Failure), null);
         }
 
-        var attempt = await call(endpoint, session.Value!, cancellationToken).ConfigureAwait(false);
-        return new SessionAttempt<T>(attempt, session.Value);
+        var attempt = await call(opened.Endpoint, opened.Session, cancellationToken).ConfigureAwait(false);
+        return new SessionAttempt<T>(attempt, opened.Session);
     }
 
-    private async Task<RemoteResult<RemoteSession>> GetSessionAsync(
+    // The session with the only endpoint it may be sent to.
+    private async Task<RemoteResult<OpenSession>> GetSessionAsync(
         StoredServer server,
-        RemoteEndpoint endpoint,
         ServerRuntime runtime,
         RemoteSession? refused,
         CancellationToken cancellationToken)
@@ -1147,47 +1155,56 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         await runtime.LoginGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (runtime.Session is { } current && !ReferenceEquals(current, refused))
-            {
-                return RemoteResult.Success<RemoteSession>(current);
-            }
-
-            // Read again under the gate: the copy taken before it may be stale.
-            var encrypted = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id)?.EncryptedCredentials);
-            if (encrypted is null)
+            // Read under the gate: an edit or a restored copy of the database may have changed the row.
+            var row = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id) is { } stored ? (stored.Url, stored.EncryptedCredentials) : ((string Url, string EncryptedCredentials)?)null);
+            if (row is not { Url: var url, EncryptedCredentials: var encrypted })
             {
                 DropIfRemoved(server.Id, runtime);
-                return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
+                return RemoteResult.Fail<OpenSession>(RemoteFailure.UnknownServer);
+            }
+
+            var endpoint = EndpointOf(server.Id, url);
+            if (runtime.Kept is { } current)
+            {
+                if (!current.IsOf(url, encrypted))
+                {
+                    _logger.LogInformation("The stored address or credentials of remote server {ServerName} changed, so it is logged in again", LogText.Clean(server.Name));
+                    runtime.Kept = null;
+                }
+                else if (!ReferenceEquals(current.Session, refused))
+                {
+                    return RemoteResult.Success(new OpenSession(endpoint, current.Session));
+                }
             }
 
             var credentials = UnprotectOrNull(server.Id, encrypted);
             if (credentials is null)
             {
                 DropIfRemoved(server.Id, runtime);
-                return RemoteResult.Fail<RemoteSession>(RemoteFailure.Suspended);
+                return RemoteResult.Fail<OpenSession>(RemoteFailure.Suspended);
             }
 
             var login = await LogInAsync(endpoint, credentials, server.Name, cancellationToken).ConfigureAwait(false);
             if (login.Value is not { } fresh)
             {
-                runtime.Session = null;
+                runtime.Kept = null;
                 DropIfRemoved(server.Id, runtime);
-                return login;
+                return RemoteResult.Fail<OpenSession>(login.Failure);
             }
 
             if (RefusedServerId(server.Id, fresh.ServerId) is { } refusedFor)
             {
-                runtime.Session = null;
+                runtime.Kept = null;
                 await RefuseOtherServerAsync(endpoint, fresh, server.Name, refusedFor).ConfigureAwait(false);
                 DropIfRemoved(server.Id, runtime);
-                return RemoteResult.Fail<RemoteSession>(RemoteFailure.OtherServer);
+                return RemoteResult.Fail<OpenSession>(RemoteFailure.OtherServer);
             }
 
             // A login that ends after the removal of its server is ended at once, so that no device stays behind (413).
-            if (!runtime.TryKeep(fresh) || !IsConfigured(server.Id))
+            if (!runtime.TryKeep(new KeptLogin(fresh, url, encrypted)) || !IsConfigured(server.Id))
             {
                 await EndLoginOfRemovedAsync(server.Id, runtime, endpoint, fresh, server.Name).ConfigureAwait(false);
-                return RemoteResult.Fail<RemoteSession>(RemoteFailure.UnknownServer);
+                return RemoteResult.Fail<OpenSession>(RemoteFailure.UnknownServer);
             }
 
             if (fresh.ServerId is { } remoteId)
@@ -1195,7 +1212,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 RememberServerId(server, remoteId);
             }
 
-            return login;
+            return RemoteResult.Success(new OpenSession(endpoint, fresh));
         }
         finally
         {
@@ -1233,11 +1250,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    // Ends the live login of a removed server within the logout limit. On a failure its device stays (413).
-    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, RemoteSession session)
+    // Ends the live login of a removed server where it was made, within the logout limit. On a failure its device stays (413).
+    private async Task EndRemovedSessionAsync(RemoteServerConfig removed, KeptLogin kept)
     {
         var name = LogText.Clean(removed.Name);
-        var failure = await LogOutWithinLimitAsync(EndpointOf(removed.Id, removed.Url), session).ConfigureAwait(false);
+        var failure = await LogOutWithinLimitAsync(EndpointOf(removed.Id, kept.Url), kept.Session).ConfigureAwait(false);
         if (failure == RemoteFailure.None)
         {
             _logger.LogInformation("Ended the login on removed remote server {ServerName}", name);
@@ -1344,7 +1361,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     // failures left; a refused token revoked by a later login of this device counts as ended.
     private async Task<IReadOnlyList<RemoteFailure>> EndFreshAndKeptAsync(Guid serverId, ServerRuntime? runtime, RemoteEndpoint endpoint, RemoteSession fresh, bool freshMayBeRevoked)
     {
-        RemoteSession? kept = null;
+        KeptLogin? kept = null;
         if (runtime is not null)
         {
             _runtimes.TryRemove(KeyValuePair.Create(serverId, runtime));
@@ -1352,10 +1369,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         using var limit = new CancellationTokenSource(LogoutLimit);
-        var other = kept is null || ReferenceEquals(kept, fresh) ? null : kept;
+        var other = kept is null || ReferenceEquals(kept.Session, fresh) ? null : kept;
         var failures = await Task.WhenAll(
             LogOutUntilAsync(endpoint, fresh, limit),
-            other is null ? Task.FromResult(RemoteFailure.None) : LogOutUntilAsync(endpoint, other, limit)).ConfigureAwait(false);
+            other is null ? Task.FromResult(RemoteFailure.None) : LogOutUntilAsync(EndpointOf(serverId, other.Url), other.Session, limit)).ConfigureAwait(false);
 
         // A refused kept token was revoked by another login of this device: the fresh one, or one its own path ends.
         if (failures[1] == RemoteFailure.AuthenticationFailed)
@@ -1529,8 +1546,30 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     private ServerRuntime RuntimeOf(Guid serverId) => _runtimes.GetOrAdd(serverId, _ => new ServerRuntime());
 
-    // The credentials are not copied: a login reads them under the login gate.
-    private sealed record StoredServer(Guid Id, string Name, string Url);
+    // Neither the address nor the credentials are copied: a call reads them under the login gate.
+    private sealed record StoredServer(Guid Id, string Name);
+
+    // A session with the endpoint of the row it belongs to. Not a record: no generated text holds the token.
+    private sealed class OpenSession(RemoteEndpoint endpoint, RemoteSession session)
+    {
+        public RemoteEndpoint Endpoint { get; } = endpoint;
+
+        public RemoteSession Session { get; } = session;
+    }
+
+    // A login with the stored address and credentials it was made with. Not a record: no generated text holds them.
+    private sealed class KeptLogin(RemoteSession session, string url, string encryptedCredentials)
+    {
+        private readonly string _encryptedCredentials = encryptedCredentials;
+
+        public RemoteSession Session { get; } = session;
+
+        public string Url { get; } = url;
+
+        public bool IsOf(string url, string encryptedCredentials) => Url == url && _encryptedCredentials == encryptedCredentials;
+
+        public KeptLogin At(string url) => new(Session, url, _encryptedCredentials);
+    }
 
     private sealed record SessionAttempt<T>(RemoteResult<T> Attempt, RemoteSession? Session);
 
@@ -1562,18 +1601,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     {
         private readonly Lock _gate = new();
         private bool? _reachable;
-        private RemoteSession? _session;
+        private KeptLogin? _kept;
         private bool _forgotten;
 
         public SemaphoreSlim LoginGate { get; } = new(1, 1);
 
-        public RemoteSession? Session
+        public KeptLogin? Kept
         {
             get
             {
                 lock (_gate)
                 {
-                    return _session;
+                    return _kept;
                 }
             }
 
@@ -1581,7 +1620,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             {
                 lock (_gate)
                 {
-                    _session = _forgotten ? null : value;
+                    _kept = _forgotten ? null : value;
                 }
             }
         }
@@ -1615,16 +1654,28 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         // Keeps a new login, unless the server was removed meanwhile.
-        public bool TryKeep(RemoteSession session)
+        public bool TryKeep(KeptLogin login)
         {
             lock (_gate)
             {
                 if (!_forgotten)
                 {
-                    _session = session;
+                    _kept = login;
                 }
 
                 return !_forgotten;
+            }
+        }
+
+        // Takes the login made at one address to another, where the same server was found.
+        public void Move(string fromUrl, string toUrl)
+        {
+            lock (_gate)
+            {
+                if (_kept is { } kept && kept.Url == fromUrl)
+                {
+                    _kept = kept.At(toUrl);
+                }
             }
         }
 
@@ -1633,7 +1684,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         {
             lock (_gate)
             {
-                if (_session is null)
+                if (_kept is null)
                 {
                     _forgotten = true;
                 }
@@ -1643,14 +1694,14 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         // Takes the login out for good: a later one is not kept.
-        public RemoteSession? Forget()
+        public KeptLogin? Forget()
         {
             lock (_gate)
             {
                 _forgotten = true;
-                var session = _session;
-                _session = null;
-                return session;
+                var kept = _kept;
+                _kept = null;
+                return kept;
             }
         }
 

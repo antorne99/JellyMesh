@@ -103,7 +103,7 @@ public sealed class StreamSlots
             }
         }
 
-        _owners.Add(peerId, playSessionId, null, devices);
+        _owners.Add(peerId, playSessionId, itemId, devices);
     }
 
     /// <summary>
@@ -116,6 +116,18 @@ public sealed class StreamSlots
     public bool Owns(Guid peerId, string? playSessionId)
     {
         return _owners.Owns(peerId, playSessionId);
+    }
+
+    /// <summary>
+    /// Tells whether a play session is one a peer opened through its own <c>PlaybackInfo</c> for an item.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <param name="itemId">The item, null if none is named.</param>
+    /// <returns>Whether it is the peer's, for that item.</returns>
+    public bool Owns(Guid peerId, string? playSessionId, Guid? itemId)
+    {
+        return itemId is not null && _owners.ItemOf(playSessionId) == itemId && _owners.Owns(peerId, playSessionId);
     }
 
     /// <summary>
@@ -350,6 +362,20 @@ public sealed class StreamSlots
                     slots.Remove(playSessionId);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Tells whether a peer holds a slot for an item.
+    /// </summary>
+    /// <param name="peerId">The peer.</param>
+    /// <param name="itemId">The item.</param>
+    /// <returns>Whether it plays it.</returns>
+    public bool IsPlaying(Guid peerId, Guid itemId)
+    {
+        lock (_lock)
+        {
+            return SlotsOf(peerId).Values.Any(slot => slot.ItemId.Equals(itemId));
         }
     }
 

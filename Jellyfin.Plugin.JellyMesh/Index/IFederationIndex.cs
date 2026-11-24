@@ -30,15 +30,16 @@ public interface IFederationIndex
     /// <summary>
     /// Adds or updates the entries an incremental read found. Nothing leaves the index, because such a read cannot tell
     /// what is gone. The state does not change either: only <see cref="ReplaceServerAsync"/> makes a server authoritative,
-    /// so a server that is not one is left alone.
+    /// so a server that is not one is left alone. Refused when the index was read again from a database opened since.
     /// </summary>
     /// <param name="serverId">The server.</param>
     /// <param name="changed">The entries that changed.</param>
     /// <param name="syncedUtc">When the read ended.</param>
     /// <param name="mark">Where the next incremental read starts from.</param>
+    /// <param name="generation">The <see cref="IndexSnapshot.Generation"/> the read started from.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the change was saved. If not, the index stays as it was.</returns>
-    Task<bool> MergeServerAsync(Guid serverId, IReadOnlyList<IndexedItem> changed, DateTimeOffset syncedUtc, SyncMark mark, CancellationToken cancellationToken);
+    Task<bool> MergeServerAsync(Guid serverId, IReadOnlyList<IndexedItem> changed, DateTimeOffset syncedUtc, SyncMark mark, long generation, CancellationToken cancellationToken);
 
     /// <summary>
     /// Records a failed sync. The entries of the server are kept, and it stops being authoritative.

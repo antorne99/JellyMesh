@@ -59,6 +59,17 @@ public class PageTranslationsTests
         }
     }
 
+    // Row 526: the banner of a restore, also after an empty restart, asks for the peers as well as the servers.
+    [Fact]
+    public void TheBannerOfARestoreNamesServersAndPeers()
+    {
+        var texts = ScriptTexts().Where(text => text.Contains("the JellyMesh database was damaged", StringComparison.Ordinal)).Distinct().ToList();
+
+        Assert.Equal(2, texts.Count);
+        Assert.All(texts, text => Assert.Matches("(?i)servers and connected servers", text));
+        Assert.All(texts, text => Assert.Matches("server e (i|dei) server connessi", _languages["it"][text]));
+    }
+
     private static IEnumerable<string> MarkupTexts()
     {
         var markup = Regex.Replace(_markup, "<style.*?</style>", string.Empty, RegexOptions.Singleline);

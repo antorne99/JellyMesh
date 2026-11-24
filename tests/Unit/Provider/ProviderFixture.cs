@@ -6,6 +6,7 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Provider;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
@@ -37,6 +38,7 @@ internal sealed class ProviderFixture
         Store.Configuration.FederatedFolderPath = "/federata";
         Peer = new User("peer", "auth", "reset");
         Slots = new StreamSlots(Clock, Store);
+        Database.Setup(database => database.Health).Returns(() => Health);
         Closer = new AbandonedStreamCloser(Slots, Transcodes.Object, Clock, NullLogger<AbandonedStreamCloser>.Instance);
 
         Authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
@@ -69,6 +71,11 @@ internal sealed class ProviderFixture
 
     /// <summary>The device in the authorization header of the request, null if it names none.</summary>
     public string? CallerDevice { get; set; }
+
+    /// <summary>The state of the plugin database.</summary>
+    public StoreHealth Health { get; set; } = StoreHealth.Healthy;
+
+    public Mock<IPluginDatabase> Database { get; } = new();
 
     public StreamSlots Slots { get; }
 
