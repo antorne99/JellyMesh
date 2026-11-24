@@ -234,6 +234,12 @@ Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its num
 - **Lyrics** are read from the remote. They can't be uploaded, searched for or deleted on a federated track.
 - **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and an album you own shows next to your own copy. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album.
 
+### Ebooks, PDFs and comics
+
+For each book JellyMesh writes a cover and a placeholder with the extension of the remote file, which holds nothing of the book. The formats are EPUB, PDF, CBZ, CBR, CB7, CBT, MOBI, AZW and AZW3; books in any other format are not imported. The placeholders of EPUB, PDF and CBZ are minimal valid files, tried on Jellyfin 12.4; those of the other formats are empty and have not been tried.
+
+Opening or downloading the book reads the file from the remote. If the remote is offline, the book stays in the library, and opening it fails with HTTP 503 and the text "File non disponibile: il server di origine non è raggiungibile. Riprova più tardi.", in Italian only.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.
