@@ -232,7 +232,7 @@ Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its num
 
 - **Playback:** your server answers the requests for a track and passes them to the remote, which decides between direct play and transcode as for films. Your server never transcodes a federated track. Clients see neither the remote's address nor its token.
 - **Lyrics** are read from the remote. They can't be uploaded, searched for or deleted on a federated track.
-- **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and an album you own shows next to your own copy. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album.
+- **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and a federated album shows next to the same album of yours. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album.
 
 ### Ebooks, PDFs and comics
 
@@ -244,14 +244,14 @@ Opening or downloading the book reads the file from the remote. If the remote is
 
 Each audio file of an audiobook on the remote is one item, in `Libri/<author>/<book>/`, with its own cover and chapters, so an audiobook in several files shows as several items. It plays as a track does.
 
-A plain library scan does not put back a field you change by hand on an audiobook. A metadata refresh of the item does, and so does a change on the remote.
+A library scan does not put back a field you change by hand on an audiobook. Replacing all metadata of the item does, and so does a change on the remote.
 
 ### Photos and GPS
 
-For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension of the remote file, in the album folders of the remote. It also keeps a thumbnail of at most 640 pixels a side, outside the libraries, and a cover for each album. None of them is the original or carries EXIF data.
+For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension of the remote file, in the album folders of the remote. Thumbnails, of at most 640 pixels a side, are kept outside the libraries, and album covers next to the placeholders. None of these files is the original or carries EXIF data.
 
 - **What Jellyfin knows:** the size and the camera data of the photo are read from the remote. Latitude, longitude and altitude never are.
-- **The image** is asked of the remote, and is always a re-encoded JPEG without EXIF data. When the remote is offline it is missing.
+- **The image** is asked of the remote. What is served is a re-encoded JPEG without EXIF data, never the original. When the remote is offline the image is missing.
 - **`Download` and `File` give the original file of the remote as it is, with its EXIF data and, if it has one, its GPS position.** Anyone who can see a federated photo can read from the file where it was taken. The photo viewer of jellyfin-web opens photos through `Download`. When the remote is offline, both answer HTTP 503.
 - **The image is anonymous, as it is in Jellyfin for local photos:** anyone who knows the ID of a photo gets its image without signing in, while a signed-in user who can't see the photo gets HTTP 404. `Download` and `File` always need a signed-in user.
 - **Libraries with photos turned off:** the libraries JellyMesh makes for `Video domestici` have photos on. In a library you made, federated photos don't show while its photos option is off.
@@ -261,8 +261,8 @@ For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension o
 
 **On your server** JellyMesh follows Jellyfin. On a federated title `Download` needs the user's download permission, and answers HTTP 403 without it. `File` needs a signed-in user who can see the title, and no download permission. Neither answers for a title the user can't see.
 
-- Music apps that stream the file of a track, as Finamp does by default, need no download permission to play federated music.
-- The book readers of jellyfin-web open a book through `Download`, so reading one there needs the permission.
+- Music apps that stream the file of a track, as Finamp does by default according to its source, need no download permission to play federated music.
+- The book readers of jellyfin-web, according to its source, open a book through `Download`, so reading one there needs the permission.
 
 **On the remote** the dedicated user needs no download permission: JellyMesh never calls `Download` there.
 
