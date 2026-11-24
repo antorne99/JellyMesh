@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -9,6 +11,19 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public interface IStubRegistry
 {
+    /// <summary>
+    /// Gets a value indicating whether the registry in memory may not be what the database holds: not read yet, or read
+    /// before the database was opened again. A stub it does not find may then still exist.
+    /// </summary>
+    bool IsUnread { get; }
+
+    /// <summary>
+    /// Reads the registry again if it is unread. A database that cannot be read leaves it as it is.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task ReloadAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// Finds a stub by ID, the last segment of the URL in its <c>.strm</c>.
     /// </summary>
