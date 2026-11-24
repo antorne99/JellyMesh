@@ -80,7 +80,7 @@ public sealed class StrmSigner
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // Stubs are then signed again at each restart, which costs little, while a throw here would stop all playback.
-            logger.LogError("Cannot keep the .strm signing key: {Error}. A key for this run only is used", exception.GetType().Name);
+            logger.LogError("Cannot keep the .strm signing key: {Error}. A key for this run only is used{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return RandomNumberGenerator.GetBytes(KeyLength);
         }
     }

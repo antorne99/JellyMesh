@@ -23,4 +23,9 @@ public sealed record FailureResponse(RemoteFailure Failure, string Message)
     /// Gets the field of the edit form a refusal is about, null when it is about none.
     /// </summary>
     public RemoteEditField? Field { get; init; }
+
+    /// <summary>
+    /// Gets the whole story of the failure, if there is one. It can hold the address of a remote: only for administrators.
+    /// </summary>
+    public string? Detail { get; init; }
 }

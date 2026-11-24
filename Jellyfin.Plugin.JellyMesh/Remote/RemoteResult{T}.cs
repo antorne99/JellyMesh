@@ -1,17 +1,18 @@
 namespace Jellyfin.Plugin.JellyMesh.Remote;
 
 /// <summary>
-/// Outcome of a remote operation. Failures carry only a <see cref="RemoteFailure"/>, so that no
-/// exception text, which can hold a remote address, travels further.
+/// Outcome of a remote operation. <see cref="Error"/> tells the whole failure to the log and to administrators; clients get
+/// nothing but what follows from the <see cref="RemoteFailure"/>.
 /// </summary>
 /// <typeparam name="T">The value type.</typeparam>
 public sealed class RemoteResult<T>
 {
-    internal RemoteResult(T? value, RemoteFailure failure, int? status = null)
+    internal RemoteResult(T? value, RemoteFailure failure, int? status = null, RemoteError? error = null)
     {
         Value = value;
         Failure = failure;
         Status = status;
+        Error = error;
     }
 
     /// <summary>
@@ -35,11 +36,21 @@ public sealed class RemoteResult<T>
     public int? Status { get; }
 
     /// <summary>
-    /// Carries this failure and its status over to a result of another type.
+    /// Gets the whole story of a failure, null when no call was made. It holds the address of the remote.
+    /// </summary>
+    public RemoteError? Error { get; }
+
+    /// <summary>
+    /// Gets the whole story of a failure as it goes after a log line, empty when there is none.
+    /// </summary>
+    internal string Detail => Error is null ? string.Empty : ErrorText.Block(Error.ToString());
+
+    /// <summary>
+    /// Carries this failure, with its status and story, over to a result of another type.
     /// </summary>
     /// <typeparam name="TOther">The other value type.</typeparam>
     /// <returns>The failed result.</returns>
-    public RemoteResult<TOther> FailAs<TOther>() => new(default, Failure, Status);
+    public RemoteResult<TOther> FailAs<TOther>() => new(default, Failure, Status, Error);
 
     /// <summary>
     /// Describes the failure for a log line: its kind and, when there is one, the HTTP status. Nothing the remote wrote.

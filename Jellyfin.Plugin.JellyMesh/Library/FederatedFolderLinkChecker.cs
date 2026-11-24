@@ -51,7 +51,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to check the federated folder: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries to check the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return FederatedFolderLinkReport.NotChecked;
         }
 

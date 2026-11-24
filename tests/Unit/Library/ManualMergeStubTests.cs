@@ -350,7 +350,7 @@ public sealed class ManualMergeStubTests : IDisposable
     }
 
     [Fact]
-    public async Task AFailedCarry_KeepsTheMerge_AndIsLoggedByItsTypeOnly()
+    public async Task AFailedCarry_KeepsTheMerge_AndIsLoggedWhole()
     {
         await ChainAsync();
         var carry = new Mock<IMergeWatchStateCarry>();
@@ -364,11 +364,11 @@ public sealed class ManualMergeStubTests : IDisposable
 
         Assert.Single(_fixture.Merges.Merges);
         Assert.Contains(logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
-        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task AFailedLink_KeepsTheMerge_AndIsLoggedByItsTypeOnly()
+    public async Task AFailedLink_KeepsTheMerge_AndIsLoggedWhole()
     {
         await ChainAsync();
         var linker = new Mock<IVersionLinker>();
@@ -381,7 +381,7 @@ public sealed class ManualMergeStubTests : IDisposable
 
         Assert.Single(_fixture.Merges.Merges);
         Assert.Contains(logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
-        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -601,6 +601,6 @@ public sealed class ManualMergeStubTests : IDisposable
         Assert.Equal(ManualMergeOutcome.Merged, await service.MergeAsync(keys, CancellationToken.None));
 
         Assert.Single(_fixture.Merges.Merges);
-        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 }

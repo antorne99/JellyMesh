@@ -245,7 +245,7 @@ public sealed class CredentialVault : ICredentialVault
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Moving the credentials to the key file failed: {Error}", exception.GetType().Name);
+            _logger.LogError("Moving the credentials to the key file failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

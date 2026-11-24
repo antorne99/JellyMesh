@@ -33,6 +33,7 @@ public class PlaybackProxyController : ControllerBase
     private readonly TimeProvider _clock;
     private readonly PlaybackRefusal _refusal;
     private readonly ILogger<PlaybackProxyController> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackProxyController"/> class.
@@ -44,6 +45,7 @@ public class PlaybackProxyController : ControllerBase
     /// <param name="clock">The clock.</param>
     /// <param name="refusal">The refusal of a playback.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public PlaybackProxyController(
         PlaybackSessionStore sessions,
         PlaybackCoordinator coordinator,
@@ -51,8 +53,10 @@ public class PlaybackProxyController : ControllerBase
         IAuthorizationContext authorization,
         TimeProvider clock,
         PlaybackRefusal refusal,
-        ILogger<PlaybackProxyController> logger)
+        ILogger<PlaybackProxyController> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _logger = logger;
         _sessions = sessions;
         _coordinator = coordinator;
@@ -256,9 +260,10 @@ public class PlaybackProxyController : ControllerBase
         var ends = relayed.CountsAsFailure && !IsSubtitle(path);
         if (relayed.IsAbnormal)
         {
+            var level = ends ? LogLevel.Warning : relayed.End == RelayEnd.ClientDropped ? LogLevel.Debug : LogLevel.Information;
             _logger.Log(
-                ends ? LogLevel.Warning : relayed.End == RelayEnd.ClientDropped ? LogLevel.Debug : LogLevel.Information,
-                "The {Part} of play session {PlaySessionId} ({Kind}, server {ServerId}) broke off: {End} after {Bytes} bytes in {Elapsed}, {Playing} into playback. Ends the session: {Ends}",
+                level,
+                "The {Part} of play session {PlaySessionId} ({Kind}, server {ServerId}) broke off: {End} after {Bytes} bytes in {Elapsed}, {Playing} into playback. Ends the session: {Ends}{Detail:l}",
                 part,
                 session.Id,
                 session.Kind,
@@ -267,7 +272,8 @@ public class PlaybackProxyController : ControllerBase
                 relayed.Bytes,
                 relayed.Elapsed,
                 _clock.GetUtcNow() - session.Opened,
-                ends);
+                ends,
+                _logger.IsEnabled(level) ? _errorLogs.For(session.Source.ServerId).Of(relayed.Error) : string.Empty);
         }
 
         if (ends)

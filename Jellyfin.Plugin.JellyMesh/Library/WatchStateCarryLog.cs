@@ -214,7 +214,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
             if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
             {
-                _logger.LogError("Cannot save the watch state carries done: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot save the watch state carries done: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
 
             return false;

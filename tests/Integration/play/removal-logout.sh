@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Decision 413: removing a server ends what plays from it at once, then ends its login on the remote within a short time.
-# A remote that does not answer keeps the device listed, the removal stays fast and the log shows no token or address.
+# A remote that does not answer keeps the device listed, the removal stays fast and the log shows no token.
 # Decision 418: after a local restart there is no live login, so the removal logs in with the same device and out at once.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-rml] [PORT=18480] removal-logout.sh   (KEEP=1 leaves the containers up)
 set -euo pipefail
@@ -39,12 +39,11 @@ remote_token() {
   sqlite3 "$db/jellyfin.db" "select AccessToken from Devices where DeviceId = 'jellymesh-${1//-/}' order by Id desc limit 1;"
 }
 token_works() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: MediaBrowser Token=\"$1\"" "http://127.0.0.1:$(port_of remote)/System/Info"; }
-# clean_log <since> <token>: the plugin's log since then must hold no token and no remote address.
+# clean_log <since> <token>: the plugin's log since then must hold no token.
 clean_log() {
   local log
   log=$(docker logs --since "$1" "$PREFIX-local" 2>&1)
   check "the log holds no token" 0 "$(grep -cF "$2" <<<"$log" || true)"
-  check "the log holds no remote address" 0 "$(grep -cE "host\.docker\.internal|:$(port_of remote)" <<<"$log" || true)"
 }
 log_line() { docker logs --since "$1" "$PREFIX-local" 2>&1 | { grep -iF "$2" || true; } | tail -1 | sed -E 's/^.*\] //'; }
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }

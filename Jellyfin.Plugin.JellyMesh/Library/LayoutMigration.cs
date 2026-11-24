@@ -518,7 +518,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
 

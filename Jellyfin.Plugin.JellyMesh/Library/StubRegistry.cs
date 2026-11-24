@@ -346,7 +346,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -373,7 +373,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or InvalidOperationException or OverflowException)
         {
-            _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync", exception.GetType().Name);
+            _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             (_loaded, _stored) = (true, null);
             return StubState.Empty;
         }

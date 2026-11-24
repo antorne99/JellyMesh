@@ -466,7 +466,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot delete the old file of a renamed stub: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot delete the old file of a renamed stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

@@ -303,7 +303,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot wait for the libraries of the server: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot wait for the libraries of the server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -574,7 +574,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cannot update the libraries of a server: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot update the libraries of a server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             _errors[serverId] = AutomaticLibrariesError.Failed;
         }
         finally
@@ -888,7 +888,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}", planned.Kind, LogText.Clean(serverName), exception.GetType().Name);
+            _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}{Detail:l}", planned.Kind, LogText.Clean(serverName), exception.GetType().Name, ErrorText.Of(exception));
             _errors[serverId] = AutomaticLibrariesError.CreateFailed;
             return ReadFolders() is { } after && Resolve(serverId, owner, intent, root, after);
         }
@@ -1149,7 +1149,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot validate the libraries after a rename: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot validate the libraries after a rename: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -1162,7 +1162,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot rename the library {Library}: {Error}", LogText.Clean(folder.Name), exception.GetType().Name);
+            _logger.LogError("Cannot rename the library {Library}: {Error}{Detail:l}", LogText.Clean(folder.Name), exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }
@@ -1211,7 +1211,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             }
             catch (Exception exception)
             {
-                _logger.LogError("Cannot delete the libraries of a removed server: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot delete the libraries of a removed server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
 
             lock (_jobsLock)
@@ -1337,7 +1337,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    _logger.LogError("Cannot delete the library {Library}: {Error}", LogText.Clean(next.Name), exception.GetType().Name);
+                    _logger.LogError("Cannot delete the library {Library}: {Error}{Detail:l}", LogText.Clean(next.Name), exception.GetType().Name, ErrorText.Of(exception));
                     SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
                     return false;
                 }
@@ -1459,7 +1459,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot read the libraries of the server: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the libraries of the server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }

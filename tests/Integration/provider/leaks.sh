@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# No remote token and no remote address reach a client or a log (§5). The tokens are the ones that really crossed the gates,
+# No remote token reaches a client or a log, and no remote address a client (§5, row 550). The tokens are the ones that really crossed the gates,
 # so a check that found none of them would prove nothing: it fails then. Answers that clients got are kept in $WORK by the
 # other scripts. usage: MEDIA=... WORK=... leaks.sh [output of a proof script]...
 set -uo pipefail
@@ -51,8 +51,9 @@ for s in a b; do
   find "$WORK" -maxdepth 1 -name 'gate-*.tokens' ! -name "gate-$s.tokens" -exec cat {} + | sort -u >"$LOOK.$s.tokens"
   TOKENS=$LOOK.$s.tokens
   check "$s logged something" true "$([ -s "$LOOK/$s-stdout" ] && echo true || echo false)"
-  clean "the output of $s" "$LOOK/$s-stdout"
-  clean "the log files of $s" "$LOOK/$s-log-files"
+  no_token "the output of $s" "$LOOK/$s-stdout"
+  check "the log files of $s were kept" true "$([ -s "$LOOK/$s-log-files" ] && echo true || echo false)"
+  no_token "the log files of $s" "$LOOK/$s-log-files"
   clean "the .strm and .nfo of $s" "$LOOK/$s-federata"
   no_token "the plugin configuration of $s" "$LOOK/$s-config"
   TOKENS=

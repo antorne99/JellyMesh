@@ -205,7 +205,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         {
             if (Interlocked.Exchange(ref _reported, 1) == 0)
             {
-                _logger.LogError("Cannot read the manual merges: {Error}. They are not applied until the database reads", exception.GetType().Name);
+                _logger.LogError("Cannot read the manual merges: {Error}. They are not applied until the database reads{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
 
             return null;

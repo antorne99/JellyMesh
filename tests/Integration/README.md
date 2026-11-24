@@ -163,7 +163,7 @@ Every scenario needs a fresh instance. `all.sh` does that for `s1` to `s5`, and 
 ```sh
 bash materializer/up.sh           # a fresh jm-mat with the two-path libraries and the plugin
 bash materializer/s1.sh           # s1 to s5, see the comment at the top of each
-bash materializer/check.sh        # after s5: no remote address in the logs, the index or the folder
+bash materializer/check.sh        # after s5: no remote password in the logs, no remote address in the index or the folder
 ```
 
 Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`.
@@ -198,7 +198,7 @@ bash provider/boundaries.sh       # what a peer can reach, no cycles, shared lib
 bash provider/feed.sh             # the change feed, and polling on a stock remote
 bash provider/limits.sh           # the stream limit, about 15 minutes because it waits for real timeouts
 bash provider/network.sh          # a slow and an offline provider, after limits.sh
-bash provider/leaks.sh            # no remote token or address in a client answer or a log
+bash provider/leaks.sh            # no remote token in a client answer or a log, no remote address in a client answer
 bash provider/down.sh             # removes containers and volumes, and the recorded tokens
 ```
 

@@ -191,7 +191,7 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenTheLibraryRenameThrows_TheScanStillRuns_AndTheFailureIsLoggedByItsTypeOnly()
+    public async Task WhenTheLibraryRenameThrows_TheScanStillRuns_AndTheFailureIsLoggedWhole()
     {
         _libraries.Setup(libraries => libraries.RenameAsync(_server, It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/config/root/default/Casa - Film"));
 
@@ -200,7 +200,7 @@ public sealed class ServerRenamerTests : IDisposable
         Assert.Equal(["name Mare", "stubs Mare", "scan"], _steps);
         Assert.True(_renamer.GetState(_server).Failed);
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("Casa", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("Casa", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -432,12 +432,12 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
-    public async Task WhenCancellingThrows_TheCancelFails_AndTheErrorIsLoggedByItsTypeOnly()
+    public async Task WhenCancellingThrows_TheCancelFails_AndTheErrorIsLoggedWhole()
     {
         _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/secret/path"));
 
         Assert.Equal(ServerRenameOutcome.CancelFailed, await _renamer.CancelPendingAsync(_server));
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
     [Fact]

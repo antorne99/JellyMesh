@@ -340,7 +340,7 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Equal(AutomaticMigrationError.Failed, _store.Configuration.LayoutMigration.Error);
         Assert.Equal(AutomaticMigrationStep.Scan, _store.Configuration.LayoutMigration.Step);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("/secret/path", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("/secret/path", StringComparison.Ordinal));
 
         SetUpScans();
         await migration.Choose(LayoutMigrationMode.Automatic).Job;

@@ -344,7 +344,10 @@ public sealed class CatalogSyncServiceTests : IDisposable
         Assert.Equal(ServerSyncState.Stale, CatalogOf(first).State);
         Assert.Equal(RemoteFailure.InvalidResponse, CatalogOf(first).LastFailure);
         Assert.Equal(ServerSyncState.Complete, CatalogOf(second).State);
-        Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        var reports = _fixture.Sync.GetStatus().Servers;
+        Assert.StartsWith("System.InvalidOperationException: at http://remote.invalid", reports.Single(report => report.ServerId == first.Id).Detail, StringComparison.Ordinal);
+        Assert.Null(reports.Single(report => report.ServerId == second.Id).Detail);
+        Assert.Contains(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
 
     [Fact]

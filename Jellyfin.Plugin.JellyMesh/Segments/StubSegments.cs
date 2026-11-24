@@ -224,7 +224,7 @@ public sealed class StubSegments
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogDebug("Reading the media segments of a stub failed: {Error}", exception.GetType().Name);
+            _logger.LogDebug("Reading the media segments of a stub failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.ServerError);
         }
     }

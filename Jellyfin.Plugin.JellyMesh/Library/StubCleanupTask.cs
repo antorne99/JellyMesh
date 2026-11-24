@@ -154,8 +154,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Could not finish moving the stubs of a renamed server: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not finish moving the stubs of a renamed server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -173,8 +172,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -192,7 +190,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not link the versions of the titles after the scan: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not link the versions of the titles after the scan: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -225,7 +223,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 // The stub stays, so its state is not lost, and the next scan tries again.
-                _logger.LogError("Cannot merge a stub: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot merge a stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
         }
 

@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -23,8 +24,8 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// <see cref="IRemotePlaybackClient"/> over HTTP.
 /// </summary>
 /// <remarks>
-/// Logs nothing and lets no transport exception out, as <see cref="JellyfinRemoteClient"/>: their messages can hold the
-/// remote address. Cancellation goes through, so that the caller can apply its own timeouts.
+/// Logs nothing and lets no transport exception out, as <see cref="JellyfinRemoteClient"/>: the whole failure goes in
+/// <see cref="RemoteResult{T}.Error"/>. Cancellation goes through, so that the caller can apply its own timeouts.
 /// </remarks>
 public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegmentClient
 {
@@ -54,6 +55,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     };
 
     private static readonly JsonSerializerOptions _readOptions = new() { PropertyNameCaseInsensitive = true };
+
+    private static readonly HttpRequestOptionsKey<string> _refusedPath = new("JellyMesh.RefusedPath");
 
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -96,9 +99,9 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
             request.AlwaysBurnInSubtitleWhenTranscoding);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Post, "/Items/" + Uri.EscapeDataString(request.ItemId) + "/PlaybackInfo");
-        if (message is null)
+        if (message.RequestUri is null)
         {
-            return RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse);
+            return RefusedPath<PlaybackInfoResponse>(message, session);
         }
 
         message.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(body, _requestOptions));
@@ -108,7 +111,7 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
             message.Headers.TryAddWithoutValidation(ProviderProtocol.ReplacesHeader, replaces);
         }
 
-        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        var document = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
         {
             return document.FailAs<PlaybackInfoResponse>();
@@ -117,14 +120,14 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         // Besides invalid JSON, the converters of the server throw what they like on a value of the wrong shape.
         try
         {
-            var info = JsonSerializer.Deserialize<PlaybackInfoResponse>(document.Value!, JsonDefaults.PascalCaseOptions);
+            var info = JsonSerializer.Deserialize<PlaybackInfoResponse>(document.Value!.Body, JsonDefaults.PascalCaseOptions);
             return RemoteAnswers.IsWellFormed(info)
                 ? RemoteResult.Success(info!)
-                : RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse);
+                : document.Value!.Refuse<PlaybackInfoResponse>(null);
         }
         catch (Exception exception) when (exception is JsonException or FormatException or InvalidOperationException or NotSupportedException or ArgumentException or OverflowException)
         {
-            return RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.InvalidResponse);
+            return document.Value!.Refuse<PlaybackInfoResponse>(exception);
         }
     }
 
@@ -135,15 +138,15 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(session);
 
         using var userRequest = BuildRequest(endpoint, session, HttpMethod.Get, "/Users/Me");
-        var user = await ReadDocumentAsync(userRequest, cancellationToken).ConfigureAwait(false);
+        var user = await ReadDocumentAsync(userRequest, session, cancellationToken).ConfigureAwait(false);
         if (!user.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteTranscodePolicy>(user.Failure);
+            return user.FailAs<RemoteTranscodePolicy>();
         }
 
-        if (Parse<UserResponse>(user.Value!)?.Policy is not { } policy)
+        if (Parse<UserResponse>(user.Value!, out var error)?.Policy is not { } policy)
         {
-            return RemoteResult.Fail<RemoteTranscodePolicy>(RemoteFailure.InvalidResponse);
+            return user.Value!.Refuse<RemoteTranscodePolicy>(error);
         }
 
         return RemoteResult.Success(new RemoteTranscodePolicy(
@@ -160,9 +163,9 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(session);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, path);
-        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
+        var document = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
         return document.IsSuccess
-            ? RemoteResult.Success(Encoding.UTF8.GetString(document.Value!))
+            ? RemoteResult.Success(Encoding.UTF8.GetString(document.Value!.Body))
             : document.FailAs<string>();
     }
 
@@ -174,10 +177,12 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(request);
 
         using var message = BuildRequest(endpoint, session, request.Method, request.Path);
-        if (message is null)
+        if (message.RequestUri is null)
         {
-            return RemoteResult.Fail<RemoteContent>(RemoteFailure.InvalidResponse);
+            return RefusedPath<RemoteContent>(message, session);
         }
+
+        var call = CallOf(message, session);
 
         if (!string.IsNullOrEmpty(request.Range))
         {
@@ -195,17 +200,18 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         {
             response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
-            return RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable);
+            return RemoteResult.FailWithError<RemoteContent>(RemoteFailure.Unreachable, null, call.Error(exception));
         }
 
         if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.RequestedRangeNotSatisfiable)
         {
             var failure = FailureOf(response);
             var status = (int)response.StatusCode;
+            var error = await call.ErrorAsync(response, null, cancellationToken).ConfigureAwait(false);
             response.Dispose();
-            return RemoteResult.FailWithStatus<RemoteContent>(failure, status);
+            return RemoteResult.FailWithError<RemoteContent>(failure, status, error);
         }
 
         var content = response.Content.Headers;
@@ -220,10 +226,10 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
             var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             return RemoteResult.Success(new RemoteContent(response.StatusCode, headers, body, response));
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
             response.Dispose();
-            return RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable);
+            return RemoteResult.FailWithError<RemoteContent>(RemoteFailure.Unreachable, null, call.Error(exception));
         }
         catch (OperationCanceledException)
         {
@@ -240,8 +246,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
 
         var path = "/Videos/ActiveEncodings?DeviceId=" + Uri.EscapeDataString(endpoint.DeviceId) + "&PlaySessionId=" + Uri.EscapeDataString(playSessionId);
         using var message = BuildRequest(endpoint, session, HttpMethod.Delete, path);
-        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
-        return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
+        var document = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
+        return document.IsSuccess ? RemoteResult.Success(true) : document.FailAs<bool>();
     }
 
     /// <inheritdoc />
@@ -251,8 +257,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(session);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Put, StreamPath(playSessionId));
-        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
-        return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
+        var document = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
+        return document.IsSuccess ? RemoteResult.Success(true) : document.FailAs<bool>();
     }
 
     /// <inheritdoc />
@@ -262,8 +268,8 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(session);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Delete, StreamPath(playSessionId));
-        var document = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
-        return document.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(document.Failure);
+        var document = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
+        return document.IsSuccess ? RemoteResult.Success(true) : document.FailAs<bool>();
     }
 
     /// <inheritdoc />
@@ -274,17 +280,17 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         ArgumentNullException.ThrowIfNull(itemId);
 
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/MediaSegments/" + Uri.EscapeDataString(itemId));
-        var (document, status) = await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false);
+        var document = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
         if (!document.IsSuccess)
         {
-            return IsItemRefusal(status)
+            return IsItemRefusal(document.Status)
                 ? RemoteResult.Success(RemoteSegmentRead.Refused)
-                : RemoteResult.Fail<RemoteSegmentRead>(document.Failure);
+                : document.FailAs<RemoteSegmentRead>();
         }
 
-        if (Parse<SegmentPage>(document.Value!)?.Items is not { } items)
+        if (Parse<SegmentPage>(document.Value!, out var error)?.Items is not { } items)
         {
-            return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.InvalidResponse);
+            return document.Value!.Refuse<RemoteSegmentRead>(error);
         }
 
         var segments = items
@@ -296,11 +302,11 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     }
 
     // A client error about the item alone, such as not found or too many reads at once; 401 and 403 speak of the user.
-    private static bool IsItemRefusal(HttpStatusCode? status)
+    private static bool IsItemRefusal(int? status)
     {
-        return status is { } code
-            && (int)code is >= 400 and < 500
-            && code is not HttpStatusCode.Unauthorized and not HttpStatusCode.Forbidden;
+        return status is >= 400 and < 500
+            and not (int)HttpStatusCode.Unauthorized
+            and not (int)HttpStatusCode.Forbidden;
     }
 
     // Null for a type Jellyfin does not name, or times stock would refuse to store.
@@ -321,12 +327,14 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
 
     private static string StreamPath(string playSessionId) => "/" + ProviderProtocol.Route + "/Streams/" + Uri.EscapeDataString(playSessionId);
 
-    // Null when the path cannot be accepted: paths come from the answers of the remote.
-    private static HttpRequestMessage? BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
+    // Without a URL when the path cannot be accepted: paths come from the answers of the remote.
+    private static HttpRequestMessage BuildRequest(RemoteEndpoint endpoint, RemoteSession session, HttpMethod method, string path)
     {
         if (!RemoteUrl.TryCombine(endpoint.BaseUrl, path, out var uri))
         {
-            return null;
+            var refused = new HttpRequestMessage(method, (Uri?)null);
+            refused.Options.Set(_refusedPath, path);
+            return refused;
         }
 
         var request = new HttpRequestMessage(method, uri);
@@ -334,6 +342,18 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         request.Headers.TryAddWithoutValidation("Authorization", JellyfinRemoteClient.AuthorizationHeader(endpoint, session));
         request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
         return request;
+    }
+
+    private static RemoteCall CallOf(HttpRequestMessage message, RemoteSession session, [CallerMemberName] string step = "")
+    {
+        var url = message.RequestUri?.AbsoluteUri ?? (message.Options.TryGetValue(_refusedPath, out var path) ? path : string.Empty);
+        return new RemoteCall(step, message.Method, url, session.AccessToken);
+    }
+
+    private static RemoteResult<T> RefusedPath<T>(HttpRequestMessage message, RemoteSession session, [CallerMemberName] string step = "")
+    {
+        var error = CallOf(message, session, step).Error(null, "The path cannot be joined to the address of the server; nothing was sent");
+        return RemoteResult.FailWithError<T>(RemoteFailure.InvalidResponse, null, error);
     }
 
     private static RemoteFailure FailureOf(HttpResponseMessage response)
@@ -363,15 +383,17 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
         };
     }
 
-    private static T? Parse<T>(byte[] body)
+    private static T? Parse<T>(RemoteDocument document, out JsonException? error)
         where T : class
     {
+        error = null;
         try
         {
-            return JsonSerializer.Deserialize<T>(body, _readOptions);
+            return JsonSerializer.Deserialize<T>(document.Body, _readOptions);
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
+            error = exception;
             return null;
         }
     }
@@ -379,43 +401,45 @@ public sealed class RemotePlaybackClient : IRemotePlaybackClient, IRemoteSegment
     private async Task<string?> ReadHardwareAsync(RemoteEndpoint endpoint, RemoteSession session, CancellationToken cancellationToken)
     {
         using var message = BuildRequest(endpoint, session, HttpMethod.Get, "/System/Configuration/encoding");
-        var encoding = await ReadDocumentAsync(message, cancellationToken).ConfigureAwait(false);
-        return encoding.IsSuccess ? Parse<EncodingResponse>(encoding.Value!)?.HardwareAccelerationType : null;
+        var encoding = await ReadDocumentAsync(message, session, cancellationToken).ConfigureAwait(false);
+        return encoding.IsSuccess ? Parse<EncodingResponse>(encoding.Value!, out _)?.HardwareAccelerationType : null;
     }
 
-    private async Task<RemoteResult<byte[]>> ReadDocumentAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
+    // Reads a document. A failure keeps the status of the answer, if any.
+    private async Task<RemoteResult<RemoteDocument>> ReadDocumentAsync(HttpRequestMessage message, RemoteSession session, CancellationToken cancellationToken, [CallerMemberName] string step = "")
     {
-        return (await ReadAnswerAsync(message, cancellationToken).ConfigureAwait(false)).Document;
-    }
-
-    // Reads a document with the status of the answer, null when none came.
-    private async Task<(RemoteResult<byte[]> Document, HttpStatusCode? Status)> ReadAnswerAsync(HttpRequestMessage? message, CancellationToken cancellationToken)
-    {
-        if (message is null)
+        if (message.RequestUri is null)
         {
-            return (RemoteResult.Fail<byte[]>(RemoteFailure.InvalidResponse), null);
+            return RefusedPath<RemoteDocument>(message, session, step);
         }
 
+        var call = CallOf(message, session, step);
         var client = _httpClientFactory.CreateClient(HttpClientName);
         try
         {
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return (RemoteResult.FailWithStatus<byte[]>(FailureOf(response), (int)response.StatusCode), response.StatusCode);
+                var refused = await call.ErrorAsync(response, null, cancellationToken).ConfigureAwait(false);
+                return RemoteResult.FailWithError<RemoteDocument>(FailureOf(response), (int)response.StatusCode, refused);
             }
 
             var body = await RemoteBody.ReadLimitedAsync(response.Content, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
-            return (body is null ? RemoteResult.Fail<byte[]>(RemoteFailure.ResponseTooLarge) : RemoteResult.Success(body), response.StatusCode);
+            return body is null
+                ? RemoteResult.FailWithError<RemoteDocument>(RemoteFailure.ResponseTooLarge, null, call.TooLarge(response.StatusCode, MaxDocumentBytes))
+                : RemoteResult.Success(new RemoteDocument(call, response.StatusCode, body, response.Content.Headers.ContentType?.MediaType));
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
         {
-            return (RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable), null);
+            return RemoteResult.FailWithError<RemoteDocument>(RemoteFailure.Unreachable, null, call.Error(exception));
         }
-        catch (IOException)
-        {
-            return (RemoteResult.Fail<byte[]>(RemoteFailure.Unreachable), null);
-        }
+    }
+
+    private sealed record RemoteDocument(RemoteCall Call, HttpStatusCode Status, byte[] Body, string? ContentType)
+    {
+        // Refuses a document that was read, with the exception of its parsing.
+        public RemoteResult<T> Refuse<T>(Exception? exception)
+            => RemoteResult.FailWithError<T>(RemoteFailure.InvalidResponse, null, Call.Unusable(Status, Body, ContentType, exception));
     }
 
     private sealed record PlaybackInfoBody(
