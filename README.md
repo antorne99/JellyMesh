@@ -226,6 +226,14 @@ Music videos have a `.strm`, a `.nfo` and images like films. Copies on several s
 
 Home videos keep the folders they have on the remote. They are not matched with other copies, so the same video on two servers shows twice in a library that holds both.
 
+### Music
+
+Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its number and title, or by disc, number and title when the album has more than one disc. The remote album decides which tracks go together, and its cover comes along.
+
+- **Playback:** your server answers the requests for a track and passes them to the remote, which decides between direct play and transcode as for films. Your server never transcodes a federated track. Clients see neither the remote's address nor its token.
+- **Lyrics** are read from the remote. They can't be uploaded, searched for or deleted on a federated track.
+- **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and an album you own shows next to your own copy. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.
