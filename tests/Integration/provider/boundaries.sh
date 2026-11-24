@@ -21,16 +21,29 @@ shared_stubs() { # <server> <token> <type>: IDs of the stubs Jellyfin has in the
     get "$s" "/Items?ParentId=$library&Recursive=true&IncludeItemTypes=$3&Fields=Path" | jq -r '.Items[] | select((.Path // "") | startswith("/federata/")) | .Id'
   done
 }
-provider_ids() { # <server> <token> <type>...: IDs of what a peer can read
-  local s=$1 token=$2 library type
-  shift 2
+versions_of() { # <server> <jq filter>: reads the versions of every film and episode, $files and $stubs are those of one item
+  get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path,MediaSources' |
+    jq -r '.Items[] | .Id as $item | [.MediaSources[]? | {Id, File: ((.Path // "") | startswith("/media/"))}] |
+      (map(select(.File).Id)) as $files | (map(select(.File | not).Id)) as $stubs | '"$2"
+}
+ask_version() { # <server> <token> <item> [version]: the status of PlaybackInfo, with the slot it may take freed
+  local code session
+  code=$(as_peer "$1" "$2" POST "/Items/$3/PlaybackInfo${4:+?mediaSourceId=$4}")
+  session=$(jq -r '.PlaySessionId // empty' "$WORK/body" 2>/dev/null)
+  [ -z "$session" ] || as_peer "$1" "$2" DELETE "/JellyMesh/Provider/Streams/$session" >/dev/null
+  echo "$code"
+}
+provider_ids() { local s=$1 token=$2; shift 2; provider_read "$s" "$token" '.Items[].Id' "$@"; }
+provider_read() { # <server> <token> <jq filter> <type>...: what a peer can read
+  local s=$1 token=$2 filter=$3 library type
+  shift 3
   as_peer "$s" "$token" GET /JellyMesh/Provider/Libraries >/dev/null
   local libraries
   libraries=$(jq -r '.Items[].Id' "$WORK/body")
   for library in $libraries; do
     for type in "$@"; do
       as_peer "$s" "$token" GET "/JellyMesh/Provider/Items?parentId=$library&includeItemTypes=$type&limit=500" >/dev/null
-      jq -r '.Items[].Id' "$WORK/body"
+      jq -r "$filter" "$WORK/body"
     done
   done
 }
@@ -39,9 +52,8 @@ token=$(peer_token a peer)
 stub=$(shared_stubs a "$token" Movie | head -1)
 real=$(id_of a /media/)
 echo "stub on a: $stub, real item on a: $real"
-for id in "$stub" "$real"; do
-  check "a stub and a real film of a to ask for" yes "$([[ $id =~ ^[0-9a-f]{32}$ ]] && echo yes || echo no)"
-done
+check "a has a stub to ask for" yes "$([[ $stub =~ ^[0-9a-f]{32}$ ]] && echo yes || echo no)"
+check "a has a real film to ask for" yes "$([[ $real =~ ^[0-9a-f]{32}$ ]] && echo yes || echo no)"
 
 echo "--- stock routes are closed to a peer"
 for path in '/Items?Recursive=true' /UserViews /Users /Library/VirtualFolders /Sessions /System/Info /Shows/NextUp; do
@@ -80,6 +92,22 @@ for s in a b; do
     case "$(get "$s" "/Items/$id" | jq -r .Path)" in /media/*) ;; *) outside=$((outside + 1)) ;; esac
   done
   check "series rows of $s outside its real media" 0 "$outside"
+
+  # A stub linked to a real copy is a version of that copy.
+  pairs=$(versions_of "$s" '($files | if index($item) then $item else .[0] // empty end) as $real | $stubs[] | "\($real) \(.)"')
+  versions=$(provider_read "$s" "$t" '.Items[].MediaSources[]?.Id' Movie Episode | sort -u)
+  echo "$s: $(grep -c . <<<"$pairs") stub versions linked to real items, $(grep -c . <<<"$versions") versions sent to the peer"
+  check "$s has stub versions linked to real items, so the test can fail" yes "$([ -n "$pairs" ] && echo yes || echo no)"
+  check "file versions of $s a peer does not receive" 0 "$(comm -23 <(versions_of "$s" '$files[]' | sort -u) <(echo "$versions") | grep -c .)"
+  check "stub versions of $s among those a peer receives" 0 "$(comm -12 <(versions_of "$s" '$stubs[]' | sort -u) <(echo "$versions") | grep -c .)"
+  by_item='' by_version=''
+  while read -r item version; do
+    [ -n "$version" ] || continue
+    by_item+="$(ask_version "$s" "$t" "$item" "$version") "
+    by_version+="$(ask_version "$s" "$t" "$version") "
+  done <<<"$pairs"
+  check "PlaybackInfo of a stub version of $s, by its real item" 404 "$(tr ' ' '\n' <<<"$by_item" | grep . | sort -u | paste -sd' ' -)"
+  check "PlaybackInfo of a stub version of $s, by its own ID" 404 "$(tr ' ' '\n' <<<"$by_version" | grep . | sort -u | paste -sd' ' -)"
 done
 
 as_peer a "$token" GET "/JellyMesh/Provider/Items?ids=$real&includeItemTypes=Movie" >/dev/null
