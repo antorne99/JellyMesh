@@ -47,7 +47,7 @@ public static class LogText
         return string.Concat(value.Where(character => !IsUnsafe(character)));
     }
 
-    private static bool IsUnsafe(char character)
+    internal static bool IsUnsafe(char character)
     {
         return char.IsControl(character)
             || character is '\u2028' or '\u2029' or '\uFEFF' or '\u061C'

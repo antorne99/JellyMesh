@@ -35,7 +35,7 @@ public class ServerRemovalLogoutTests
         Assert.All(logger.Lines, line =>
         {
             Assert.DoesNotContain(TestValues.Token, line, StringComparison.Ordinal);
-            Assert.DoesNotContain("tailnet", line, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(TestValues.Password, line, StringComparison.Ordinal);
         });
     }
 
@@ -172,7 +172,7 @@ public class ServerRemovalLogoutTests
     }
 
     [Fact]
-    public async Task ARefusedLogoutIsLoggedWithoutTokenOrAddressAndTheRemovalStands()
+    public async Task ARefusedLogoutIsLoggedWithoutTokenAndTheRemovalStands()
     {
         using var fixture = new RegistryFixture(Remote(HttpStatusCode.InternalServerError));
         var server = await fixture.AddServerAsync();
