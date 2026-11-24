@@ -18,4 +18,9 @@ public sealed record FailureResponse(RemoteFailure Failure, string Message)
     /// Gets the name of the configured server a refused add matches, if any.
     /// </summary>
     public string? ServerName { get; init; }
+
+    /// <summary>
+    /// Gets the whole story of the failure, if there is one. It can hold the address of a remote: only for administrators.
+    /// </summary>
+    public string? Detail { get; init; }
 }

@@ -25,6 +25,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [Route("JellyMesh/Admin")]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Produces(MediaTypeNames.Application.Json)]
+[AdminErrors]
 public class FederationAdminController : ControllerBase
 {
     /// <summary>The refusal of a hide whose libraries are no longer listed.</summary>
@@ -185,7 +186,7 @@ public class FederationAdminController : ControllerBase
 
         if (!result.IsSuccess)
         {
-            return Failed(result.Failure);
+            return Failed(result.Failure, result.Error?.ToString());
         }
 
         _sync.PrepareServerFolders();
@@ -236,7 +237,9 @@ public class FederationAdminController : ControllerBase
                 _playback.ReopenServer(serverId);
             }
 
-            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
+            var detail = ErrorText.Of(exception);
+            _logger.LogError("Could not remove a server: {Error}{Detail:l}", exception.GetType().Name, detail);
+            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed, detail.TrimStart());
         }
 
         if (!removed)
@@ -267,7 +270,9 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return Failed(RemoteFailure.ForgetFailed);
+            var detail = ErrorText.Of(exception);
+            _logger.LogError("Could not forget the missing servers: {Error}{Detail:l}", exception.GetType().Name, detail);
+            return Failed(RemoteFailure.ForgetFailed, detail.TrimStart());
         }
 
         if (forgotten > 0)
@@ -297,7 +302,7 @@ public class FederationAdminController : ControllerBase
 
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure);
+        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure, result.Error?.ToString());
     }
 
     /// <summary>
@@ -314,7 +319,7 @@ public class FederationAdminController : ControllerBase
     public async Task<ActionResult<ConnectionReport>> TestServer([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
         var result = await _registry.TestAsync(serverId, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? result.Value! : Failed(result.Failure);
+        return result.IsSuccess ? result.Value! : Failed(result.Failure, result.Error?.ToString());
     }
 
     /// <summary>
@@ -333,7 +338,7 @@ public class FederationAdminController : ControllerBase
         var result = await _registry.GetLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
-            return Failed(result.Failure);
+            return Failed(result.Failure, result.Error?.ToString());
         }
 
         var selected = _registry.GetServers().FirstOrDefault(server => server.Id == serverId)?.ImportedLibraryIds ?? [];
@@ -601,12 +606,13 @@ public class FederationAdminController : ControllerBase
             server.LastCheckedUtc)
         {
             NeedsPassword = server.NeedsPassword,
+            LastError = server.LastError?.ToString(),
             AutomaticLibraries = _libraries.GetState(server.Id),
             Rename = _renamer?.GetState(server.Id)
         };
     }
 
-    private ObjectResult Failed(RemoteFailure failure)
+    private ObjectResult Failed(RemoteFailure failure, string? detail = null)
     {
         var status = failure switch
         {
@@ -617,7 +623,7 @@ public class FederationAdminController : ControllerBase
             _ => StatusCodes.Status502BadGateway
         };
 
-        return StatusCode(status, new FailureResponse(failure, FailureMessage(failure)));
+        return StatusCode(status, new FailureResponse(failure, FailureMessage(failure)) { Detail = detail });
     }
 
     // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure
@@ -636,8 +642,7 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path or an address.
-            _logger.LogError("Could not take the removed server out of the manual merges: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not take the removed server out of the manual merges: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

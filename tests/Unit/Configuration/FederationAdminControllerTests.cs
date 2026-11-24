@@ -405,7 +405,7 @@ public class FederationAdminControllerTests
         sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
         var line = Assert.Single(logger.Lines);
         Assert.Contains("IOException", line, StringComparison.Ordinal);
-        Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
+        Assert.Contains(TestValues.Host, line, StringComparison.Ordinal);
     }
 
     private static Mock<ICatalogSyncService> RemovingSync(Guid serverId)
@@ -756,7 +756,7 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public async Task FailuresExposeNoAddressOrSecret()
+    public async Task FailuresTellTheWholeErrorWithoutSecrets()
     {
         var handler = new StubHandler(_ => throw new HttpRequestException("Connection refused (" + TestValues.Host + ":8096)"));
         using var fixture = new RegistryFixture(handler);
@@ -766,13 +766,17 @@ public class FederationAdminControllerTests
 
         var failed = Assert.IsType<ObjectResult>(result.Result);
         Assert.Equal(502, failed.StatusCode);
-        var text = ToJson(failed.Value) + string.Join('\n', fixture.Logger.Lines);
-        Assert.DoesNotContain(TestValues.Host, text, StringComparison.Ordinal);
-        AssertNoSecret(text);
+        var detail = Assert.IsType<FailureResponse>(failed.Value).Detail!;
+        Assert.Contains("Step: Authenticate", detail, StringComparison.Ordinal);
+        Assert.Contains("POST " + TestValues.Url + "/Users/AuthenticateByName", detail, StringComparison.Ordinal);
+        Assert.Contains("System.Net.Http.HttpRequestException: Connection refused", detail, StringComparison.Ordinal);
+        Assert.Contains("   at ", detail, StringComparison.Ordinal);
+        Assert.Contains(fixture.Logger.Lines, line => line.Contains("Connection refused", StringComparison.Ordinal));
+        AssertNoSecret(detail + string.Join('\n', fixture.Logger.Lines));
     }
 
     [Fact]
-    public async Task ACallFailingAfterTheAddLogsNoAddress()
+    public async Task ACallFailingAfterTheAddLogsTheWholeError()
     {
         var failing = false;
         var handler = new StubHandler(request => failing
@@ -787,8 +791,86 @@ public class FederationAdminControllerTests
         Assert.Equal(502, Assert.IsType<ObjectResult>(result.Result).StatusCode);
         var logs = string.Join('\n', fixture.Logger.Lines);
         Assert.Contains("Unreachable", logs, StringComparison.Ordinal);
-        Assert.DoesNotContain(TestValues.Host, logs, StringComparison.Ordinal);
-        Assert.Equal("Offline", ControllerFor(fixture).GetStatus().Value!.Servers.Single().Connection);
+        Assert.Contains(TestValues.Host, logs, StringComparison.Ordinal);
+        var status = ControllerFor(fixture).GetStatus().Value!.Servers.Single();
+        Assert.Equal("Offline", status.Connection);
+        Assert.Contains("No route to " + TestValues.Host, status.LastError, StringComparison.Ordinal);
+
+        failing = false;
+        await ControllerFor(fixture).TestServer(server.Id, CancellationToken.None);
+        Assert.Null(ControllerFor(fixture).GetStatus().Value!.Servers.Single().LastError);
+    }
+
+    [Fact]
+    public async Task AServerErrorIsAnsweredWithTheStatusAndTheBodyOfTheRemote()
+    {
+        var handler = new StubHandler(request => request.RequestUri!.AbsolutePath == "/UserViews"
+            ? StubHandler.Json("Error processing request: database is locked " + TestValues.Token, HttpStatusCode.InternalServerError)
+            : StubHandler.StockServer_Respond(request));
+        using var fixture = new RegistryFixture(handler);
+        var server = await fixture.AddServerAsync();
+
+        var result = await ControllerFor(fixture).TestServer(server.Id, CancellationToken.None);
+
+        var body = Assert.IsType<FailureResponse>(Assert.IsType<ObjectResult>(result.Result).Value);
+        Assert.Equal(RemoteFailure.ServerError, body.Failure);
+        Assert.Contains("GET " + TestValues.Url + "/UserViews", body.Detail, StringComparison.Ordinal);
+        Assert.Contains("500", body.Detail, StringComparison.Ordinal);
+        Assert.Contains("database is locked", body.Detail, StringComparison.Ordinal);
+        AssertNoSecret(ToJson(body) + string.Join('\n', fixture.Logger.Lines));
+    }
+
+    [Fact]
+    public async Task ATestWhoseDetectionFailsSaysWhy()
+    {
+        var failing = false;
+        var handler = new StubHandler(request => failing && request.RequestUri!.AbsolutePath.StartsWith("/JellyMesh", StringComparison.Ordinal)
+            ? StubHandler.Json("gateway is down", HttpStatusCode.BadGateway)
+            : StubHandler.StockServer_Respond(request));
+        using var fixture = new RegistryFixture(handler);
+        var server = await fixture.AddServerAsync();
+        failing = true;
+
+        var result = await ControllerFor(fixture).TestServer(server.Id, CancellationToken.None);
+
+        Assert.Equal(RemoteMode.Unknown, result.Value!.Capabilities.Mode);
+        Assert.Contains("gateway is down", result.Value.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AServerThatKeepsFailingStopsFillingTheLog()
+    {
+        var failing = false;
+        var handler = new StubHandler(request => failing ? throw new HttpRequestException("No route") : StubHandler.StockServer_Respond(request));
+        using var fixture = new RegistryFixture(handler);
+        var server = await fixture.AddServerAsync();
+        failing = true;
+
+        for (var call = 0; call < RemoteServerRegistry.MaxDetailsPerMinute + 5; call++)
+        {
+            await fixture.Registry.TestAsync(server.Id, CancellationToken.None);
+        }
+
+        var calls = fixture.Logger.Lines.Where(line => line.Contains("Call to remote server", StringComparison.Ordinal)).ToList();
+        Assert.Equal(RemoteServerRegistry.MaxDetailsPerMinute + 5, calls.Count);
+        Assert.Equal(RemoteServerRegistry.MaxDetailsPerMinute, calls.Count(line => line.Contains("No route", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task AFailedRemovalTellsTheWholeError()
+    {
+        using var fixture = new RegistryFixture(StubHandler.StockServer());
+        var server = await fixture.AddServerAsync();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.RemoveServerAsync(server.Id, It.IsAny<Func<Task<bool>>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk full"));
+        var logger = new CapturingLogger<FederationAdminController>();
+
+        var result = await CreateController(fixture, sync.Object, new InMemoryMergeStore(), logger).RemoveServer(server.Id, CancellationToken.None);
+
+        var body = Assert.IsType<FailureResponse>(Assert.IsType<ObjectResult>(result).Value);
+        Assert.Equal(RemoteFailure.RemovalFailed, body.Failure);
+        Assert.StartsWith("System.IO.IOException: disk full", body.Detail, StringComparison.Ordinal);
+        Assert.Contains("disk full", Assert.Single(logger.Lines), StringComparison.Ordinal);
     }
 
     [Theory]
