@@ -31,7 +31,7 @@ check "one title cannot be merged" 400 "$(post local /JellyMesh/Admin/Merges '{"
 check "the merge is accepted" 204 "$(merge local '^JM Catena')"
 check "the copies of two servers are linked at once, the best as primary" "$due:$uno" "$(group "$uno")"
 applied local
-check "remote keeps one stub, peer its own" "1 1" "$(docker exec "$PREFIX-local" sh -c "find '$(server_folder "$(cat "$WORK/id-remote")")/Film' -name '*.strm' | grep -c 'JM Catena'") $(docker exec "$PREFIX-local" sh -c "find '$(server_folder "$(cat "$WORK/id-peer")")/Film' -name '*.strm' | grep -c 'JM Catena'")"
+check "remote keeps one stub, peer its own" "1 1" "$(docker exec "$PREFIX-local" sh -c "find '$(type_folder "$(cat "$WORK/id-remote")" Film)' -name '*.strm' | grep -c 'JM Catena'") $(docker exec "$PREFIX-local" sh -c "find '$(type_folder "$(cat "$WORK/id-peer")" Film)' -name '*.strm' | grep -c 'JM Catena'")"
 check "the stub of the lowest key stayed, as the same item" "$uno" "$(film_of remote "JM Catena Uno")"
 check "the merged stub is gone" "" "$(film_of remote "JM Catena Tre")"
 check "the stub that stayed has the state of the merged one (decision 2)" '{"Played":true,"PlayCount":1,"Favorite":true}' "$(state "$uno")"
