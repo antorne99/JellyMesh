@@ -8,6 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Moq;
 using Xunit;
@@ -233,6 +234,43 @@ public sealed class PhotoMaterializerTests : IDisposable
 
         Assert.Equal(2, PhotoReads());
         Assert.Equal(ThumbnailOfTheStub(), photo.GetImageInfo(ImageType.Primary, 0)?.Path);
+    }
+
+    // Jellyfin dates again an image whose file changed at any save, and measures only one with no size (seen on 12.4).
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task APhotoEditedOnTheRemoteHasItsImageMeasuredAgain(bool isProtected)
+    {
+        _fixture.Sync.Store.Configuration.MetadataProtection = isProtected;
+        var a = await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+        var photo = new Photo { Id = Guid.NewGuid(), Path = AlbumPath(a, "IMG_0001.jpg"), Name = "IMG_0001" };
+        var thumbnail = ThumbnailOfTheStub();
+        File.SetLastWriteTimeUtc(thumbnail, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        Assert.True(PhotoThumbnails.SetPrimary(photo, thumbnail));
+        photo.GetImageInfo(ImageType.Primary, 0)!.Width = 100;
+        _fixture.Library.Setup(library => library.FindByPath(photo.Path, false)).Returns(photo);
+        _fixture.Library.Setup(library => library.UpdateItemAsync(photo, It.IsAny<BaseItem>(), It.IsAny<ItemUpdateType>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                var image = photo.GetImageInfo(ImageType.Primary, 0)!;
+                image.DateModified = File.GetLastWriteTimeUtc(image.Path);
+                image.Width = image.Width == 0 ? 200 : image.Width;
+            })
+            .Returns(Task.CompletedTask);
+
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with
+        {
+            Width = 3000,
+            Height = 4000,
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" }
+        };
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(3000, photo.Width);
+        Assert.Equal(200, photo.GetImageInfo(ImageType.Primary, 0)!.Width);
+        _fixture.Library.Verify(library => library.UpdateItemAsync(photo, It.IsAny<BaseItem>(), ItemUpdateType.ImageUpdate, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // A thumbnail that could not be read again keeps the old one on disk, and is read at the next run.

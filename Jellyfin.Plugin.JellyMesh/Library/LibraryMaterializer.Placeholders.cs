@@ -33,14 +33,21 @@ public sealed partial class LibraryMaterializer
                 changed = true;
             }
 
-            var applied = false;
-            if ((!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || run.VerifyEveryStub)
+            // A thumbnail read after the scan reaches the photo here, before any save: a save dates the old image again.
+            var isEdited = !string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal);
+            var repointed = entry.Kind == StubKind.Photo
+                && (isEdited || run.VerifyEveryStub || run.Thumbnails.ContainsKey(entry.Id))
+                && existing.Value is Photo photo
+                && PhotoThumbnails.PathOf(run.Root, entry.Id) is { } thumbnail
+                && PhotoThumbnails.SetPrimary(photo, thumbnail);
+
+            if ((isEdited || run.VerifyEveryStub)
                 && existing.Value is { } item
-                && (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || HasLost(item, work.Metadata)))
+                && (isEdited || HasLost(item, work.Metadata)))
             {
                 await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
                 entry = entry with { ContentHash = work.ContentHash };
-                changed = applied = true;
+                changed = true;
             }
 
             if (run.Thumbnails.ContainsKey(entry.Id))
@@ -48,14 +55,9 @@ public sealed partial class LibraryMaterializer
                 entry = entry with { TechnicalTag = work.TechnicalTag };
             }
 
-            // A thumbnail read after the scan reaches the photo here; one read before it, through the providers.
-            if (entry.Kind == StubKind.Photo
-                && (applied || run.VerifyEveryStub || run.Thumbnails.ContainsKey(entry.Id))
-                && existing.Value is Photo photo
-                && PhotoThumbnails.PathOf(run.Root, entry.Id) is { } thumbnail
-                && PhotoThumbnails.SetPrimary(photo, thumbnail))
+            if (repointed)
             {
-                await _updater.SaveAsync(photo, ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
+                await _updater.SaveAsync(existing.Value!, ItemUpdateType.ImageUpdate, cancellationToken).ConfigureAwait(false);
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
