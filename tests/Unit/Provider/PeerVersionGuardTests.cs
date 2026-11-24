@@ -44,7 +44,7 @@ public class PeerVersionGuardTests
 
     public PeerVersionGuardTests()
     {
-        _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer);
+        _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer, _fixture.Database.Object);
         _fixture.Own("play");
         _fixture.AddItem(_version, new Movie { Path = "/media/film/a-2160p.mkv" }, ProviderFixture.SharedLibrary);
     }
