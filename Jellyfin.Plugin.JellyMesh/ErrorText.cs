@@ -45,8 +45,14 @@ public static partial class ErrorText
     /// </summary>
     internal const int MaxLines = 2000;
 
+    // The name of a secret with what stands between it and its value.
+    private const string NamePattern = """(?<name>(?:tokens?|api[_-]?key|(?<![A-Za-z])(?:new|current|old)?pw|pwd|passw(?:or)?d|(?:[?&]|&amp;|%26)sig)(?:\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22)?\]?\s*(?:[:=](?:\s*(?:>|&gt;))?|>|&gt;|%3[AD])\s*)""";
+
     // Cleaned past the cut, so that a secret across it is still whole when it is removed.
     private const int Margin = 8 * 1024;
+
+    // Longest part of a secret that is told by what follows it, such as a password in a URL.
+    private const int LongestPart = 1024;
 
     private const string LineStart = "\n    ";
 
@@ -76,7 +82,7 @@ public static partial class ErrorText
         if (isCut)
         {
             text = text[..(MaxLength + Margin)];
-            dropped = secrets.Select(LongestForm).Append(dropped).Max();
+            dropped = secrets.Select(LongestForm).Append(dropped).Append(LongestPart).Max();
         }
 
         foreach (var form in secrets.SelectMany(FormsOf).Distinct(StringComparer.Ordinal).OrderByDescending(form => form.Length))
@@ -97,6 +103,7 @@ public static partial class ErrorText
         try
         {
             text = NamedSecret().Replace(text, match => match.Groups["name"].Value + Removed);
+            text = NamedObject().Replace(text, match => match.Groups["name"].Value + Removed);
             text = AuthorizationScheme().Replace(text, match => match.Groups["name"].Value + Removed);
             text = UserInfo().Replace(text, "://" + Removed + "@");
         }
@@ -213,14 +220,17 @@ public static partial class ErrorText
     }
 
     [GeneratedRegex(
-        """(?<name>(?:tokens?|api[_-]?key|(?<![A-Za-z])(?:new|current|old)?pw|pwd|passw(?:or)?d|(?:[?&]|&amp;|%26)sig)(?:\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22)?\]?\s*(?:[:=](?:\s*(?:>|&gt;))?|>|&gt;|%3[AD])\s*)(?:(?<quote>\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22).*?(?:(?<!\\)\k<quote>|$)|\[[^\]]*|\{[^}]*|[^\s&,;"'<>}\])]+)""",
+        NamePattern + """(?:(?<quote>\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22).*?(?:(?<!\\)\k<quote>|$)|\[[^\]]*|(?!\{)[^\s&,;"'<>}\])]+)""",
         RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 2000)]
     private static partial Regex NamedSecret();
 
+    [GeneratedRegex(NamePattern + """\{[^}]*""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex NamedObject();
+
     [GeneratedRegex("""(?<name>\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]{8,}""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex AuthorizationScheme();
 
-    [GeneratedRegex(""":(?:\\?/){2}[^/\s"'<>]{1,512}@""", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    [GeneratedRegex(""":(?:\\*/){2}[^/\s"'<>]{1,512}@""", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex UserInfo();
 }

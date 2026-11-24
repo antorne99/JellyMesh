@@ -83,6 +83,9 @@ public class RemoteErrorTests
     [InlineData("&#x22;AccessToken&#x22;:&#x22;" + OtherToken + "&#x22;")]
     [InlineData("{\"tokens\":[\"" + OtherToken + "\"]}")]
     [InlineData("{\"tokens\":{\"a\":\"" + OtherToken + "\"}}")]
+    [InlineData("{\"ChangePassword\":{\"CurrentPw\":\"a}" + OtherToken + "\",\"NewPw\":\"x\"}}")]
+    [InlineData("{&quot;tokens&quot;:{&quot;access_token&quot;:&quot;a}" + OtherToken + "&quot;}}")]
+    [InlineData("http:\\\\/\\\\/a:" + OtherToken + "@host")]
     [InlineData("http:\\/\\/a:" + OtherToken + "@host")]
     [InlineData("pwd=" + OtherToken)]
     [InlineData("{\"NewPw\":\"" + OtherToken + "\"}")]
@@ -193,6 +196,7 @@ public class RemoteErrorTests
     public async Task ALongExceptionMessageIsCutBeforeItsSecretsAreRemoved()
     {
         var message = string.Concat(Enumerable.Repeat(TestValues.Token + " ", 4000)) + "the-very-end";
+        Assert.True(message.Length > 80_000);
         var handler = new StubHandler(_ => throw new HttpRequestException(message));
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
