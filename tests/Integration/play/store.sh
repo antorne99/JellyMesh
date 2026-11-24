@@ -210,7 +210,7 @@ check "the full check does" true "$(integrity | grep -q proof_index && echo true
 run_task JellyMeshReconciliation
 check "the nightly copy rebuilds it" ok "$(integrity)"
 check "with no recovery" "Healthy 2" "$(state) $(set_aside)"
-check "the log says so" true "$(docker logs "$PREFIX-local" 2>&1 | grep -q 'The indexes of jellymesh.db did not match' && echo true || echo false)"
+check "the log says so" true "$(docker logs "$PREFIX-local" 2>&1 | grep -c 'The indexes of jellymesh.db did not match' | jq '. > 0')"
 check "and the copy is kept" 2 "$(in_data "ls $DATA | grep -c '^jellymesh.db.backup-' || true")"
 
 echo "--- more than 3 recoveries in 24 hours"
