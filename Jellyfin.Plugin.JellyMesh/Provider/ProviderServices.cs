@@ -28,7 +28,9 @@ public static class ProviderServices
         services.Configure<MvcOptions>(options =>
         {
             options.Filters.AddService<PeerGuardFilter>();
-            options.Filters.AddService<PeerPlaybackInfoFilter>();
+
+            // Around PlaybackInfoFilter, whose answer it checks.
+            options.Filters.AddService<PeerPlaybackInfoFilter>(-1);
         });
     }
 }
