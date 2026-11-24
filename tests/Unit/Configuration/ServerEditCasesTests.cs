@@ -538,6 +538,8 @@ public sealed partial class ServerEditTests
         Assert.False(Assert.IsType<ServerEditCheck>(result.Value).RemoteOffline);
         Assert.Equal(RemoteFailure.None, result.Value!.RemoteWarning);
         Assert.Equal(RemoteFailure.None, Assert.IsType<ServerStatus>(save.Value).RemoteWarning);
+        Assert.Contains("\"RemoteWarning\":\"None\"", ToJson(result.Value), StringComparison.Ordinal);
+        Assert.Contains("\"RemoteWarning\":\"None\"", ToJson(save.Value), StringComparison.Ordinal);
     }
 
     [Theory]
