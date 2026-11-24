@@ -134,7 +134,7 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready
 login
-req PUT "$SETTINGS" '{"FederatedFolderPath":"/federata","PlaybackIdleSeconds":30}' >/dev/null
+req PUT "$SETTINGS" '{"FederatedFolderPath":"/federata","NewServerLibraryMode":"None","PlaybackIdleSeconds":30}' >/dev/null
 check "plugin loaded" JellyMesh "$(get /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Name')"
 
 echo "--- a remote that behaves, first"
@@ -146,9 +146,9 @@ libraries=$(post "/JellyMesh/Admin/Servers/$server/Edit/Check" "$form" | jq -c '
 req PUT "/JellyMesh/Admin/Servers/$server" "$(jq -c --argjson l "$libraries" '. + $l' <<<"$form")" >/dev/null
 sync_now
 check "sync" null "$(last_failure)"
-# Stubs go to the folder of the server, which an admin adds to the library.
+# Stubs go to the type folder of the remote library, which an admin adds to the library.
 id=${server//-/}
-folder="/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}/Film"
+folder=$(docker exec "$NAME" sh -c "ls -d /federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}/*/Film | head -1")
 post "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg p "$folder" '{Name: "Film", PathInfo: {Path: $p}}')" >/dev/null
 check "the folder of the server is linked" 204 "$(status)"
 scan
@@ -352,7 +352,8 @@ grep -F -e "$FAKE" -e 'host.docker.internal' "$WORK/server.log" | head -5
 DATA=/config/plugins/Jellyfin.Plugin.JellyMesh
 holding() { docker exec "$NAME" sh -c 'd=$1; shift; find "$d" /config/plugins/configurations /federata -type f -exec grep -laF "$@" {} + 2>/dev/null | wc -l' sh "$DATA" "$@" | tr -d ' '; }
 check "the plugin database is there" yes "$(docker exec "$NAME" test -s "$DATA/jellymesh.db" && echo yes || echo no)"
-check "what the plugin keeps holds the address of the server" true "$([ "$(holding -e "$FAKE_URL")" -gt 0 ] && echo true || echo false)"
+check "the plugin database holds the address of the server" true "$([ "$(docker exec "$NAME" sh -c 'cat "$1"/jellymesh.db*' sh "$DATA" | grep -caF "$FAKE_URL")" -gt 0 ] && echo true || echo false)"
+check "the federated folder holds no address of the server" 0 "$(docker exec "$NAME" grep -rlaF "$FAKE_URL" /federata | wc -l | tr -d ' ')"
 check "what the plugin keeps holds no token or password" 0 "$(holding -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD")"
 
 exit "$FAILED"
