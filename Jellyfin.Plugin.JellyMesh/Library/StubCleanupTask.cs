@@ -250,7 +250,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             // It still waits, and the next scan tries again.
-            _logger.LogError("Cannot hand over the watch state of a split title: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot hand over the watch state of a split title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
@@ -331,7 +331,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to merge the stubs: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries to merge the stubs: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }

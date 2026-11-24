@@ -151,7 +151,7 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to link a new local title: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries to link a new local title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }

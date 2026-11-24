@@ -94,8 +94,7 @@ public sealed class WatchStateCleaner
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot clear the watch state of a stub that now covers more episodes: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot clear the watch state of a stub that now covers more episodes: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
