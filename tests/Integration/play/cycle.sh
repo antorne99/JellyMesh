@@ -35,6 +35,7 @@ check "the mode is standard" Standard "$(get peer /JellyMesh/Admin/Status | jq -
 import_all peer "$id"
 sync_now peer
 library peer Film movies "$(type_folder "$id" Film peer)"
+scan peer
 echo "imported: $(titles)"
 check "only the real copies are imported" "$copies" "$(get peer /JellyMesh/Admin/Index/Decisions | jq '.Contents | length')"
 check "no signature of local is kept or logged" 0 "$(leaks)"
@@ -50,6 +51,7 @@ import_all peer "$id"
 sync_now peer
 # A server added back is a new server, in a new folder that the admin adds to the library (decision 408).
 check "the folder of the server joins the library" 204 "$(link_folder peer Film "$(type_folder "$id" Film peer)")"
+scan peer
 echo "imported: $(titles)"
 check "the provider leaves the stubs out" "$in_film" "$(get peer /JellyMesh/Admin/Index/Decisions | jq '.Contents | length')"
 check "no signature of local is kept or logged" 0 "$(leaks)"
