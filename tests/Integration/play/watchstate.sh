@@ -22,11 +22,12 @@ bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
-check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
 import_all local "$id"
 sync_now local
+check "the folder of the server joins the library" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
 scan local
 
 # remote_state: the watch state of every remote user on every film, as one sorted line per user and film.

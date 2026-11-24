@@ -33,7 +33,7 @@ login local
 old_settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
 echo "$id" >"$WORK/id-remote"
-import_all local "$id"
+import_all_old local "$id"
 sync_now local
 scan local
 get local /JellyMesh/Admin/Sync | jq -c '{IsRunning}'

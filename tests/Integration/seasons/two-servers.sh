@@ -33,26 +33,31 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 folders=()
 rm -f "$WORK/folders"
 for s in remote peer; do
   id=$(add_remote local "$s" "http://host.docker.internal:$(port_of "$s")" jellymesh)
   import_all local "$id"
-  echo "$(server_folder "$id")=$s" >>"$WORK/folders"
-  folders+=("$(server_folder "$id")/Serie")
+  echo "$id" >"$WORK/id-$s"
 done
 sync_now local
+for s in remote peer; do
+  folder=$(type_folder "$(cat "$WORK/id-$s")" Serie)
+  echo "$folder=$s" >>"$WORK/folders"
+  folders+=("$folder")
+done
 library local Serie tvshows "${folders[@]}"
 full_scan local
 
-# server_of <path>: the remote whose server folder holds a path.
+# server_of <path>: the remote whose type folder holds a path.
 server_of() { local line; while IFS= read -r line; do case $1 in "${line%%=*}"/*) echo "${line#*=}"; return ;; esac; done <"$WORK/folders"; echo "?"; }
 
 for s in remote peer; do
-  folder=$(grep "=$s\$" "$WORK/folders" | cut -d= -f1)
+  folder=$(type_folder "$(cat "$WORK/id-$s")" Serie)
   check "the season.nfo of $s has its own name" 1 \
-    "$(docker exec "$PREFIX-local" grep -c "<title>Stagione di $s</title>" "$folder/Serie/$SERIES/Season 01/season.nfo" || true)"
+    "$(docker exec "$PREFIX-local" grep -c "<title>Stagione di $s</title>" "$folder/$SERIES/Season 01/season.nfo" || true)"
 done
 
 rows=$(get local '/Items?Recursive=true&IncludeItemTypes=Series&Fields=Path' | jq -c --arg n "${SERIES% (*}" '[.Items[] | select(.Name == $n) | {Id, Path}]')

@@ -62,12 +62,13 @@ up() {
   sleep 3
   wait_ready local
   login local
-  settings local '.FederatedFolderPath = "/federata"' >/dev/null
+  # The admin links the folders by hand, so JellyMesh makes no library for the servers.
+  settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
   local id
   id=$(add_remote local remote "http://host.docker.internal:$((PORT + 1))" jellymesh)
-  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
   import_all local "$id"
   sync_now local
+  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
   scan local
   # The link sometimes needs more than one sync after the scan, so sync until the local copy has two versions.
   local i both_id
@@ -251,10 +252,8 @@ check "and ends it" 204 "$(as both "/Videos/ActiveEncodings?deviceId=jm-play-bot
 
 # Q168, Q169: the group leaves the registry while Jellyfin still links its versions, which only the nightly run detaches
 # (Q144). The admin gives the local copy another title and no ids, so that it no longer matches the stub.
-grouped() { # grouped: how many times the registry names the local copy
-  docker exec "$PREFIX-local" sh -c 'cat "$(find /config -name federated-stubs.json | head -1)"' |
-    grep -ci "$linked_n\|${linked_n:0:8}-${linked_n:8:4}-${linked_n:12:4}-${linked_n:16:4}-${linked_n:20:12}" || true
-}
+# grouped: how many groups of the registry hold the local copy.
+grouped() { db_query local "select count(*) from stub_group_local_items where lower(replace(item_id, '-', '')) = '$(echo "$linked_n" | tr -d - | tr 'A-F' 'a-f')';"; }
 check "before, the registry groups the local copy with the stub" 1 "$([ "$(grouped)" -gt 0 ] && echo 1 || echo 0)"
 get local "/Items/$linked?userId=$(user_id local both)" |
   jq -c '.Name = "JM Sciolto" | .OriginalTitle = "JM Sciolto" | .ProductionYear = 1999 | .PremiereDate = null | .ProviderIds = {}' >"$WORK/dissolved.json"
@@ -335,7 +334,7 @@ check "none of them is the first" 0 "$(grep -c -x "$psid" "$flood" || true)"
 check "after them the first is still out of reach of another user" 404 "$(through_private outsider "$psid")"
 
 # D10: the stub is renamed, so that its item is gone, while its play session is open.
-strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/Film -name '*.strm' | grep -F \"$TITLE\" | head -1")
+strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/*/Film -name '*.strm' | grep -F \"$TITLE\" | head -1")
 folder=$(dirname "$strm")
 keep_job
 docker exec "$PREFIX-local" mv "$folder" "$folder (rinominata)"
@@ -504,7 +503,7 @@ check "and viewer streams it again" 206 "$(on_stub viewer)"
 
 # D10 on linked versions: the linked stub B is renamed while a local play session of viewer is open on it.
 linked_play=$(open_on viewer "$b_n")
-linked_strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/Film -name '*.strm' | grep -F \"${LINKED% (*}\" | head -1")
+linked_strm=$(docker exec "$PREFIX-local" sh -c "find /federata/*/*/Film -name '*.strm' | grep -F \"${LINKED% (*}\" | head -1")
 linked_folder=$(dirname "$linked_strm")
 check "viewer opens the linked stub again" 1 "$([ -n "$linked_play" ] && [ -n "$linked_strm" ] && echo 1 || echo 0)"
 docker exec "$PREFIX-local" mv "$linked_folder" "$linked_folder (rinominata)"

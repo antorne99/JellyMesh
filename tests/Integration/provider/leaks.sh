@@ -29,6 +29,11 @@ clean "PlaybackInfo answers" "$WORK"/open-*
 clean "refusal messages" "$WORK"/ws-*
 clean "playlists" "$WORK"/seen-*
 
+# Everything the plugin keeps on disk, the database and its journal included. holding lists the files of a server that have
+# one of the strings of stdin.
+DATA=/config/plugins/Jellyfin.Plugin.JellyMesh
+holding() { docker exec -i "$(container_of "$1")" sh -c 'grep -rlaFf - "$1" /config/plugins/configurations 2>/dev/null' sh "$DATA"; }
+
 mario=$(curl -sS -X POST -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"leaks\", DeviceId=\"$PREFIX-leaks\", Version=\"0.1\"" \
   -H 'Content-Type: application/json' -d '{"Username":"mario","Pw":"jellymesh-test"}' "http://127.0.0.1:$PORT_B/Users/AuthenticateByName" | jq -r .AccessToken)
 as_client() { curl -sS -H "$ACCEPT" -H "Authorization: MediaBrowser Client=\"JellyMeshProv\", Device=\"leaks\", DeviceId=\"$PREFIX-leaks\", Version=\"0.1\", Token=\"$mario\"" "http://127.0.0.1:$PORT_B$1"; }
@@ -46,7 +51,6 @@ for s in a b; do
   docker logs "$name" >"$LOOK/$s-stdout" 2>&1
   docker exec "$name" sh -c 'cat /config/log/* 2>/dev/null' >"$LOOK/$s-log-files"
   docker exec "$name" sh -c 'find /federata -type f \( -name "*.strm" -o -name "*.nfo" \) -exec cat {} +' >"$LOOK/$s-federata"
-  docker exec "$name" sh -c 'cat /config/plugins/configurations/*JellyMesh*.xml 2>/dev/null' >"$LOOK/$s-config"
   # The tokens of the other servers. Its own are not remote here: stock logs one it issued when a login replaces it.
   find "$WORK" -maxdepth 1 -name 'gate-*.tokens' ! -name "gate-$s.tokens" -exec cat {} + | sort -u >"$LOOK.$s.tokens"
   TOKENS=$LOOK.$s.tokens
@@ -55,7 +59,10 @@ for s in a b; do
   check "the log files of $s were kept" true "$([ -s "$LOOK/$s-log-files" ] && echo true || echo false)"
   no_token "the log files of $s" "$LOOK/$s-log-files"
   clean "the .strm and .nfo of $s" "$LOOK/$s-federata"
-  no_token "the plugin configuration of $s" "$LOOK/$s-config"
+  check "there are tokens of the other servers to look for on $s" true "$([ -s "$TOKENS" ] && echo true || echo false)"
+  [ "$s" = a ] && gate=$GATE_B || gate=$GATE_A
+  check "the plugin database of $s was read: it holds the address of its remote" true "$([ "$(holding "$s" <<<"$HOST_GATE:$gate" | grep -c "^$DATA/jellymesh\.db")" -gt 0 ] && echo true || echo false)"
+  check "no remote token in what the plugin of $s keeps" 0 "$(holding "$s" <"$TOKENS" | wc -l | tr -d ' ')"
   TOKENS=
 done
 

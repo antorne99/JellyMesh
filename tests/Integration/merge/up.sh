@@ -45,7 +45,8 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 scan local
 for s in remote peer; do
   id=$(add_remote local "$s" "http://host.docker.internal:$(port_of "$s")" jellymesh)
@@ -54,7 +55,7 @@ for s in remote peer; do
 done
 sync_now local
 for s in remote peer; do
-  check "the Film folder of $s is linked" 204 "$(link_folder local Film "$(server_folder "$(cat "$WORK/id-$s")")/Film")"
+  check "the Film folder of $s is linked" 204 "$(link_folder local Film "$(type_folder "$(cat "$WORK/id-$s")" Film)")"
 done
 scan local
 sync_now local

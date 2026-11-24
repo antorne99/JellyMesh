@@ -43,8 +43,9 @@ check "the grouping option is on" true "$(get remote /System/Configuration | jq 
 box=$(post remote "/Collections?name=JM%20Saga&ids=$a,$b" | jq -r '.Id // ""')
 check "the collection is created" 200 "$(status)"
 check "the collection has an id" true "$([ -n "$box" ] && echo true || echo false)"
-sleep 3
-check "the collection holds both films" 2 "$(get remote "/Items?ParentId=$box" | jq '.Items | length')"
+held() { get remote "/Items?ParentId=$box" | jq '.Items | length'; }
+for _ in $(seq 30); do [ "$(held)" = 2 ] && break; sleep 1; done
+check "the collection holds both films" 2 "$(held)"
 
 # The sync query of JellyfinRemoteClient.ItemsPath, as the dedicated user, with and without the parameter.
 rjm_id=$(get rjm /Users/Me | jq -r .Id)
@@ -74,18 +75,19 @@ bash "$WT/tests/Integration/scripts/install-plugin.sh" "$PREFIX-local"
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
-library local Film movies "$(server_folder "$id")/Film"
 import_all local "$id"
 sync_now local
+library local Film movies "$(type_folder "$id" Film)"
 scan local
 
 for title in "$FILM_A" "$FILM_B"; do
   check "$title has a stub" true "$([ -n "$(strm_file local "$title")" ] && echo true || echo false)"
   check "$title is in the consumer library" true "$([ -n "$(stub_item local "$title")" ] && echo true || echo false)"
 done
-stubs=$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Film -name "*.strm" | wc -l' | tr -d ' ')
+stubs=$(docker exec "$PREFIX-local" sh -c 'find /federata/*/*/Film -name "*.strm" | wc -l' | tr -d ' ')
 echo "stubs: $stubs, films the remote answers uncollapsed: $remote_films"
 check "the consumer has a stub for every film of the remote" true "$([ "$stubs" -ge "$remote_films" ] && echo true || echo false)"
 check "no stub stands for the collection" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata -name "*.strm" | grep -c "JM Saga" || true')"
