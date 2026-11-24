@@ -10,8 +10,8 @@
 # leaves it running. The other services of the stack are never touched. Needs Docker, curl, jq, unzip, and zip, md5sum
 # and sha256sum to build the zip. The build and the DLL check run in the jellymesh-sdk container (see CLAUDE.md).
 #
-# STORE_FILE and SEED_STORE name the plugin's store and say whether to seed it. 0.5 opens watch-state.db only when the
-# file exists, so an empty one is seeded; a release that makes its own database at start sets SEED_STORE=0.
+# STORE_FILE and SEED_STORE name the plugin's store and say whether to seed it. From 0.6 the plugin makes jellymesh.db
+# at start; for 0.5, which opens watch-state.db only when the file exists, set STORE_FILE=watch-state.db SEED_STORE=1.
 
 set -uo pipefail
 
@@ -27,8 +27,8 @@ volumes=("${project}_$service-config" "${project}_$service-cache")
 port=${RELEASE_PORT:-8099}
 sdk=${SDK_CONTAINER:-jellymesh-sdk}
 expected_sqlite=${EXPECTED_SQLITE:-10.0.11.0}
-store_file=${STORE_FILE:-watch-state.db}
-seed_store=${SEED_STORE:-1}
+store_file=${STORE_FILE:-jellymesh.db}
+seed_store=${SEED_STORE:-0}
 startup_timeout=${STARTUP_TIMEOUT:-180}
 store_timeout=${STORE_TIMEOUT:-120}
 data_folder=/config/plugins/Jellyfin.Plugin.JellyMesh

@@ -1,25 +1,38 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.5.0.3"
+version: "0.6.0.0"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
 description: >
   JellyMesh shows films and series from other Jellyfin servers in your
-  libraries and streams them through the local server. Each server gets its
-  own folders, which you add to your libraries or let JellyMesh turn into a
-  library per server. A title shows once, with the copies of every server as
-  versions: a local copy starts first, otherwise the best quality does.
-  Remote servers can be stock Jellyfin or run JellyMesh, which adds shared
-  libraries, stream limits and a change feed between servers you trust. An
-  admin can merge films and series that can't be matched safely.
+  libraries and streams them through the local server. Each library you
+  import from a server gets its own folder, and JellyMesh makes a library per
+  type or per remote library for it, or leaves the folders for you to add. A
+  title shows once, with the copies of every server as versions: a local copy
+  starts first, otherwise the best quality does. Remote servers can be stock
+  Jellyfin or run JellyMesh, which adds shared libraries, stream limits and a
+  change feed between servers you trust. An admin can merge films and series
+  that can't be matched safely. Settings and state live in one database with
+  a nightly copy.
 category: "General"
 owner: "antorne99"
 image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - Downloading a film or an episode from another server now saves it under the title's own name with the extension of the video, such as .mkv, instead of a name with no extension.
+  - JellyMesh keeps its settings and state in one database file, jellymesh.db, in its data folder; at the first start the data of 0.5 or 0.4 moves into it, saved logins included, and the old files are kept in the folder migrated-0.5 for 30 days.
+  - Each night JellyMesh copies its database and keeps the last 2 copies; a damaged database starts again from the last copy, and the plugin page shows the date of that copy.
+  - A database written by a newer JellyMesh, or one that cannot be opened, is left as it is: sync and remote playback stop, and the plugin page says why and offers Try again.
+  - The settings are saved only through the plugin page, and Jellyfin no longer writes a configuration file for JellyMesh.
+  - Each server has one Edit form for its name, URL, login, libraries and library mode, which checks the server and lists what the change does before saving.
+  - Each library imported from a server gets its own folder; after the upgrade a banner moves your libraries to the new folders, automatically or by hand, and a choice made in 0.5 is kept.
+  - Each server has a library mode: one library per type, one library per remote library, or none; servers with automatic libraries in 0.5 keep them, by type.
+  - JellyMesh adopts a library you made that has exactly the folders and type it would give one, instead of making a second library.
+  - A new option makes one library per type with the folders of every server.
+  - A library that disappears from a server that answers is no longer imported after two syncs, and the plugin page says so.
+  - A server you share libraries with now gets only the versions of a title it may see: no longer the copies your server reads from other servers, nor those in libraries you don't share with it. It also can't play them by asking for them.
+  - The servers connected to yours drop the versions they no longer get at their next full sync, which runs every night. Update the servers that share libraries; the others need no change.
 
-  Not verified: the file name in the Jellyfin apps, checked only in the server's answer and in unit tests.
+  Not verified: Jellyfin 12.2 and 12.3, installs outside Docker such as Windows and macOS, going back to 0.5 by hand after the folder migration, the versions a connected server gets on Jellyfin 12.1, 12.2 and 12.3, and their drop in an incremental sync.

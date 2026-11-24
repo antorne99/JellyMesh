@@ -179,7 +179,7 @@ bash playback/direct1.sh          # the direct-play fixture, then direct3.sh
 bash playback/final.sh            # the whole proof in order, then final2.sh, final3.sh and final4.sh
 ```
 
-`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`.
+`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
 
 ### `provider/`
 
@@ -261,6 +261,12 @@ MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash
 MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-store] [PORT=18530] bash play/store.sh
 ```
 
+`data-migration.sh` proves integration test 2 of the 0.6 spec: the data of 0.5 and of 0.4 moves into the plugin database. For each tag in `CASES` (default `v0.5.0.2 v0.4.3.0`) it builds that release in `jellymesh-sdk` from `git archive`, sets a consumer up on it with two servers with saved passwords, a connected JellyMesh server, a manual merge and a changed setting, and on 0.5 the watch state kept from a removed server. After installing this build it checks the database is healthy, the same servers, connected server, merge, setting and folder are there, a sync logs in with the saved passwords, the XML and the old files are in `migrated-0.5`, owner-only, for 30 days, the passwords are stored encrypted, and on 0.5 the kept watch state comes back when the removed server is added again. The 0.5 case then goes back to 0.5 by hand, as the main README describes, and checks the same servers, connected server, merge and setting, and a sync that logs in with the saved passwords. It makes `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` and `$PREFIX-gone` (default `jm-data-migration`, on `PORT` and the next three, default 18540) and removes them at the end unless `KEEP=1`.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-data-migration] [PORT=18540] [CASES="v0.5.0.2 v0.4.3.0"] bash play/data-migration.sh
+```
+
 ### `merge/`
 
 Proves manual merges on the per-server layout (decision 20, Q23), on two stock remotes and a consumer whose Film library holds both server folders. Copies of one server keep one stub, which takes the state of the other; copies of two servers and a local copy become versions, linked as soon as the merge is saved; a new stub is linked by the scan that makes its item (Q145). The containers are `$PREFIX-local`, `$PREFIX-remote` and `$PREFIX-peer` (default `jm-merge`, on `PORT` and the next two, default 18441). Checks marked `PENDING (row 144)` wait for the thorough detach that dissolves a group after an undo.
@@ -334,7 +340,7 @@ It runs every check and exits 1 if any fails, with the reason and, when the serv
 
 The server is the `release-12-1` service of `docker-compose.yml`, on port 8099 (`RELEASE_PORT`). Its `release` profile keeps it out of `docker compose up`. The script creates it with fresh `jellymesh-test_release-12-1-*` volumes, puts the plugin in `/config/plugins` before the first start, and removes the container and volumes at the end (`KEEP=1` leaves it running). It touches no other service of the stack. The service sets `JELLYMESH_FEDERATED_ROOT` to a tmpfs, because the first sync and the post-scan task do nothing without a federated folder.
 
-0.5 opens `watch-state.db` only when the file exists, so the script seeds an empty one in the plugin's data folder and checks SQLite wrote its schema there. With 0.5.0.2 that happens in the first sync after the start, so no scan is needed. When a release makes its own database at start, as `jellymesh.db` in 0.6, set `STORE_FILE` and `SEED_STORE=0`, or change their defaults in the script.
+From 0.6 the plugin makes `jellymesh.db` at start, and the script checks it opens there, with no seeding (`STORE_FILE=jellymesh.db`, `SEED_STORE=0`, the defaults). 0.5 opens `watch-state.db` only when the file exists: for a 0.5 zip set `STORE_FILE=watch-state.db SEED_STORE=1`, so the script seeds an empty one in the plugin's data folder and checks SQLite wrote its schema there. With 0.5.0.2 that happens in the first sync after the start, so no scan is needed.
 
 The zip of v0.5.0.1, built from its tag, fails: it asks for `Microsoft.Data.Sqlite` 10.0.14.0, and Jellyfin 12.1 stops at start with `FileNotFoundException` for that assembly, so the plugin and its store are not checked. The 0.5.0.2 zip with `targetAbi` 99.0.0.0 fails the plugin check (`Skipping disabled plugin`) and the store check. With `STORE_FILE=jellymesh.db SEED_STORE=0` the 0.5.0.2 zip fails the store check, as it should.
 
