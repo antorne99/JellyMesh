@@ -105,11 +105,13 @@ public sealed class WatchStateCleaner
     {
         foreach (var user in users)
         {
-            if (_userData.GetUserData(user, item) is not { } data || IsEmpty(data) || data.LastPlayedDate > until)
+            if (_userData.GetUserData(user, item) is not { } row || IsEmpty(row) || row.LastPlayedDate > until)
             {
                 continue;
             }
 
+            // A copy: a save that fails must not leave the row looking cleared.
+            var data = WatchStateTransfer.Copy(row);
             data.Played = false;
             data.PlayCount = 0;
             data.PlaybackPositionTicks = 0;

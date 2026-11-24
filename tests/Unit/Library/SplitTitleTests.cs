@@ -674,6 +674,24 @@ public sealed class SplitTitleTests : IDisposable
         AssertEmpty(Row(_anna, PathOf(stub)));
     }
 
+    // Jellyfin may give the row it keeps: a row not saved must not look cleared.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesIsClearedAgainAfterAFailedSave()
+    {
+        var stub = await AddSingleAsync(1);
+        var row = Full();
+        _fixture.UserData.Setup(data => data.GetUserData(_anna, It.IsAny<BaseItem>())).Returns(row);
+        _fixture.UserData
+            .Setup(data => data.SaveUserData(_anna, It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
+            .Throws(new TimeoutException());
+        Widen();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        AssertFull(row);
+        Assert.NotNull(StubOf(1, 2).StateOfOneUntil);
+    }
+
     [Fact]
     public async Task AStatePlayedSinceAStubTookTwoEpisodesStays()
     {
