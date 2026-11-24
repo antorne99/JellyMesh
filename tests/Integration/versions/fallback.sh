@@ -36,9 +36,9 @@ leaks() { # leaks <user> <response>: what of a remote it carries, an address or 
 strm() { docker exec "$PREFIX-local" curl -s -o /dev/null -m 60 -w '%{http_code}' -H 'Range: bytes=0-99' "$1"; }
 
 echo "--- setup: the folder of peer in the library Film Peer, a user who sees only remote and one who sees both"
-folder_b=$(server_folder "$B")
-check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$folder_b/Film")"
-post local "/Library/VirtualFolders?name=Film%20Peer&collectionType=movies&refreshLibrary=false&paths=$folder_b/Film" \
+film_b=$(type_folder "$B" Film)
+check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$film_b")"
+post local "/Library/VirtualFolders?name=Film%20Peer&collectionType=movies&refreshLibrary=false&paths=$film_b" \
   '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
 scan local
 sync_now local
@@ -52,7 +52,7 @@ for i in $(seq 1 10); do
   sync_now local
 done
 check "the stubs are linked as versions" "$sb" "$(primary_of "$sa")"
-url_a=$(strm_text local "$RES" "$(server_folder "$A")/Film")
+url_a=$(strm_text local "$RES" "$(type_folder "$A" Film)")
 check "the .strm of remote opens with remote up" 206 "$(strm "$url_a")"
 
 r=$(as_user uno POST "/Items/$(dashed "$sa")/PlaybackInfo" "$DIRECT")
