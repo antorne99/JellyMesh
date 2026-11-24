@@ -324,6 +324,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             _feedCursors.TryRemove(serverId, out _);
         }
 
+        foreach (var serverId in _failureDetails.Keys.Where(serverId => !configured.Contains(serverId)))
+        {
+            _failureDetails.TryRemove(serverId, out _);
+        }
+
         await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
     }
 
@@ -453,6 +458,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
                 ? server
                 : await _registry.RefreshCapabilitiesAsync(server.Id, limit.Token).ConfigureAwait(false) ?? server;
             await syncServer(current, limit.Token).ConfigureAwait(false);
+            if (_index.Snapshot.Find(server.Id)?.LastFailure is null)
+            {
+                _failureDetails.TryRemove(server.Id, out _);
+            }
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
