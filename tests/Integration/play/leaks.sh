@@ -8,7 +8,8 @@ rm -rf "$scan"
 mkdir -p "$scan/remote-db" "$scan/plugin-db" "$scan/logs" "$scan/strm"
 docker cp "$PREFIX-remote:/config/data/jellyfin.db" "$scan/remote-db/"
 docker cp "$PREFIX-remote:/config/data/jellyfin.db-wal" "$scan/remote-db/" 2>/dev/null || true
-for f in jellymesh.db jellymesh.db-wal; do docker cp "$PREFIX-local:$DATA/$f" "$scan/plugin-db/" 2>/dev/null || true; done
+docker cp "$PREFIX-local:$DATA/jellymesh.db" "$scan/plugin-db/"
+docker cp "$PREFIX-local:$DATA/jellymesh.db-wal" "$scan/plugin-db/" 2>/dev/null || true
 docker cp "$PREFIX-local:/config/log" "$scan/logs/"
 docker logs "$PREFIX-local" >"$scan/logs/stdout.log" 2>&1
 docker exec "$PREFIX-local" sh -c "find /federata -name '*.strm' -exec cat {} + ; echo" >"$scan/strm/all.txt"
