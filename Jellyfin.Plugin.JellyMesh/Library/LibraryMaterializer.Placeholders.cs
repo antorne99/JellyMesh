@@ -35,11 +35,12 @@ public sealed partial class LibraryMaterializer
 
             // A thumbnail read after the scan reaches the photo here, before any save: a save dates the old image again.
             var isEdited = !string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal);
+            var isRead = run.Thumbnails.ContainsKey(entry.Id);
             var repointed = entry.Kind == StubKind.Photo
-                && (isEdited || run.VerifyEveryStub || run.Thumbnails.ContainsKey(entry.Id))
+                && (isEdited || run.VerifyEveryStub || isRead)
                 && existing.Value is Photo photo
                 && PhotoThumbnails.PathOf(run.Root, entry.Id) is { } thumbnail
-                && PhotoThumbnails.SetPrimary(photo, thumbnail);
+                && PhotoThumbnails.SetPrimary(photo, thumbnail, isRead);
 
             if ((isEdited || run.VerifyEveryStub)
                 && existing.Value is { } item
@@ -50,7 +51,7 @@ public sealed partial class LibraryMaterializer
                 changed = true;
             }
 
-            if (run.Thumbnails.ContainsKey(entry.Id))
+            if (isRead)
             {
                 entry = entry with { TechnicalTag = work.TechnicalTag };
             }

@@ -46,8 +46,9 @@ public static class PhotoThumbnails
     /// </summary>
     /// <param name="photo">The photo.</param>
     /// <param name="path">The thumbnail.</param>
+    /// <param name="isRead">Whether the thumbnail was just read, so that a Primary that looks the same is replaced too.</param>
     /// <returns>Whether the Primary changed; false when the thumbnail is not on disk.</returns>
-    public static bool SetPrimary(BaseItem photo, string path)
+    public static bool SetPrimary(BaseItem photo, string path, bool isRead = false)
     {
         ArgumentNullException.ThrowIfNull(photo);
 
@@ -58,7 +59,7 @@ public static class PhotoThumbnails
 
         var modified = File.GetLastWriteTimeUtc(path);
         var current = photo.GetImageInfo(ImageType.Primary, 0);
-        if (current is not null && string.Equals(current.Path, path, StringComparison.Ordinal) && current.DateModified == modified)
+        if (!isRead && current is not null && string.Equals(current.Path, path, StringComparison.Ordinal) && current.DateModified == modified)
         {
             return false;
         }

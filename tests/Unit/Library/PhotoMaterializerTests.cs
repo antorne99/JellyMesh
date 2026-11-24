@@ -273,6 +273,28 @@ public sealed class PhotoMaterializerTests : IDisposable
         _fixture.Library.Verify(library => library.UpdateItemAsync(photo, It.IsAny<BaseItem>(), ItemUpdateType.ImageUpdate, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // Another save of the photo, such as an edit of the admin, can date the old image before the new one is set.
+    [Fact]
+    public async Task APhotoSavedBeforeItsNewThumbnailIsSetHasItsImageMeasuredAgain()
+    {
+        var a = await AddPhotosAsync();
+        await _fixture.SyncAndMaterializeAsync();
+        var photo = new Photo { Id = Guid.NewGuid(), Path = AlbumPath(a, "IMG_0001.jpg"), Name = "IMG_0001" };
+        Assert.True(PhotoThumbnails.SetPrimary(photo, ThumbnailOfTheStub()));
+        photo.GetImageInfo(ImageType.Primary, 0)!.Width = 100;
+        _fixture.Library.Setup(library => library.FindByPath(photo.Path, false))
+            .Callback(() => photo.GetImageInfo(ImageType.Primary, 0)!.DateModified = File.GetLastWriteTimeUtc(ThumbnailOfTheStub()))
+            .Returns(photo);
+
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo() with
+        {
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" }
+        };
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(0, photo.GetImageInfo(ImageType.Primary, 0)!.Width);
+    }
+
     // A thumbnail that could not be read again keeps the old one on disk, and is read at the next run.
     [Theory]
     [InlineData(false)]
