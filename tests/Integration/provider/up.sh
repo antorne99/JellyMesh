@@ -12,8 +12,9 @@ start b remoto-jellymesh
 install_plugin a
 install_plugin b
 
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
 for s in a b; do
-  req "$s" PUT /JellyMesh/Admin/Settings '{"FederatedFolderPath":"/federata"}' >/dev/null
+  req "$s" PUT /JellyMesh/Admin/Settings '{"FederatedFolderPath":"/federata","NewServerLibraryMode":"None"}' >/dev/null
 done
 
 get a /Plugins | jq -c '.[] | select(.Name == "JellyMesh") | {Name, Version, Status}'
