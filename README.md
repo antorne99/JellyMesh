@@ -257,6 +257,15 @@ For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension o
 - **Libraries with photos turned off:** the libraries JellyMesh makes for `Video domestici` have photos on. In a library you made, federated photos don't show while its photos option is off.
 - **HEIC photos** are not imported, because Jellyfin 12.4 does not list them as photos.
 
+### Download permission
+
+**On your server** JellyMesh follows Jellyfin. On a federated title `Download` needs the user's download permission, and answers HTTP 403 without it. `File` needs a signed-in user who can see the title, and no download permission. Neither answers for a title the user can't see.
+
+- Music apps that stream the file of a track, as Finamp does by default, need no download permission to play federated music.
+- The book readers of jellyfin-web open a book through `Download`, so reading one there needs the permission.
+
+**On the remote** the dedicated user needs no download permission: JellyMesh never calls `Download` there.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.
