@@ -348,6 +348,11 @@ for secret in "$REMOTE_TOKEN" "$REMOTE_PASSWORD" "$KEY" 'host.docker.internal' "
   check "the log holds no '$secret'" 0 "$(grep -c -F "$secret" "$WORK/server.log")"
 done
 grep -F -e "$FAKE" -e 'host.docker.internal' "$WORK/server.log" | head -5
-check "plugin configuration holds no token or password" 0 "$(docker exec "$NAME" sh -c 'cat /config/plugins/configurations/*JellyMesh*.xml' | grep -c -F -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD")"
+# Everything the plugin keeps on disk, the database and its journal included. The first two checks show that it is read.
+DATA=/config/plugins/Jellyfin.Plugin.JellyMesh
+holding() { docker exec "$NAME" sh -c 'd=$1; shift; find "$d" /config/plugins/configurations /federata -type f -exec grep -laF "$@" {} + 2>/dev/null | wc -l' sh "$DATA" "$@" | tr -d ' '; }
+check "the plugin database is there" yes "$(docker exec "$NAME" test -s "$DATA/jellymesh.db" && echo yes || echo no)"
+check "what the plugin keeps holds the address of the server" true "$([ "$(holding -e "$FAKE_URL")" -gt 0 ] && echo true || echo false)"
+check "what the plugin keeps holds no token or password" 0 "$(holding -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD")"
 
 exit "$FAILED"
