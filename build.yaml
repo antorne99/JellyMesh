@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.5.0.4"
+version: "0.5.0.5"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -20,7 +20,7 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - A server you share libraries with now gets only the versions of a title it may see: no longer the copies your server reads from other servers, nor those in libraries you don't share with it. It also can't play them by asking for them.
-  - The servers connected to yours drop the versions they no longer get at their next full sync, which runs every night. Update the servers that share libraries; the others need no change.
+  - The JellyMesh page shows the whole error of a server that can't be reached or used: the call, the status, what the server answered, and the exception with its stack trace. You can copy it from the message, from the server's card and from each part of the page that can't be read.
+  - Every JellyMesh error in the server log is whole too, with the address of the remote server. Tokens and passwords are always left out.
 
-  Not verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only, and the drop of those versions in an incremental sync.
+  Not verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only.
