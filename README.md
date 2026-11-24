@@ -212,13 +212,13 @@ JellyMesh imports these kinds of library from other servers. Each imported libra
 | Music | `Musica` | Music | Tracks |
 | Music videos | `Video musicali` | Music videos | Music videos |
 | Home videos | `Video domestici` | Home videos and photos | Videos and their folders |
-| Books | `Libri` | Books | Ebooks, PDFs and comics |
+| Books | `Libri` | Books | Ebooks, PDFs, comics and audiobooks |
 | No type (mixed) | `Film` and `Serie` | Movies for `Film` and Shows for `Serie`, or no type for both | Films and series only; anything else in it is left out |
 
 - Playlists and channels are not imported.
-- Between JellyMesh servers, libraries of films, series, music, music videos, home videos, ebooks and comics, and libraries with no type, can be shared.
+- Between JellyMesh servers, libraries of films, series, music, music videos, home videos, ebooks, comics and audiobooks, and libraries with no type, can be shared.
 - Films, series and music videos are matched across servers and shown once. The rest is never merged with a copy on another server or with a local one.
-- Metadata protection covers every type. JellyMesh writes no `.nfo` for tracks and books: it writes their metadata in Jellyfin itself, and locks the whole item when protection is on.
+- Metadata protection covers every type. JellyMesh writes no `.nfo` for tracks, books and audiobooks: it writes their metadata in Jellyfin itself, and locks the whole item when protection is on.
 
 ### Music videos and home videos
 
@@ -239,6 +239,12 @@ Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its num
 For each book JellyMesh writes a cover and a placeholder with the extension of the remote file, which holds nothing of the book. The formats are EPUB, PDF, CBZ, CBR, CB7, CBT, MOBI, AZW and AZW3; books in any other format are not imported. The placeholders of EPUB, PDF and CBZ are minimal valid files, tried on Jellyfin 12.4; those of the other formats are empty and have not been tried.
 
 Opening or downloading the book reads the file from the remote. If the remote is offline, the book stays in the library, and opening it fails with HTTP 503 and the text "File non disponibile: il server di origine non è raggiungibile. Riprova più tardi.", in Italian only.
+
+### Audiobooks
+
+Each audio file of an audiobook on the remote is one item, in `Libri/<author>/<book>/`, with its own cover and chapters, so an audiobook in several files shows as several items. It plays as a track does.
+
+A plain library scan does not put back a field you change by hand on an audiobook. A metadata refresh of the item does, and so does a change on the remote.
 
 ## Versions
 
