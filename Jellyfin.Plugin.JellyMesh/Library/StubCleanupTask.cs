@@ -46,6 +46,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly ILayoutMigration? _migration;
     private readonly IServerStubRenamer? _renames;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly WatchStateCleaner? _cleaner;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubCleanupTask"/> class.
@@ -66,6 +67,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="migration">The manual migration from the flat layout, if any.</param>
     /// <param name="renames">The stub moves of renamed servers, if any.</param>
     /// <param name="keeper">What puts back the watch state of removed servers (row 412).</param>
+    /// <param name="cleaner">What clears the watch state of the stubs that took more episodes (row 543).</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -82,7 +84,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         IVersionLinker? linker = null,
         ILayoutMigration? migration = null,
         IServerStubRenamer? renames = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        WatchStateCleaner? cleaner = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -100,6 +103,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         _migration = migration;
         _renames = renames;
         _keeper = keeper;
+        _cleaner = cleaner;
     }
 
     /// <inheritdoc />
@@ -116,7 +120,9 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await MergeStubsAsync(root, HandOverSplits(root, _registry.State, cancellationToken), cancellationToken).ConfigureAwait(false);
+            var state = HandOverSplits(root, _registry.State, cancellationToken);
+            state = _cleaner?.Clear(root, state, cancellationToken) ?? state;
+            state = await MergeStubsAsync(root, state, cancellationToken).ConfigureAwait(false);
             state = RefreshNewSeries(root, state);
             if (!ReferenceEquals(state, _registry.State))
             {
@@ -289,7 +295,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             var into = merge.Select(entry => entry.Into).ToList();
             try
             {
-                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsWaitedFor(waits, state, merged, into))
+                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsToClear(merged, into) && !IsWaitedFor(waits, state, merged, into))
                 {
                     state = await MergeAsync(root, state, merged, into, users, cancellationToken).ConfigureAwait(false);
                 }
@@ -340,6 +346,9 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     // The state of one episode is not given to a stub of several (§10 row 543).
     private static bool TakesState(StubEntry merged, StubEntry into) =>
         merged.Kind != StubKind.Episode || merged.EpisodeNumberEnd is not null || into.EpisodeNumberEnd is null;
+
+    // Whether the state of a stub is still to clear: a merge would give it away, or clear with it what it takes.
+    private static bool IsToClear(StubEntry merged, List<StubEntry> into) => into.Append(merged).Any(stub => stub.HoldsStateOfOne);
 
     private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, List<StubEntry> into, List<User> users, CancellationToken cancellationToken)
     {

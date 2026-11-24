@@ -349,7 +349,7 @@ public static class StubPlanner
             return [];
         }
 
-        var existing = input.State.Stubs.Where(stub => IsCurrent(stub.RelativePath)).Select(Copies).ToList();
+        var existing = input.State.Stubs.Where(stub => !stub.HoldsStateOfOne && IsCurrent(stub.RelativePath)).Select(Copies).ToList();
         var splits = input.State.Splits
             .Concat(SharedCopies(added, existing.Where(entry => added.Count > 0), (entry, other) => other.Slot != entry.Slot))
             .Concat(SharedCopies(
@@ -684,6 +684,7 @@ public static class StubPlanner
             EpisodeNumber = number,
             EpisodeNumberEnd = last,
             PartCopies = serverId is null || last is null ? [] : PartCopiesOf(content),
+            HoldsStateOfOne = last is not null && stub is not null && (stub.HoldsStateOfOne || stub.EpisodeNumberEnd is null),
 
             // New numbers reach an existing item with the technical data, because its .nfo is not read again.
             TechnicalTag = (stub?.SeasonNumber, stub?.EpisodeNumber, stub?.EpisodeNumberEnd) == (season, number, last) ? stub!.TechnicalTag : null

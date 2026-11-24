@@ -118,8 +118,8 @@ internal static class StubTables
         """);
 
     /// <summary>
-    /// Creates the tables of the splits that wait for their watch state and of the copies of some episodes of a stub, inside
-    /// the transaction of a schema step.
+    /// Creates the tables of the splits that wait for their watch state and of the copies of some episodes of a stub, and the
+    /// mark of the stubs whose watch state is of one episode, inside the transaction of a schema step.
     /// </summary>
     /// <param name="connection">The connection that writes.</param>
     /// <param name="transaction">The transaction of the schema step.</param>
@@ -132,6 +132,7 @@ internal static class StubTables
             stub_id TEXT NOT NULL,
             from_stub_id TEXT NOT NULL
         );
+        ALTER TABLE stub_entries ADD COLUMN holds_state_of_one INTEGER NOT NULL DEFAULT 0;
         CREATE TABLE stub_entry_part_copies (
             stub_id TEXT NOT NULL,
             position INTEGER NOT NULL,
@@ -158,7 +159,7 @@ internal static class StubTables
             transaction,
             """
             SELECT id, server_id, kind, relative_path, identity_key, series_stub_id, season_number, episode_number,
-                episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks
+                episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks, holds_state_of_one
             FROM stub_entries ORDER BY ordinal;
             """))
         using (var reader = command.ExecuteReader())
@@ -182,6 +183,7 @@ internal static class StubTables
                     TechnicalTag = reader.GetTextOrNull(11),
                     UrlTag = reader.GetTextOrNull(12),
                     StrmWrittenUtc = reader.IsDBNull(13) ? null : new DateTime(reader.GetInt64(13), DateTimeKind.Utc),
+                    HoldsStateOfOne = reader.GetBoolean(14),
                     Sources = entrySources.GetValueOrDefault(id) ?? [],
                     PartCopies = partCopies.GetValueOrDefault(id) ?? []
                 });
@@ -402,15 +404,17 @@ internal static class StubTables
             transaction,
             """
             INSERT INTO stub_entries (id, ordinal, server_id, kind, relative_path, identity_key, series_stub_id, season_number,
-                episode_number, episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks)
+                episode_number, episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks,
+                holds_state_of_one)
             VALUES ($id, $ordinal, $server, $kind, $path, $identity, $series, $season, $episode, $end, $content, $image,
-                $technical, $url, $strm)
+                $technical, $url, $strm, $one)
             ON CONFLICT (id) DO UPDATE SET ordinal = excluded.ordinal, server_id = excluded.server_id, kind = excluded.kind,
                 relative_path = excluded.relative_path, identity_key = excluded.identity_key,
                 series_stub_id = excluded.series_stub_id, season_number = excluded.season_number,
                 episode_number = excluded.episode_number, episode_number_end = excluded.episode_number_end,
                 content_hash = excluded.content_hash, image_tag = excluded.image_tag, technical_tag = excluded.technical_tag,
-                url_tag = excluded.url_tag, strm_written_ticks = excluded.strm_written_ticks;
+                url_tag = excluded.url_tag, strm_written_ticks = excluded.strm_written_ticks,
+                holds_state_of_one = excluded.holds_state_of_one;
             """,
             "$id",
             "$ordinal",
@@ -426,7 +430,8 @@ internal static class StubTables
             "$image",
             "$technical",
             "$url",
-            "$strm");
+            "$strm",
+            "$one");
         using var move = StoreCommands.Prepared(connection, transaction, "UPDATE stub_entries SET ordinal = $ordinal WHERE id = $id;", "$ordinal", "$id");
         using var delete = StoreCommands.Prepared(connection, transaction, "DELETE FROM stub_entries WHERE id = $id;", "$id");
         using var clearCopies = StoreCommands.Prepared(connection, transaction, "DELETE FROM stub_entry_part_copies WHERE stub_id = $id;", "$id");
@@ -462,7 +467,8 @@ internal static class StubTables
                 stub.ImageTag,
                 stub.TechnicalTag,
                 stub.UrlTag,
-                stub.StrmWrittenUtc?.Ticks);
+                stub.StrmWrittenUtc?.Ticks,
+                stub.HoldsStateOfOne);
             sources.Replace(stub.Id, stub.Sources);
             clearCopies.Run(stub.Id);
             for (var position = 0; position < stub.PartCopies.Count; position++)

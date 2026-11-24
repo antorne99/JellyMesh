@@ -27,7 +27,6 @@ public sealed class SplitTitleTests : IDisposable
     private static readonly DateTime _day = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     private readonly StubFixture _fixture = new();
-    private readonly Mock<IUserDataManager> _userData = new();
     private readonly Mock<IVersionLinker> _versions = new();
     private readonly CapturingLogger<StubCleanupTask> _logger = new();
     private readonly CapturingLogger<LocalTitleLinker> _linkerLogger = new();
@@ -36,10 +35,12 @@ public sealed class SplitTitleTests : IDisposable
     private readonly User _anna = new("anna", "auth", "reset");
     private readonly User _bruno = new("bruno", "auth", "reset");
     private List<VirtualFolderInfo> _folders = [];
+    private List<User> _users;
     private RemoteServerInfo _server = null!;
 
     public SplitTitleTests()
     {
+        _users = [_anna, _bruno];
         _fixture.Library.Setup(library => library.GetVirtualFolders()).Returns(() => [.. _folders]);
         _fixture.Library
             .Setup(library => library.FindByPath(It.IsAny<string>(), It.IsAny<bool?>()))
@@ -47,12 +48,13 @@ public sealed class SplitTitleTests : IDisposable
         _fixture.Library
             .Setup(library => library.DeleteItem(It.IsAny<BaseItem>(), It.IsAny<DeleteOptions>()))
             .Callback<BaseItem, DeleteOptions>((item, _) => _items.Remove(item.Path));
-        _userData
+        _fixture.UserData
             .Setup(data => data.GetUserData(It.IsAny<User>(), It.IsAny<BaseItem>()))
             .Returns((User user, BaseItem item) => WatchStateTransfer.Copy(Row(user, item.Path)));
-        _userData
+        _fixture.UserData
             .Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
             .Callback<User, BaseItem, UserItemData, UserDataSaveReason, CancellationToken>((user, item, data, _, _) => _rows[(user.Id, item.Path)] = WatchStateTransfer.Copy(data));
+        _fixture.Users.Setup(manager => manager.GetUsers()).Returns(() => _users);
         _versions.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
     }
 
@@ -290,8 +292,8 @@ public sealed class SplitTitleTests : IDisposable
         await CleanAsync();
 
         AssertFull(Row(_anna, added.Path));
-        _userData.Verify(data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, cached)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Once);
-        _userData.Verify(data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, added)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Never);
+        _fixture.UserData.Verify(data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, cached)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Once);
+        _fixture.UserData.Verify(data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, added)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // A file of two episodes is a backup of both, so it alone does not make two episodes one title.
@@ -557,6 +559,285 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Equal((true, (double?)9), (Row(_bruno, SeriesPathOf(kept)).IsFavorite, Row(_bruno, SeriesPathOf(kept)).Rating));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AStubOfOneEpisodeThatTakesTwoLosesItsState(int number)
+    {
+        var stub = await AddSingleAsync(number);
+        Give(_anna, PathOf(stub), WithStreams(Full()));
+        Give(_bruno, PathOf(stub), Full());
+        Widen();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal((stub.Id, stub.RelativePath), (StubOf(1, 2).Id, StubOf(1, 2).RelativePath));
+        AssertEmpty(Row(_anna, PathOf(stub)));
+        AssertEmpty(Row(_bruno, PathOf(stub)));
+        Assert.Equal((3, 4), (Row(_anna, PathOf(stub)).AudioStreamIndex, Row(_anna, PathOf(stub)).SubtitleStreamIndex));
+    }
+
+    [Fact]
+    public async Task AStateGivenAfterAStubTookTwoEpisodesStays()
+    {
+        var stub = await AddSingleAsync(1);
+        Widen();
+        await _fixture.SyncAndMaterializeAsync();
+        Give(_anna, PathOf(stub), Full());
+
+        await ScanAsync();
+        Replace(3, 720);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.Equal(stub.Id, StubOf(1, 3).Id);
+        AssertFull(Row(_anna, PathOf(stub)));
+    }
+
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesSavesNoEmptyState()
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), WithStreams(new UserItemData { Key = "k" }));
+        Widen();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        _fixture.UserData.Verify(
+            data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    // Saved on the instance Jellyfin caches, as in a hand over.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesIsClearedOnTheCachedItem()
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), Full());
+        var cached = new Episode { Id = _items[PathOf(stub)].Id, Path = PathOf(stub) };
+        _fixture.Library.Setup(library => library.GetItemById(cached.Id)).Returns(cached);
+        Widen();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        _fixture.UserData.Verify(
+            data => data.SaveUserData(_anna, It.Is<BaseItem>(item => ReferenceEquals(item, cached)), It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // The users cannot be read for now, also across a restart: the state goes at the next scan, or at the next sync.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AStubThatTookTwoEpisodesIsClearedWhenItCanBe(bool atScan)
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), Full());
+        Widen();
+        _users = [];
+        await _fixture.SyncAndMaterializeAsync();
+        await CleanAsync();
+        AssertFull(Row(_anna, PathOf(stub)));
+        _users = [_anna, _bruno];
+
+        if (atScan)
+        {
+            using var reopened = new StubRegistry(_fixture.Database, _fixture.Sync.Store, new CapturingLogger<StubRegistry>());
+            await CleanAsync(reopened);
+        }
+        else
+        {
+            await _fixture.SyncAndMaterializeAsync();
+        }
+
+        AssertEmpty(Row(_anna, PathOf(stub)));
+    }
+
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesIsClearedAgainAfterAFailure()
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), Full());
+        Widen();
+        _fixture.UserData
+            .Setup(data => data.GetUserData(_anna, It.IsAny<BaseItem>()))
+            .Throws(new InvalidOperationException("secret"));
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(stub.Id, StubOf(1, 2).Id);
+        Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        _fixture.UserData
+            .Setup(data => data.GetUserData(_anna, It.IsAny<BaseItem>()))
+            .Returns((User user, BaseItem item) => WatchStateTransfer.Copy(Row(user, item.Path)));
+
+        await CleanAsync();
+
+        AssertEmpty(Row(_anna, PathOf(stub)));
+    }
+
+    // The item at the old path of a server rename still holds the state that the move gives to the new one.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesIsClearedAtItsOldPathToo()
+    {
+        var stub = await AddSingleAsync(1);
+        var old = _fixture.Path_("old.strm");
+        _items[old] = new Episode { Id = Guid.NewGuid(), Path = old };
+        Give(_anna, old, Full());
+        await SaveRenamesAsync(new StubRename(stub.Id, "old.strm"));
+        Widen();
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        AssertEmpty(Row(_anna, old));
+    }
+
+    // Row 507: the stub that splits from it takes the state of its episode first.
+    [Fact]
+    public async Task AStubThatTakesTwoEpisodesGivesItsStateToTheStubThatSplitsFromIt()
+    {
+        var first = await SplitAsItWidensAsync();
+        Assert.Equal(first.Id, StubOf(1, 2).Id);
+        AssertFull(Row(_anna, PathOf(first)));
+
+        await ScanAsync();
+
+        AssertFull(Row(_anna, PathOf(StubOf(1, null))));
+        AssertEmpty(Row(_anna, PathOf(first)));
+        AssertEmpty(Row(_anna, PathOf(StubOf(2, null))));
+    }
+
+    // The wait of the split closes with no hand over.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesIsClearedWhenItsSplitIsGone()
+    {
+        var first = await SplitAsItWidensAsync();
+        Remove(TestLibraries.ShowsB, RemoteItemType.Episode, "b1");
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.DoesNotContain(Stubs, stub => (stub.EpisodeNumber, stub.EpisodeNumberEnd) == (1, null));
+        AssertEmpty(Row(_anna, PathOf(first)));
+    }
+
+    // Joined again before the scan: its state is still that of the first episode.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesAndJoinsAgainGivesItsStateToItsEpisodeAlone()
+    {
+        var first = await SplitAsItWidensAsync();
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+
+        await ScanAsync();
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        Assert.Equal(2, Stubs.Count);
+        AssertFull(Row(_anna, PathOf(StubOf(1, null))));
+        AssertEmpty(Row(_anna, PathOf(StubOf(2, null))));
+        Assert.DoesNotContain(Stubs, stub => stub.EpisodeNumberEnd is not null);
+        Assert.NotNull(first);
+    }
+
+    // A move to the new name of the server holds the wait of the split, so the state is not cleared yet.
+    [Fact]
+    public async Task AStubWithTheStateOfOneEpisodeIsNotMergedBeforeItIsCleared()
+    {
+        var old = await JoinDoubleAsync(480, ["b1", "b2"], scan: false);
+        AddItems();
+        await MarkAsync(old, StubOf(1, null));
+
+        await CleanAsync();
+        Assert.Equal(3, Stubs.Count);
+        AssertEmpty(Row(_anna, PathOf(StubOf(2, null))));
+
+        await SaveRenamesAsync();
+        await CleanAsync();
+        Assert.Equal(2, Stubs.Count);
+        AssertFull(Row(_anna, PathOf(StubOf(1, null))));
+        AssertEmpty(Row(_anna, PathOf(StubOf(2, null))));
+    }
+
+    [Fact]
+    public async Task AStubWithTheStateOfOneEpisodeTakesNoOtherBeforeItIsCleared()
+    {
+        await AddSeriesAsync();
+        AddDouble("x", TestLibraries.Shows, 480);
+        AddDouble("y", TestLibraries.ShowsB, 2160);
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        var kept = Assert.Single(Stubs, stub => stub.Sources.Count == 2);
+        var merged = Assert.Single(Stubs, stub => stub.Id != kept.Id);
+        Give(_anna, PathOf(merged), Full());
+        await MarkAsync(kept, merged);
+
+        await CleanAsync();
+        Assert.Equal(2, Stubs.Count);
+
+        await SaveRenamesAsync();
+        await CleanAsync();
+        Assert.Equal(kept.Id, Assert.Single(Stubs).Id);
+        AssertFull(Row(_anna, PathOf(kept)));
+    }
+
+    [Fact]
+    public async Task NothingSplitsFromAStubWithTheStateOfOneEpisode()
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), Full());
+        Widen();
+        AddDouble("y", TestLibraries.ShowsB, 480);
+        _users = [];
+        await _fixture.SyncAndMaterializeAsync();
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(2, Stubs.Count);
+        _users = [_anna, _bruno];
+
+        await ScanAsync();
+
+        Assert.All(Stubs, entry => AssertEmpty(Row(_anna, PathOf(entry))));
+    }
+
+    [Fact]
+    public async Task AStubWithTheStateOfOneEpisodeThatIsOfItAgainKeepsIt()
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), Full());
+        Widen();
+        _users = [];
+        await _fixture.SyncAndMaterializeAsync();
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Series, TestItems.Series("s" + TestLibraries.ShowsB));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b1", "s" + TestLibraries.ShowsB, 1, 1));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b2", "s" + TestLibraries.ShowsB, 1, 2));
+        await _fixture.SyncAndMaterializeAsync();
+        _users = [_anna, _bruno];
+
+        await ScanAsync();
+
+        Assert.Equal(stub.Id, StubOf(1, null).Id);
+        AssertFull(Row(_anna, PathOf(stub)));
+        AssertEmpty(Row(_anna, PathOf(StubOf(2, null))));
+    }
+
+    // The state it waits for, of one episode, comes after it took the second.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesBeforeItsScanKeepsNoStateOfOne()
+    {
+        await SplitAsItWidensAsync();
+        Remove(TestLibraries.ShowsB, RemoteItemType.Episode, "b1");
+        Remove(TestLibraries.ShowsB, RemoteItemType.Episode, "b2");
+        AddDouble("b1", TestLibraries.ShowsB, 480);
+        await _fixture.SyncAndMaterializeAsync();
+
+        await ScanAsync();
+
+        Assert.Empty(_fixture.Registry.State.Splits);
+        Assert.All(Stubs, stub => AssertEmpty(Row(_anna, PathOf(stub))));
+    }
+
     [Fact]
     public async Task AStubOfTwoEpisodesWaitsForTheItemOfEach()
     {
@@ -800,6 +1081,13 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Equal((false, (double?)null), (row.IsFavorite, row.Rating));
     }
 
+    private static UserItemData WithStreams(UserItemData data)
+    {
+        data.AudioStreamIndex = 3;
+        data.SubtitleStreamIndex = 4;
+        return data;
+    }
+
     private UserItemData Row(User user, string path) => _rows.GetValueOrDefault((user.Id, path)) ?? new UserItemData { Key = "k" };
 
     private void Give(User user, string path, UserItemData data) => _rows[(user.Id, path)] = data;
@@ -826,12 +1114,61 @@ public sealed class SplitTitleTests : IDisposable
 
     private string SeriesPathOf(StubEntry stub) => _fixture.Path_(Assert.Single(_fixture.Registry.State.Series, series => series.Id == stub.SeriesStubId).RelativePath);
 
-    private async Task SaveRenamesAsync(params StubRename[] renames)
+    // A stub of one episode whose item a scan made.
+    private async Task<StubEntry> AddSingleAsync(int number)
+    {
+        await AddSeriesAsync(("a", TestLibraries.Shows, 1, number));
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        return StubOf(number, null);
+    }
+
+    // The file of a single becomes one of the first two episodes.
+    private void Widen() => Replace(2, 480);
+
+    private void Replace(int last, int height)
+    {
+        Remove(TestLibraries.Shows, RemoteItemType.Episode, "a");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("a", "s" + TestLibraries.Shows, 1, 1) with { IndexNumberEnd = last, MediaSources = [TestItems.Source("a", height, 500_000)] });
+    }
+
+    // The stub of the first episode, of a file of two and of one, takes both when the libraries part, and its state waits.
+    private async Task<StubEntry> SplitAsItWidensAsync()
+    {
+        await AddSeriesAsync();
+        AddDouble("x", TestLibraries.Shows, 480);
+        Together(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Series, TestItems.Series("s" + TestLibraries.ShowsB));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b1", "s" + TestLibraries.ShowsB, 1, 1));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b2", "s" + TestLibraries.ShowsB, 1, 2));
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var first = StubOf(1, null);
+        Give(_anna, PathOf(first), Full());
+        Apart(TypeFolder.Series, TestLibraries.Shows, TestLibraries.ShowsB);
+        await _fixture.SyncAndMaterializeAsync();
+        return first;
+    }
+
+    // A stub whose state is still of one episode: the split of another from it waits, and its move to a new server name too.
+    private Task MarkAsync(StubEntry from, StubEntry taker) => SaveAsync(state => state with
+    {
+        Stubs = state.Stubs.Select(stub => stub.Id == from.Id ? stub with { HoldsStateOfOne = true } : stub).ToList(),
+        Splits = [new StubSplit(taker.Id, from.Id)],
+        Renames = [new StubRename(from.Id, "old.strm")]
+    });
+
+    private Task SaveRenamesAsync(params StubRename[] renames) => SaveAsync(state => state with { Renames = renames });
+
+    private async Task SaveAsync(Func<StubState, StubState> change)
     {
         await _fixture.Registry.EnterAsync(CancellationToken.None);
         try
         {
-            await _fixture.Registry.SaveAsync(_fixture.Registry.State with { Renames = renames }, CancellationToken.None);
+            await _fixture.Registry.SaveAsync(change(_fixture.Registry.State), CancellationToken.None);
         }
         finally
         {
@@ -953,7 +1290,7 @@ public sealed class SplitTitleTests : IDisposable
     private Task CleanAsync(StubRegistry? registry = null, IReadOnlyList<User>? users = null)
     {
         var manager = new Mock<IUserManager>();
-        manager.Setup(mock => mock.GetUsers()).Returns(users ?? [_anna, _bruno]);
+        manager.Setup(mock => mock.GetUsers()).Returns(users ?? _users);
         var task = new StubCleanupTask(
             registry ?? _fixture.Registry,
             _fixture.Resolver,
@@ -962,12 +1299,13 @@ public sealed class SplitTitleTests : IDisposable
             _fixture.Sync.Store,
             _fixture.Library.Object,
             manager.Object,
-            _userData.Object,
+            _fixture.UserData.Object,
             Mock.Of<IProviderManager>(),
             Mock.Of<IFileSystem>(),
             _fixture.Remover,
             _logger,
-            _versions.Object);
+            _versions.Object,
+            cleaner: _fixture.Cleaner);
         return task.Run(new Progress<double>(), CancellationToken.None);
     }
 }

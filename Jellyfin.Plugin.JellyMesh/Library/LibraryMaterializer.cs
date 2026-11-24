@@ -43,6 +43,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly ILocalRefreshRequester? _refresher;
     private readonly IVersionLinker? _linker;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly WatchStateCleaner? _cleaner;
     private volatile MaterializationReport? _lastReport;
 
     /// <summary>
@@ -64,6 +65,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
     /// <param name="linker">What detaches a stub from its versions before it is removed.</param>
     /// <param name="keeper">What keeps the watch state of removed servers and puts it back (row 412).</param>
+    /// <param name="cleaner">What clears the watch state of the stubs that took more episodes (row 543).</param>
     public LibraryMaterializer(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -80,7 +82,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         ILogger<LibraryMaterializer> logger,
         ILocalRefreshRequester? refresher = null,
         IVersionLinker? linker = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        WatchStateCleaner? cleaner = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -98,6 +101,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _refresher = refresher;
         _linker = linker;
         _keeper = keeper;
+        _cleaner = cleaner;
     }
 
     /// <inheritdoc />
@@ -295,6 +299,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
+        run.State = _cleaner?.Clear(root, run.State, cancellationToken) ?? run.State;
         var (removals, kept) = await KeepRemovedAsync(run, plan, cancellationToken).ConfigureAwait(false);
         RemoveGone(run, await DetachRemovalsAsync(run, removals, cancellationToken).ConfigureAwait(false));
         if (kept)

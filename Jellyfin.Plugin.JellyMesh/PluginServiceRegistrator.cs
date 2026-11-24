@@ -71,6 +71,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StubTechnicalData>();
         serviceCollection.AddSingleton<StubItemUpdater>();
         serviceCollection.AddSingleton<StubRemover>();
+        serviceCollection.AddSingleton<WatchStateCleaner>();
         serviceCollection.AddSingleton<ILocalRefreshRequester, LocalRefreshRequester>();
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
