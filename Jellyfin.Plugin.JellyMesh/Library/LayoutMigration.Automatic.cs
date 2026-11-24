@@ -299,8 +299,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogWarning("Migration to the server folders: the plugin libraries move at the next sync: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Migration to the server folders: the plugin libraries move at the next sync: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

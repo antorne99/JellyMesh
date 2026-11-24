@@ -1407,7 +1407,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot remove the library {Library} from the lists of the users: {Error}", LogText.Clean(name), exception.GetType().Name);
+            _logger.LogError("Cannot remove the library {Library} from the lists of the users: {Error}{Detail:l}", LogText.Clean(name), exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

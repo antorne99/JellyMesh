@@ -140,8 +140,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot keep the manual merges of a removed server for its watch state, so its copies stay in them: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep the manual merges of a removed server for its watch state, so its copies stay in them: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

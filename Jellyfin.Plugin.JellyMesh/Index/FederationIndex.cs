@@ -226,12 +226,12 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogError("Cannot read the federation index from the database: {Error}. It is empty until the database can be read", exception.GetType().Name);
+            _logger.LogError("Cannot read the federation index from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
         catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException or InvalidOperationException or OverflowException or InvalidCastException)
         {
-            _logger.LogError("The federation index in the database is damaged: {Error}. It is empty until a sync fills it again", exception.GetType().Name);
+            _logger.LogError("The federation index in the database is damaged: {Error}. It is empty until a sync fills it again{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return new IndexTables.StoredIndex(IndexSnapshot.Empty(IndexHealth.Corrupt) with { Generation = _readGeneration }, []);
         }
     }

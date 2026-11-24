@@ -517,7 +517,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot create the shared {Kind} library: {Error}", planned.Kind, exception.GetType().Name);
+            _logger.LogError("Cannot create the shared {Kind} library: {Error}{Detail:l}", planned.Kind, exception.GetType().Name, ErrorText.Of(exception));
             _errors[_sharedOwner] = AutomaticLibrariesError.CreateFailed;
             return ReadFolders() is { } failed && await ResolveSharedAsync(intent, root, failed, cancellationToken).ConfigureAwait(false);
         }
@@ -617,7 +617,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot block a shared library for the users who blocked a library of its folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot block a shared library for the users who blocked a library of its folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
@@ -694,7 +694,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}", LogText.Clean(library.Name), exception.GetType().Name);
+            _logger.LogError("Cannot delete the shared library {Library}, which could not be blocked: {Error}{Detail:l}", LogText.Clean(library.Name), exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

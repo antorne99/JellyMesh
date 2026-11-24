@@ -890,8 +890,7 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a path or an address.
-            _logger.LogError("The {Step} step after an edit of a server failed: {Error}", step, exception.GetType().Name);
+            _logger.LogError("The {Step} step after an edit of a server failed: {Error}{Detail:l}", step, exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

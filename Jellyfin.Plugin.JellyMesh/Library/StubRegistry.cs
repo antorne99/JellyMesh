@@ -368,7 +368,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read", exception.GetType().Name);
+            _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
         catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or InvalidOperationException or OverflowException)

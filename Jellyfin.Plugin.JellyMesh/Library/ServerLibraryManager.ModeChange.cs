@@ -236,7 +236,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot block the libraries of the new library mode for the users who blocked the old ones: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot block the libraries of the new library mode for the users who blocked the old ones: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
@@ -260,7 +260,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot block a library of the new library mode for the users who blocked the old ones, so it is not made: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot block a library of the new library mode for the users who blocked the old ones, so it is not made: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
@@ -315,7 +315,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot give the users access to the libraries of the new library mode: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot give the users access to the libraries of the new library mode: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

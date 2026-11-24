@@ -1476,7 +1476,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path or an address.
             _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, ErrorText.Of(exception));
         }
     }
