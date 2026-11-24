@@ -197,6 +197,10 @@ Choose **Rename** on a server's card. The new name shows in the version list and
 
 Under **Catalog**, **Sync history** lists the last 50 syncs and the last 7 nightly reconciliations: start, duration, kind and outcome, and for each server the titles read, created, updated and removed, and the errors. JellyMesh also writes to Jellyfin's activity log when a server goes offline or is reachable again, when a sync fails, when saved passwords no longer decrypt, and once for each completed sync: about 96 entries a day at the default interval. Neither shows server addresses or tokens.
 
+### Errors
+
+When something fails, the plugin page has **Full error**: the call, its status, what the remote server answered (up to 64 KB), and the exceptions with their stack traces. It is in the message, on the card of the server until it answers again, and in each part of the page that can't be read. Jellyfin's log holds the same text, up to 20 whole errors a minute for each server. Both show the address of the remote server; neither shows tokens or passwords. An error of the remote server has no stack trace here: look in its own log.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.

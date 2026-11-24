@@ -396,9 +396,10 @@
             .jmOutcome.jmOutcomeDone,
             .jmOutcome.jmOutcomeError {
                 display: flex;
+                flex-wrap: wrap;
                 align-items: baseline;
                 justify-content: space-between;
-                gap: 1em;
+                gap: 0.5em 1em;
                 padding: 0.75em 1em;
                 border-radius: var(--jm-radius-small);
                 box-shadow: var(--jm-shadow);
@@ -415,6 +416,59 @@
 
             .jmOutcomeKind {
                 font-weight: bold;
+            }
+
+            #jmMessage {
+                flex: 1;
+                min-width: 0;
+            }
+
+            #jmOutcomeDetail {
+                flex: 0 0 100%;
+                min-width: 0;
+            }
+
+            #jmOutcomeDetail:empty {
+                display: none;
+            }
+
+            .jmErrorDetail summary {
+                min-height: 24px;
+                cursor: pointer;
+            }
+
+            .jmErrorDetail pre {
+                max-height: 40vh;
+                margin: 0.5em 0;
+                padding: 0.75em;
+                overflow: auto;
+                border-radius: var(--jm-radius-small);
+                background: #16181d;
+                color: #f1f2f4;
+                font-size: 0.85em;
+                line-height: 1.45;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                user-select: text;
+            }
+
+            .jmErrorDetail button {
+                margin: 0 0 0.75em;
+            }
+
+            .jmErrorDetail summary:focus-visible,
+            .jmErrorDetail pre:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+            }
+
+            .jmFailureDetail {
+                margin-bottom: 1em;
+            }
+
+            .jmFailureDetail:empty,
+            .jmLastError:empty {
+                display: none;
             }
 
             .jmOutcome button {
@@ -1551,6 +1605,7 @@
                     <div id="jmOutcome" class="jmOutcome">
                         <div id="jmMessage" role="status"></div>
                         <button id="jmDismiss" type="button" hidden>Dismiss</button>
+                        <div id="jmOutcomeDetail"></div>
                     </div>
                     <div id="jmSaveBar" class="jmSaveBar" hidden>
                         <span>Unsaved changes</span>
@@ -1653,8 +1708,10 @@
                     "Connect and choose libraries": "Connetti e scegli le librerie",
                     "Connected JellyMesh servers": "Server JellyMesh connessi",
                     "Connected.": "Connesso.",
+                    "Copied": "Copiato",
                     "Copied {value}.": "Copiato {value}.",
                     "Copy": "Copia",
+                    "Copy the error": "Copia l'errore",
                     "Copy the {library} path of {server}": "Copia il percorso {library} di {server}",
                     "Copy: {label}": "Copia: {label}",
                     "Could not read {what}. {next} Reason: {reason}": "Impossibile leggere {what}. {next} Motivo: {reason}",
@@ -1695,6 +1752,7 @@
                     "From 3 to 60. Raise it for a slow remote. A viewer waits this long on each source before the next one is tried.": "Da 3 a 60. Aumentalo per un remoto lento. Uno spettatore aspetta questo tempo su ogni sorgente prima che si provi la successiva.",
                     "From 30 to 109. Lower it to free a remote sooner. A paused player resumes by itself.": "Da 30 a 109. Abbassalo per liberare prima un remoto. Un player in pausa riprende da solo.",
                     "From 5 to 60. Raise it if a remote is slow to start a transcode. Opening can take up to three steps on each source.": "Da 5 a 60. Aumentalo se un remoto è lento ad avviare una transcodifica. L'apertura può richiedere fino a tre fasi per ogni sorgente.",
+                    "Full error": "Errore completo",
                     "Give the dedicated user access on that server, then test the connection.": "Dai accesso all'utente dedicato su quel server, poi prova la connessione.",
                     "HDR unknown": "HDR sconosciuto",
                     "IDs": "ID",
@@ -1940,6 +1998,7 @@
                     "The libraries could not be read to check these paths.": "Non è stato possibile leggere le librerie per controllare questi percorsi.",
                     "The list changed. Check it again, then merge.": "L'elenco è cambiato. Ricontrollalo, poi unisci.",
                     "The next sync tries again.": "La prossima sincronizzazione riprova.",
+                    "The error is selected: copy it by hand": "L'errore è selezionato: copialo a mano",
                     "The operation failed.": "L'operazione non è riuscita.",
                     "The server could not be removed. It stays, with its titles. Try again.": "Il server non è stato rimosso. Resta, con i suoi titoli. Riprova.",
                     "The missing servers could not be forgotten. Their titles stay. Try again.": "Non è stato possibile dimenticare i server mancanti. I loro titoli restano. Riprova.",
@@ -2358,12 +2417,70 @@
                     return node;
                 }
 
+                // Makes the part that opens on the whole error, with its stack trace, and copies it.
+                function errorDetail(text) {
+                    var part = create('details');
+                    part.className = 'jmErrorDetail';
+                    part.appendChild(create('summary', t('Full error')));
+                    var value = create('pre', text);
+                    value.tabIndex = 0;
+                    part.appendChild(value);
+                    var copy = button(t('Copy the error'), function () {
+                        copyText(text).then(function (copied) {
+                            copy.textContent = copied ? t('Copied') : t('The error is selected: copy it by hand');
+                            if (!copied) {
+                                window.getSelection().selectAllChildren(value);
+                            }
+                        });
+                    });
+                    part.appendChild(copy);
+                    return part;
+                }
+
+                // Shows the whole error in its place, keeping it open when it did not change, or nothing.
+                function setDetail(holder, text) {
+                    var wanted = text || '';
+                    if ((holder.jmDetail || '') === wanted) {
+                        return;
+                    }
+
+                    holder.jmDetail = wanted;
+                    holder.textContent = '';
+                    if (wanted) {
+                        holder.appendChild(errorDetail(wanted));
+                    }
+                }
+
+                // Makes an error that says something else and keeps the whole story of the first one.
+                function reworded(error, text) {
+                    var other = new Error(text);
+                    other.detail = error && error.detail;
+                    return other;
+                }
+
+                // Tells the whole story of a call of the page that failed: what was asked, the status and what came back.
+                function callDetail(asked, status, text) {
+                    return [asked + (status ? ': HTTP ' + status : '')].concat(text ? [String(text).slice(0, 65536)] : []).join('\n');
+                }
+
+                // Adds its whole story to a failure of the calls Jellyfin makes for the page.
+                function jellyfinFailure(asked, error, describe) {
+                    return Promise.resolve(error && typeof error.text === 'function' ? error.text().catch(function () {
+                        return '';
+                    }) : (error && error.stack) || '').then(function (text) {
+                        var failure = new Error(describe(error));
+                        failure.detail = callDetail(asked, error && error.status, text);
+                        throw failure;
+                    });
+                }
+
                 // Puts the outcome of an action in the status region, or empties the region when there is no text.
-                function showOutcome(kind, text) {
+                function showOutcome(kind, text, detail) {
                     var message = el('#jmMessage');
                     var outcome = el('#jmOutcome');
                     outcome.classList.remove('jmOutcomeDone', 'jmOutcomeError');
                     el('#jmDismiss').hidden = !text;
+                    setDetail(el('#jmOutcomeDetail'), text ? detail : '');
                     message.textContent = '';
                     if (text) {
                         var label = create('span', outcomeKinds[kind] + ': ');
@@ -2374,12 +2491,12 @@
                     }
                 }
 
-                function showMessage(text) {
-                    showOutcome('Done', text);
+                function showMessage(text, detail) {
+                    showOutcome('Done', text, detail);
                 }
 
-                function showError(text) {
-                    showOutcome('Error', text);
+                function showError(text, detail) {
+                    showOutcome('Error', text, detail);
                 }
 
                 // Marks a field as wrong and says why right under it, opening the part of the page that holds it.
@@ -2441,20 +2558,32 @@
                         options.body = JSON.stringify(body);
                     }
 
-                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).catch(function () {
-                        throw new Error(noAnswer);
+                    var asked = method + ' JellyMesh/Admin/' + path;
+                    return fetch(ApiClient.getUrl('JellyMesh/Admin/' + path), options).catch(function (error) {
+                        var silence = new Error(noAnswer);
+                        silence.detail = callDetail(asked, 0, (error && error.stack) || error);
+                        throw silence;
                     }).then(function (response) {
                         if (response.status === 204) {
                             return null;
                         }
 
-                        return response.json().catch(function () {
-                            return {};
-                        }).then(function (data) {
+                        return response.text().catch(function () {
+                            return '';
+                        }).then(function (text) {
+                            var data = {};
+                            try {
+                                data = JSON.parse(text);
+                            } catch (error) {
+                                data = {};
+                            }
+
                             if (!response.ok) {
+                                data = data || {};
                                 var failure = new Error(data.Message ? t(data.Message) : t('The server answered with error {status} and gave no reason.', { status: response.status }));
                                 failure.failure = data.Failure;
                                 failure.serverName = data.ServerName;
+                                failure.detail = callDetail(asked, response.status, data.Detail || text);
                                 throw failure;
                             }
 
@@ -2472,7 +2601,7 @@
                     showMessage('');
                     Dashboard.showLoadingMsg();
                     return promise.catch(function (error) {
-                        showError(error.message);
+                        showError(error.message, error.detail);
                     }).then(function () {
                         Dashboard.hideLoadingMsg();
                     });
@@ -2505,7 +2634,7 @@
                         if (ticket === part.ticket) {
                             part.stale = true;
                             part.failure = error.message;
-                            part.failed(error.message);
+                            part.failed(error.message, error.detail);
                             renderOverview();
                         }
 
@@ -2522,8 +2651,17 @@
                     answered(part, data);
                 }
 
-                function showFailure(selector, what, next, reason) {
+                function showFailure(selector, what, next, reason, detail) {
                     var note = el(selector);
+                    var place = note.jmPlace;
+                    if (!place) {
+                        place = create('div');
+                        place.className = 'jmFailureDetail';
+                        note.jmPlace = place;
+                        note.after(place);
+                    }
+
+                    setDetail(place, reason ? detail : '');
                     setText(note, reason ? t('Could not read {what}. {next} Reason: {reason}', { what: what, next: next, reason: reason }) : '');
                     note.hidden = !reason;
                 }
@@ -2938,6 +3076,9 @@
                     var synced = addFact(facts, t('Last complete sync'));
                     var own = addFact(facts, t('Server libraries'));
                     body.appendChild(facts);
+                    var lastError = create('div');
+                    lastError.className = 'jmLastError';
+                    body.appendChild(lastError);
                     var ownSwitch = create('div');
                     ownSwitch.className = 'checkboxList';
                     var ownBox = addCheckbox(ownSwitch, server.Id, t('Create a Film and a Serie library for this server'));
@@ -2990,6 +3131,9 @@
                         var nothingChosen = !health.cause && server.ImportedLibraryIds.length === 0;
                         setText(cause, nothingChosen ? t('No libraries chosen, so nothing is imported from this server yet.') : health.cause);
                         cause.hidden = !health.cause && !nothingChosen;
+                        setDetail(lastError, [server.LastError, currentReport && currentReport.Detail].filter(function (text, index, all) {
+                            return text && all.indexOf(text) === index;
+                        }).join('\n\n'));
                         setText(meta, sentence(modeLabel(server.Mode)) + (currentReport ? ', ' + catalogText : ''));
                         setText(url, server.Url);
                         setText(mode, sentence(modeLabel(server.Mode)));
@@ -3085,7 +3229,7 @@
                                 server: server.Name,
                                 mode: modeLabel(result.Capabilities.Mode),
                                 count: result.LibraryCount
-                            }));
+                            }), result.Detail);
                             return loadStatus();
                         }));
                     }));
@@ -3123,11 +3267,11 @@
                                 return load();
                             }, function (error) {
                                 if (error.failure === 'RemovalFailed') {
-                                    throw new Error(t('Removing {server} failed. It stays, with its titles. Try again.', { server: server.Name }));
+                                    throw reworded(error, t('Removing {server} failed. It stays, with its titles. Try again.', { server: server.Name }));
                                 }
 
                                 if (error.failure === 'RemovalFailedPlaybackStopped') {
-                                    throw new Error(t('Removing {server} failed. It stays, with its titles, but any playback from it was stopped. Try again.', { server: server.Name }));
+                                    throw reworded(error, t('Removing {server} failed. It stays, with its titles, but any playback from it was stopped. Try again.', { server: server.Name }));
                                 }
 
                                 throw error;
@@ -3446,8 +3590,8 @@
                     notice.appendChild(actions);
                 }
 
-                function statusFailed(reason) {
-                    showFailure('#jmStatusFailure', t('the status'), keepsTrying, reason);
+                function statusFailed(reason, detail) {
+                    showFailure('#jmStatusFailure', t('the status'), keepsTrying, reason, detail);
                 }
 
                 function formatDate(value) {
@@ -3596,9 +3740,9 @@
                     el('#jmSyncNow').disabled = suspended || syncRunning;
                 }
 
-                function syncFailed(reason) {
-                    showFailure('#jmSyncFailure', t('the state of the sync'), keepsTrying, reason);
-                    showFailure('#jmServersSyncFailure', t('the state of the sync'), keepsTrying, reason);
+                function syncFailed(reason, detail) {
+                    showFailure('#jmSyncFailure', t('the state of the sync'), keepsTrying, reason, detail);
+                    showFailure('#jmServersSyncFailure', t('the state of the sync'), keepsTrying, reason, detail);
                     if (reason) {
                         setSyncRunning(false);
                         setText(el('#jmSyncStatus'), t('Sync state unknown.'));
@@ -5107,29 +5251,31 @@
 
                 var peersSection = section(function () {
                     return Promise.all([read('Peers'), readPeerOptions()]);
-                }, renderPeers, function (reason) {
-                    showFailure('#jmPeersFailure', t('the connected servers'), keepsTrying, reason);
+                }, renderPeers, function (reason, detail) {
+                    showFailure('#jmPeersFailure', t('the connected servers'), keepsTrying, reason, detail);
                 });
 
                 var mergesSection = section(function () {
                     return read('Merges');
-                }, renderMerges, function (reason) {
-                    showFailure('#jmMergesFailure', t('the duplicate and merged titles'), keepsTrying, reason);
+                }, renderMerges, function (reason, detail) {
+                    showFailure('#jmMergesFailure', t('the duplicate and merged titles'), keepsTrying, reason, detail);
                 });
 
                 var historySection = section(function () {
                     return read('Sync/History');
-                }, renderHistory, function (reason) {
-                    showFailure('#jmHistoryFailure', t('the sync history'), keepsTrying, reason);
+                }, renderHistory, function (reason, detail) {
+                    showFailure('#jmHistoryFailure', t('the sync history'), keepsTrying, reason, detail);
                 });
 
                 var settingsSection = section(function () {
                     settingFields().forEach(clearField);
                     return ApiClient.getPluginConfiguration(pluginId).catch(function (error) {
-                        throw new Error(error && error.status ? t('The server answered with error {status} and gave no reason.', { status: error.status }) : noAnswer);
+                        return jellyfinFailure('GET Plugins/' + pluginId + '/Configuration', error, function () {
+                            return error && error.status ? t('The server answered with error {status} and gave no reason.', { status: error.status }) : noAnswer;
+                        });
                     });
-                }, renderSettings, function (reason) {
-                    showFailure('#jmSettingsFailure', t('the settings'), t('Reload the page before saving.'), reason);
+                }, renderSettings, function (reason, detail) {
+                    showFailure('#jmSettingsFailure', t('the settings'), t('Reload the page before saving.'), reason, detail);
                 });
 
                 function loadStatus() {
@@ -5267,7 +5413,7 @@
                     act(Promise.all([refresh(settingsSection), load()]).then(function (results) {
                         var failure = [results[0]].concat(results[1]).filter(Boolean)[0];
                         if (failure) {
-                            showError(t('Part of this page could not be loaded, and each part says so. {reason}', { reason: failure.message }));
+                            showError(t('Part of this page could not be loaded, and each part says so. {reason}', { reason: failure.message }), failure.detail);
                         }
 
                         nextStatusPoll = Date.now() + statusPollMilliseconds;
@@ -5329,7 +5475,7 @@
                     password.value = '';
                     act(api('POST', 'Servers', request).catch(function (error) {
                         if (error.failure === 'AlreadyConfigured' && error.serverName) {
-                            throw new Error(t('This server is already configured as “{server}”.', { server: error.serverName }));
+                            throw reworded(error, t('This server is already configured as “{server}”.', { server: error.serverName }));
                         }
 
                         throw error;
@@ -5339,7 +5485,7 @@
                         return Promise.all([loadStatus(), loadSync()]).then(function () {
                             return chooseLibraries(server);
                         }).catch(function (error) {
-                            throw new Error(t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
+                            throw reworded(error, t('Added {server}, but its libraries could not be read. {reason} Open Libraries on its card to try again.', { server: server.Name, reason: error.message }));
                         });
                     }));
                 });
@@ -5389,7 +5535,7 @@
                         keepSettings();
                         return loadStatus();
                     }, function (error) {
-                        throw new Error(settingsFailure(error));
+                        return jellyfinFailure('POST Plugins/' + pluginId + '/Configuration', error, settingsFailure);
                     }));
                 });
             })();
