@@ -337,6 +337,10 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         into.Sources.Any(other => other.ServerId == source.ServerId && string.Equals(other.ItemId, source.ItemId, StringComparison.Ordinal))
         || (into.ServerId == source.ServerId && into.PartCopies.Contains(source.ItemId, StringComparer.Ordinal)));
 
+    // The state of one episode is not given to a stub of several (§10 row 543).
+    private static bool TakesState(StubEntry merged, StubEntry into) =>
+        merged.Kind != StubKind.Episode || merged.EpisodeNumberEnd is not null || into.EpisodeNumberEnd is null;
+
     private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, List<StubEntry> into, List<User> users, CancellationToken cancellationToken)
     {
         // Without its item, which only a scan makes, a survivor cannot receive anything yet.
@@ -360,7 +364,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         if (_library.FindByPath(FederatedPaths.Resolve(root, stub.RelativePath), false) is { } stubItem)
         {
-            foreach (var survivor in survivors)
+            foreach (var (_, survivor) in into.Zip(survivors).Where(entry => TakesState(stub, entry.First)))
             {
                 HandOver(users, stubItem, survivor, WatchStateMerge.Merge, cancellationToken);
             }

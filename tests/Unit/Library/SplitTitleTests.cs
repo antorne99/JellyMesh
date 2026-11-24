@@ -537,6 +537,26 @@ public sealed class SplitTitleTests : IDisposable
         AssertFull(Row(_anna, PathOf(kept)));
     }
 
+    // Row 543: the state of one episode is not the state of a stub of several.
+    [Fact]
+    public async Task TheStateOfOneEpisodeIsNotGivenToAStubOfTwo()
+    {
+        var old = await JoinDoubleAsync(2160, ["b1", "b2"], scan: false);
+        var singles = Stubs.Where(stub => stub.Id != old.Id).ToList();
+        var leaving = SeriesPathOf(singles[0]);
+        Assert.Equal(2, singles.Count);
+        Assert.All(singles, stub => Give(_bruno, PathOf(stub), Full()));
+        Give(_bruno, leaving, Full());
+
+        await ScanAsync();
+
+        var kept = Assert.Single(Stubs);
+        AssertEmpty(Row(_bruno, PathOf(kept)));
+        AssertFull(Row(_anna, PathOf(kept)));
+        Assert.NotEqual(leaving, SeriesPathOf(kept));
+        Assert.Equal((true, (double?)9), (Row(_bruno, SeriesPathOf(kept)).IsFavorite, Row(_bruno, SeriesPathOf(kept)).Rating));
+    }
+
     [Fact]
     public async Task AStubOfTwoEpisodesWaitsForTheItemOfEach()
     {
@@ -774,6 +794,12 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Equal((true, (double?)9), (row.IsFavorite, row.Rating));
     }
 
+    private static void AssertEmpty(UserItemData row)
+    {
+        Assert.Equal((false, 0, 0L, (DateTime?)null), (row.Played, row.PlayCount, row.PlaybackPositionTicks, row.LastPlayedDate));
+        Assert.Equal((false, (double?)null), (row.IsFavorite, row.Rating));
+    }
+
     private UserItemData Row(User user, string path) => _rows.GetValueOrDefault((user.Id, path)) ?? new UserItemData { Key = "k" };
 
     private void Give(User user, string path, UserItemData data) => _rows[(user.Id, path)] = data;
@@ -797,6 +823,8 @@ public sealed class SplitTitleTests : IDisposable
 
         _fixture.Sync.Client.Add(library, RemoteItemType.Episode, TestItems.Episode(id, "s" + library, 1, 1) with { IndexNumberEnd = 2, MediaSources = [TestItems.Source(id, height, 500_000)] });
     }
+
+    private string SeriesPathOf(StubEntry stub) => _fixture.Path_(Assert.Single(_fixture.Registry.State.Series, series => series.Id == stub.SeriesStubId).RelativePath);
 
     private async Task SaveRenamesAsync(params StubRename[] renames)
     {
