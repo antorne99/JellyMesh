@@ -253,6 +253,10 @@ check "the setting is the copy's" 900 "$(interval)"
 sync_now local
 check "the server syncs again" true "$(get local /JellyMesh/Admin/Sync | jq '[.Servers[] | .Error == null] | all')"
 check "the federated film plays" "200 1" "$(playback)"
+for who in admin viewer; do
+  check "after the sync each route answers $who" "PlaybackInfo 200 1, stream 206, File 206, Download 206, HLS 200 200" "$(routes "$who")"
+done
+check "and no one without a login" "PlaybackInfo 401 0, stream 401, File 401, Download 401, HLS 401 401" "$(routes nobody)"
 check "the connected server is served" 200 "$(peer_code)"
 post local /JellyMesh/Admin/Store/Recovery/Dismiss >/dev/null
 
