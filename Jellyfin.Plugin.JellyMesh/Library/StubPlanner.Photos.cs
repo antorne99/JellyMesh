@@ -100,14 +100,22 @@ public static partial class StubPlanner
     private static string PhotoPath(IndexItemLookup catalog, Guid serverId, IndexedItem photo, string typeFolder, FolderNames names, IServerIgnoreRules rules, string id)
     {
         var folder = FolderOf(catalog, serverId, photo, typeFolder, rules);
-        var file = FederatedPaths.Sanitize(photo.Name) + "." + photo.Extension;
+        var name = FederatedPaths.Sanitize(photo.Name);
+        var file = name + "." + photo.Extension;
         if (names.HidesPhoto(folder, file) || rules.Ignores(folder, file, false))
         {
-            file = string.Create(CultureInfo.InvariantCulture, $"[{id[..8]}] {file}");
+            file = Marked(name);
+            if (rules.Ignores(folder, file, false))
+            {
+                // The server skips the name for a part between two dots, such as ".sample.".
+                file = Marked(name.Replace('.', ' '));
+            }
         }
 
         names.AddPhoto(folder, file);
         return Path.Combine(folder, file);
+
+        string Marked(string stem) => string.Create(CultureInfo.InvariantCulture, $"[{id[..8]}] {stem}.{photo.Extension}");
     }
 
     /// <summary>

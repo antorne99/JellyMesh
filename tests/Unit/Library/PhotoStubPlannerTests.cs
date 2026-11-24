@@ -56,7 +56,9 @@ public class PhotoStubPlannerTests
         Versions = [new IndexedVersion { MediaSourceId = id, Height = 1080, Codec = "h264", BitRate = 1000, VideoRange = "SDR" }]
     };
 
-    private static StubPlan Plan(StubState? state = null, bool isProtected = true, params IndexedItem[] items)
+    private static StubPlan Plan(StubState? state = null, bool isProtected = true, params IndexedItem[] items) => Plan(new FakeIgnoreRules(), state, isProtected, items);
+
+    private static StubPlan Plan(IServerIgnoreRules rules, StubState? state = null, bool isProtected = true, params IndexedItem[] items)
     {
         var snapshot = new IndexSnapshot
         {
@@ -71,7 +73,10 @@ public class PhotoStubPlannerTests
             [new RemoteServerInfo(_serverA, "Casa", "http://server", RemoteMode.Standard, 0, [HomeVideos], null, null)],
             isProtected,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null));
+            _ => null)
+        {
+            IgnoreRules = rules
+        });
     }
 
     private static string In(params string[] parts) => Path.Combine(FederatedPaths.TypeFolderOf(_serverA, HomeVideos, TypeFolder.HomeVideos), Path.Combine(parts));
@@ -172,6 +177,41 @@ public class PhotoStubPlannerTests
 
         Assert.DoesNotContain(new[] { "folder", "thumb", "landscape", "fanart", "backdrop", "poster", "cover", "logo", "default" }, word => name.StartsWith(word, StringComparison.OrdinalIgnoreCase));
         Assert.Contains(photo, name, StringComparison.Ordinal);
+    }
+
+    // Jellyfin skips a file with a part named sample, wherever it is in the name (seen on 12.4).
+    [Theory]
+    [InlineData("a.sample", "a sample")]
+    [InlineData("IMG.sample.x", "IMG sample x")]
+    public void APhotoTheServerSkipsForAPartOfItsNameGetsANameItReads(string photo, string expected)
+    {
+        var rules = new FakeIgnoreRules((_, name, _) => name.Contains(".sample.", StringComparison.Ordinal));
+
+        var work = Assert.Single(Plan(rules, items: [Album(), Photo("p1", photo)]).Stubs);
+
+        Assert.Equal($"[{work.Entry.Id[..8]}] {expected}.jpg", Path.GetFileName(work.Entry.RelativePath));
+        Assert.Equal(photo, work.Metadata.Title);
+    }
+
+    [Fact]
+    public void APhotoTheServerSkipsOnlyForTheStartOfItsNameKeepsItsDots()
+    {
+        var rules = new FakeIgnoreRules((_, name, _) => name.StartsWith("sample.", StringComparison.Ordinal));
+
+        var work = Assert.Single(Plan(rules, items: [Album(), Photo("p1", "sample.v1.2")]).Stubs);
+
+        Assert.Equal($"[{work.Entry.Id[..8]}] sample.v1.2.jpg", Path.GetFileName(work.Entry.RelativePath));
+    }
+
+    [Fact]
+    public void AnExistingPhotoStubTheServerSkipsKeepsItsPath()
+    {
+        var first = Plan(items: [Album(), Photo("p1", "a.sample")]);
+        var kept = Assert.Single(first.Stubs).Entry.RelativePath;
+
+        var second = Plan(new FakeIgnoreRules((_, name, _) => name.Contains(".sample.", StringComparison.Ordinal)), first.State, items: [Album(), Photo("p1", "a.sample")]);
+
+        Assert.Equal(kept, Assert.Single(second.Stubs).Entry.RelativePath);
     }
 
     [Fact]
