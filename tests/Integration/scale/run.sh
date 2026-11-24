@@ -15,6 +15,8 @@
 # the plugin lists on its status page are linked to a Music library too.
 # SCALE_FIRST_ONLY=1 measures the first sync alone. SCALE_TREE builds the plugin from another checkout, such as a worktree
 # of an older commit, so that two versions run under the same harness.
+# SCALE_MIN_FREE_GIB is the free disk the run needs to start (18 for a scanned run of 300,000 tracks or more, else 0). When
+# the container stops, restarts or Docker no longer answers, watch_container.py ends the run and what it has is kept.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -31,8 +33,21 @@ ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshScale", Device="scale", DeviceId="jm-scale-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
 SETTINGS=/JellyMesh/Admin/Settings
+
+# Fails unless the disk of the home folder has this many GiB free: <GiB>.
+need_free_gib() {
+  df -Pk "$HOME" | awk -v need="$1" 'END {
+    if ($4 ~ /^[0-9]+$/ && $4 >= need * 1048576) exit 0
+    printf "%.1f GiB free, %s needed: not started\n", $4 / 1048576, need; exit 1 }' >&2
+}
+NEED=0
+[ "${SCALE_SCAN:-0}" = 1 ] && [ $((REMOTES * TRACKS)) -ge 300000 ] && NEED=18
+NEED=${SCALE_MIN_FREE_GIB:-$NEED}
+[ "$NEED" = 0 ] || need_free_gib "$NEED" || exit 1
 rm -rf "$WORK"
 mkdir -p "$WORK"
+# The output of the run, for a message of a trap that runs while a call has its own sent away.
+exec 3>&2
 
 req() {
   local method=$1 path=$2 body=${3:-} token
@@ -60,9 +75,23 @@ login() {
   mv "$WORK/token.new" "$WORK/token"
 }
 
+# Keeps the log and the results of the phases that ended after the container went away, trying Docker for two minutes.
+save_partial() {
+  local i
+  echo "--- stopped: $(cat "$WORK/stopped.txt")" >&3
+  for i in $(seq 1 12); do
+    docker cp "$NAME:/config/log" "$WORK/log" >/dev/null 2>&1 && break
+    sleep 10
+  done
+  cat "$WORK"/log/log_*.log >"$WORK/jellyfin.log" 2>/dev/null
+  python3 "$S/analyze.py" "$WORK" >"$WORK/results-partial.txt" 2>&1
+}
+
 cleanup() {
+  [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null
   [ -n "${SAMPLER_PID:-}" ] && kill "$SAMPLER_PID" 2>/dev/null
   [ -n "${FAKE_PIDS:-}" ] && kill $FAKE_PIDS 2>/dev/null
+  [ -s "$WORK/stopped.txt" ] && save_partial
   if [ "${KEEP:-0}" != 1 ]; then
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" >/dev/null 2>&1 || true
@@ -70,6 +99,7 @@ cleanup() {
   true
 }
 trap cleanup EXIT
+trap 'exit 3' USR1
 
 # Every second: memory as docker stats reports it, CPU, and the resident and peak resident set of the Jellyfin process.
 sample() {
@@ -184,6 +214,8 @@ NUGET_VOLUME=jellymesh-nuget bash "$TREE/tests/Integration/scripts/install-plugi
 sleep 3
 wait_ready
 login
+python3 -I "$S/watch_container.py" "$NAME" "$WORK/stopped.txt" "${SCALE_WATCH_S:-5}" &
+WATCH_PID=$!
 JPID=$(in_box 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null | grep -q "jellyfin.dll\|/jellyfin/jellyfin" && { echo ${p#/proc/}; break; }; done')
 echo "Jellyfin process: $JPID"
 # No scheduled sync during the measurement: every sync here is started by hand.
