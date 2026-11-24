@@ -155,14 +155,14 @@ check_server() { req "$1" POST "/JellyMesh/Admin/Servers/$2/Edit/Check" "$(serve
 import_all() { # import_all <consumer> <server id>: every library the remote user sees, saved with the edit form
   local form ids
   form=$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
-  ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id]')
+  ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id] | select(length > 0)')
   [ -n "$ids" ] || { echo "$1 listed no library of $2: $(status)" >&2; return 1; }
   req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
 }
 # import_all_old <consumer> <server id>: the same on a build before 0.6, which has no edit form.
 import_all_old() {
   local ids
-  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)}')
+  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)} | select(.LibraryIds | length > 0)')
   [ -n "$ids" ] || { echo "$1 listed no library of $2: $(status)" >&2; return 1; }
   post "$1" "/JellyMesh/Admin/Servers/$2/Libraries" "$ids" >/dev/null
 }
@@ -179,7 +179,9 @@ strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find ${3:-/federata/
 # server_folder <server id>: the folder of a remote server, as the plugin names it.
 server_folder() { local id=${1//-/}; echo "/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
 # type_folder <server id> <Film|Serie> [server]: the type folder of the one remote library of that kind of a remote server.
-type_folder() { docker exec "$(name_of "${3:-local}")" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null || true" | head -1; }
+type_folder() {
+  docker exec "$(name_of "${3:-local}")" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null | head -1 | grep ." || { echo "no $2 folder of $1" >&2; return 1; }
+}
 # link_folder <server> <library> <path>: adds a path to a library, as an admin does. Prints the status.
 link_folder() {
   post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$2" --arg p "$3" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null

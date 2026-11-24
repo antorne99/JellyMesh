@@ -52,7 +52,8 @@ for i in $(seq 1 10); do
   sync_now local
 done
 check "the stubs are linked as versions" "$sb" "$(primary_of "$sa")"
-url_a=$(strm_text local "$RES" "$(type_folder "$A" Film)")
+film_a=$(type_folder "$A" Film)
+url_a=$(strm_text local "$RES" "$film_a")
 check "the .strm of remote opens with remote up" 206 "$(strm "$url_a")"
 
 r=$(as_user uno POST "/Items/$(dashed "$sa")/PlaybackInfo" "$DIRECT")
