@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Security;
@@ -22,9 +24,11 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private const string PlaySessionParameter = "playSessionId";
     private const string LegacyParameters = "params";
     private const string LiveStreamParameter = "liveStreamId";
+    private const string VersionParameter = "mediaSourceId";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
 
     private static readonly string[] _itemRouteValues = ["itemId", "routeItemId"];
+    private static readonly string[] _versionRouteValues = [VersionParameter, "routeMediaSourceId"];
 
     private readonly PeerDirectory _peers;
     private readonly ProviderCatalog _catalog;
@@ -108,7 +112,9 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         }
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
-        if (ItemIdOf(context.RouteData) is not { } itemId || _catalog.FindVisible(caller, itemId) is null)
+        if (ItemIdOf(context.RouteData) is not { } itemId
+            || _catalog.FindVisible(caller, itemId) is null
+            || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version)))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
@@ -255,6 +261,20 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         }
 
         await next().ConfigureAwait(false);
+    }
+
+    // Every version named by the path, the query or the legacy params, under any case of the name and in every value.
+    private static IEnumerable<string> VersionsOf(HttpContext http, RouteData route)
+    {
+        var path = _versionRouteValues.Select(name => route.Values.TryGetValue(name, out var value) ? value?.ToString() : null);
+        var query = ValuesOf(http, VersionParameter);
+        var legacy = ValuesOf(http, LegacyParameters).Select(value => StubLookup.LegacyParamOf(value, StubLookup.LegacyMediaSourceField));
+        return path.Concat(query).Concat(legacy).OfType<string>().Where(version => version.Length > 0);
+    }
+
+    private static IEnumerable<string?> ValuesOf(HttpContext http, string name)
+    {
+        return http.Request.Query.Where(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).SelectMany(pair => pair.Value);
     }
 
     private static Guid? ItemIdOf(RouteData route)

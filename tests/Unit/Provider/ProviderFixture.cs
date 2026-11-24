@@ -147,9 +147,10 @@ internal sealed class ProviderFixture
             .Returns(dtos.ToList());
     }
 
-    public static BaseItemDto DtoWith(string sourceId, params MediaStream[] streams) => new()
+    /// <summary>A DTO of the shared item with its own version only.</summary>
+    public static BaseItemDto DtoWith(params MediaStream[] streams) => new()
     {
-        Id = Guid.NewGuid(),
-        MediaSources = [new MediaSourceInfo { Id = sourceId, Path = "/media/secret.mkv", MediaStreams = streams.ToList() }]
+        Id = SharedItem,
+        MediaSources = [new MediaSourceInfo { Id = SharedItem.ToString("N"), Path = "/media/secret.mkv", MediaStreams = streams.ToList() }]
     };
 }

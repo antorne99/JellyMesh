@@ -338,11 +338,11 @@ public class ProviderCatalogTests
     {
         var other = new MediaStream { Type = MediaStreamType.Video, Height = 480, Width = 640, BitRate = 1, Codec = "mpeg2" };
         var main = new MediaStream { Type = MediaStreamType.Video, IsDefault = true, Height = 1080, Width = 1920, BitRate = 5_000_000, Codec = "hevc", ColorTransfer = "smpte2084", ColorPrimaries = "bt2020" };
-        _fixture.WithDtos(ProviderFixture.DtoWith("ms", other, main));
+        _fixture.WithDtos(ProviderFixture.DtoWith(other, main));
 
         var page = _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
-        var quality = page.Quality["ms"];
+        var quality = page.Quality[ProviderFixture.SharedItem.ToString("N")];
         Assert.Equal(1080, quality.Height);
         Assert.Equal(1920, quality.Width);
         Assert.Equal(5_000_000, quality.BitRate);
@@ -353,7 +353,7 @@ public class ProviderCatalogTests
     [Fact]
     public void A_version_without_video_has_no_quality()
     {
-        _fixture.WithDtos(ProviderFixture.DtoWith("ms", new MediaStream { Type = MediaStreamType.Audio }));
+        _fixture.WithDtos(ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Audio }));
 
         Assert.Empty(_fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie).Quality);
     }
@@ -361,7 +361,7 @@ public class ProviderCatalogTests
     [Fact]
     public void No_file_path_reaches_a_peer()
     {
-        var dto = ProviderFixture.DtoWith("ms", new MediaStream { Type = MediaStreamType.Subtitle, Path = "/media/secret.srt" });
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Subtitle, Path = "/media/secret.srt" });
         dto.Chapters = [new ChapterInfo { Name = "Intro", ImagePath = "/config/metadata/secret.jpg" }];
         _fixture.WithDtos(dto);
 

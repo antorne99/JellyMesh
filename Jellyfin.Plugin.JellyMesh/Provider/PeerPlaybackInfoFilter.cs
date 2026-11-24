@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Model.MediaInfo;
@@ -19,9 +20,11 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
     private const string LiveStreamArgument = "liveStreamId";
     private const string BodyArgument = "playbackInfoDto";
     private const string LiveStreamProperty = "LiveStreamId";
+    private const string VersionProperty = "MediaSourceId";
     private const string PostedAction = "GetPostedPlaybackInfo";
 
     private readonly PeerDirectory _peers;
+    private readonly ProviderCatalog _catalog;
     private readonly StreamSlots _slots;
     private readonly AbandonedStreamCloser _closer;
 
@@ -29,11 +32,13 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
     /// Initializes a new instance of the <see cref="PeerPlaybackInfoFilter"/> class.
     /// </summary>
     /// <param name="peers">The peers.</param>
+    /// <param name="catalog">The catalog.</param>
     /// <param name="slots">The stream slots.</param>
     /// <param name="closer">The closer of abandoned transcodes.</param>
-    public PeerPlaybackInfoFilter(PeerDirectory peers, StreamSlots slots, AbandonedStreamCloser closer)
+    public PeerPlaybackInfoFilter(PeerDirectory peers, ProviderCatalog catalog, StreamSlots slots, AbandonedStreamCloser closer)
     {
         _peers = peers;
+        _catalog = catalog;
         _slots = slots;
         _closer = closer;
     }
@@ -59,6 +64,14 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
+        // The same answer as for an item that does not exist. The version of the query is checked with the route.
+        var itemId = StubLookup.ItemIdOf(context) ?? Guid.Empty;
+        if (!TryReadBody(context, VersionProperty, out var version) || (!string.IsNullOrEmpty(version) && !_catalog.MaySeeVersion(caller, itemId, version)))
+        {
+            context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+            return;
+        }
+
         var peerId = caller.Grant.UserId;
         var replaces = http.Request.Headers[ProviderProtocol.ReplacesHeader].ToString();
         var reservation = await ReserveAsync(peerId, caller.Grant.MaxStreams, string.IsNullOrEmpty(replaces) ? null : replaces).ConfigureAwait(false);
@@ -72,6 +85,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
         try
         {
             var executed = await next().ConfigureAwait(false);
+            KeepVisible(executed, caller, itemId);
 
             // A consumer that left never learns the play session: the slot would sit there under a name nobody knows.
             if (!http.RequestAborted.IsCancellationRequested
@@ -79,7 +93,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
             {
                 // Stock stops every job of a device for a segment with no play session, so the devices are the peer's too.
                 var devices = PlaybackInfoFilter.DevicesOf(response, caller.DeviceId);
-                _slots.Confirm(peerId, reservation, playSessionId, StubLookup.ItemIdOf(context) ?? Guid.Empty, devices);
+                _slots.Confirm(peerId, reservation, playSessionId, itemId, devices);
                 PeerGuardFilter.NotePlaybackInfo(http, playSessionId);
                 confirmed = true;
             }
@@ -105,32 +119,53 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
         return _slots.TryReserve(peerId, limit, replaces);
     }
 
-    // Stock takes the live stream from the query, else from the posted body, whose type is not in a NuGet package.
-    // A posted body that is not bound, or has no string LiveStreamId, counts as naming one: a later Jellyfin renamed it.
+    // Keeps the versions of an answer that the peer may see. An answer left with none is the one for a missing item.
+    private void KeepVisible(ActionExecutedContext executed, PeerCaller caller, Guid itemId)
+    {
+        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse { MediaSources: { Count: > 0 } sources } response })
+        {
+            return;
+        }
+
+        response.MediaSources = sources.Where(source => _catalog.MaySeeVersion(caller, itemId, source.Id)).ToList();
+        if (response.MediaSources.Count == 0)
+        {
+            executed.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
+        }
+    }
+
+    // Stock takes the live stream from the query, else from the posted body.
+    // A posted body that cannot be read counts as naming one: a later Jellyfin changed it.
     private static bool NamesLiveStream(ActionExecutingContext context)
     {
         var query = context.ActionArguments.TryGetValue(LiveStreamArgument, out var value) ? value as string : null;
-        if (!string.IsNullOrWhiteSpace(query))
-        {
-            return true;
-        }
+        return !string.IsNullOrWhiteSpace(query)
+            || !TryReadBody(context, LiveStreamProperty, out var body)
+            || !string.IsNullOrWhiteSpace(body);
+    }
 
+    // Reads a text of the posted body, whose type is not in a NuGet package. False when the body is not bound or has no
+    // such text; a request without a body has none to read.
+    private static bool TryReadBody(ActionExecutingContext context, string name, out string? text)
+    {
+        text = null;
         if (!string.Equals(context.ActionDescriptor is ControllerActionDescriptor action ? action.ActionName : null, PostedAction, StringComparison.Ordinal))
         {
-            return false;
+            return true;
         }
 
         if (!context.ActionArguments.TryGetValue(BodyArgument, out var body))
         {
-            return true;
+            return false;
         }
 
         if (body is null)
         {
-            return false;
+            return true;
         }
 
-        var property = body.GetType().GetProperty(LiveStreamProperty);
-        return property?.PropertyType != typeof(string) || !string.IsNullOrWhiteSpace(property.GetValue(body) as string);
+        var property = body.GetType().GetProperty(name);
+        text = property?.GetValue(body) as string;
+        return property?.PropertyType == typeof(string);
     }
 }

@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.5.0.3"
+version: "0.5.0.4"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -20,6 +20,7 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - Downloading a film or an episode from another server now saves it under the title's own name with the extension of the video, such as .mkv, instead of a name with no extension.
+  - A server you share libraries with now gets only the versions of a title it may see: no longer the copies your server reads from other servers, nor those in libraries you don't share with it. It also can't play them by asking for them.
+  - The servers connected to yours drop the versions they no longer get at their next full sync, which runs every night. Update the servers that share libraries; the others need no change.
 
-  Not verified: the file name in the Jellyfin apps, checked only in the server's answer and in unit tests.
+  Not verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only, and the drop of those versions in an incremental sync.

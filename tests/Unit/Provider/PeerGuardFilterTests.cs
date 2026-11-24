@@ -1178,13 +1178,14 @@ public class PeerPlaybackInfoFilterTests
 
     public PeerPlaybackInfoFilterTests()
     {
-        _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Slots, _fixture.Closer);
+        _filter = new PeerPlaybackInfoFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer);
     }
 
     private Task<(ActionExecutingContext Context, bool Ran)> RunAsync(IActionResult? result, string? replaces = null, Exception? failure = null, bool consumerLeft = false, Dictionary<string, object?>? arguments = null, bool bodyBound = true)
     {
         // Stock binds the posted body of every consumer PlaybackInfo, so the tests post one unless told otherwise.
         arguments ??= new Dictionary<string, object?>();
+        arguments.TryAdd("itemId", ProviderFixture.SharedItem);
         if (bodyBound)
         {
             arguments.TryAdd("playbackInfoDto", new PostedBody());
@@ -1377,7 +1378,7 @@ public class PeerPlaybackInfoFilterTests
     private static OkObjectResult AnswerWithTranscode(string transcodingUrl)
     {
         var answer = new PlaybackInfoResponse { PlaySessionId = "play" };
-        answer.MediaSources = [new MediaBrowser.Model.Dto.MediaSourceInfo { TranscodingUrl = transcodingUrl }];
+        answer.MediaSources = [new MediaBrowser.Model.Dto.MediaSourceInfo { Id = ProviderFixture.SharedItem.ToString("N"), TranscodingUrl = transcodingUrl }];
         return new OkObjectResult(answer);
     }
 
@@ -1410,6 +1411,8 @@ public class PeerPlaybackInfoFilterTests
     private sealed class PostedBody
     {
         public string? LiveStreamId { get; init; }
+
+        public string? MediaSourceId { get; init; }
     }
 
     [Theory]
