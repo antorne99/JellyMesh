@@ -37,6 +37,9 @@ FAILED=0
 check() { # check <what> <expected> <got>
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected [$2], got [$3]"; FAILED=1; fi
 }
+check_some() { # check_some <what> <expected> <got>: the same, and fails when there is nothing to compare
+  if [ -n "$2" ]; then check "$@"; else echo "FAIL $1: nothing to compare with, got [$3]"; FAILED=1; fi
+}
 
 wait_ready() {
   local i
@@ -153,7 +156,15 @@ import_all() { # import_all <consumer> <server id>: every library the remote use
   local form ids
   form=$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
   ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id]')
+  [ -n "$ids" ] || { echo "$1 listed no library of $2: $(status)" >&2; return 1; }
   req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
+}
+# import_all_old <consumer> <server id>: the same on a build before 0.6, which has no edit form.
+import_all_old() {
+  local ids
+  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)}')
+  [ -n "$ids" ] || { echo "$1 listed no library of $2: $(status)" >&2; return 1; }
+  post "$1" "/JellyMesh/Admin/Servers/$2/Libraries" "$ids" >/dev/null
 }
 
 # item <server> <title substring> [item type]: the id of an item whose path has that substring and is a stub or not.
