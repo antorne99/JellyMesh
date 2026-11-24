@@ -88,9 +88,9 @@ public partial class PlaybackFiltersTests
         _library.Setup(library => library.GetItemById<BaseItem>(_itemId, _user)).Returns(new Movie());
     }
 
-    private PlaybackInfoFilter InfoFilter()
+    private PlaybackInfoFilter InfoFilter(InMemoryConfigurationStore? settings = null)
     {
-        var store = new InMemoryConfigurationStore();
+        var store = settings ?? new InMemoryConfigurationStore();
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         _offer = new SegmentOffer(_segmentManager.Object, Segments(lookup, store), lookup, _fixture.Sessions);
         return new PlaybackInfoFilter(

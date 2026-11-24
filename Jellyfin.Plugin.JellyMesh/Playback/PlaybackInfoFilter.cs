@@ -110,8 +110,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // R:versioni §5: the version comes from the query, else from the body, as the stock action merges them.
         var arguments = new ArgumentReader(context.ActionArguments);
         var asked = arguments.Version(MediaSourceArgument);
-        var routeStub = _stubs.Find(route);
-        if (routeStub is null && (asked is not { } named || named.Equals(route) || _stubs.Find(named) is null) && !_stubs.HasVersions(route))
+        var routeStub = _stubs.Resolve(route, out var routeUnknown);
+        if (routeStub is null && !routeUnknown && (asked is not { } named || named.Equals(route) || !IsFederated(named)) && !_stubs.HasVersions(route))
         {
             await next().ConfigureAwait(false);
             return;
@@ -135,10 +135,23 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        var target = asked ?? (routeStub is null ? route : _versions.Choose(route, routeStub, user));
-        var targetStub = target.Equals(route) ? routeStub : _stubs.Find(target);
+        var target = asked ?? (routeStub is not null ? _versions.Choose(route, routeStub, user) : routeUnknown ? _versions.LinkedLocalCopy(route, user) ?? route : route);
+        var targetStub = _stubs.Resolve(target, out var targetUnknown);
+        if (targetUnknown)
+        {
+            _logger.LogWarning("PlaybackInfo of item {ItemId} is refused: the registry does not hold the stub of version {VersionId}", route, target);
+            context.Result = _refusal.Refuse(http, authorization.DeviceId ?? string.Empty, _coordinator.IsSuspended ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
+            return;
+        }
+
         if (targetStub is null && routeStub is null)
         {
+            // Under an unknown stub, stock answers for the local item itself.
+            if (routeUnknown)
+            {
+                context.ActionArguments[ItemArgument] = target;
+            }
+
             await PlayStockVersionAsync(context, next, target, route).ConfigureAwait(false);
             return;
         }
@@ -200,6 +213,17 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
     }
 
+    private bool IsFederated(Guid itemId) => _stubs.Resolve(itemId, out var isUnknown) is not null || isUnknown;
+
+    // Keeps only the source of a local version, and never the one of a stub, which holds its signed URL.
+    private void KeepLocal(PlaybackInfoResponse response, Guid versionId)
+    {
+        KeepOnly(response, versionId);
+        response.MediaSources = response.MediaSources
+            .Where(source => !Guid.TryParse(source.Id, out var id) || id.Equals(versionId) || !_stubs.IsStub(id))
+            .ToList();
+    }
+
     // Stock answers for a local version under a local item. The GET action has no version to pin, so the answer is trimmed.
     private async Task PlayStockVersionAsync(ActionExecutingContext context, ActionExecutionDelegate next, Guid versionId, Guid route)
     {
@@ -207,14 +231,14 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var executed = await next().ConfigureAwait(false);
         if (executed.Result is ObjectResult { Value: PlaybackInfoResponse response } && executed.Exception is null && response.ErrorCode is null && response.MediaSources.Count > 0)
         {
-            KeepOnly(response, versionId);
+            KeepLocal(response, versionId);
             _logger.LogInformation("Item {ItemId} plays its local version {VersionId}, play session {PlaySessionId}", route, versionId, response.PlaySessionId);
             return;
         }
 
         if (executed.Result is ObjectResult { Value: PlaybackInfoResponse trimmed })
         {
-            KeepOnly(trimmed, versionId);
+            KeepLocal(trimmed, versionId);
         }
 
         _logger.LogWarning("Stock gave no PlaybackInfo for the local version {VersionId} of item {ItemId}: {Failure}", versionId, route, StockFailureOf(executed));
