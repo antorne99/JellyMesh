@@ -71,8 +71,9 @@ public static partial class ErrorText
             return Hidden;
         }
 
-        text = WithoutUnsafe(text);
-        if (text.Length > MaxLength + Margin)
+        text = WithoutUnsafe(text, MaxLength + Margin + 1);
+        var isCut = text.Length > MaxLength + Margin;
+        if (isCut)
         {
             text = text[..(MaxLength + Margin)];
             dropped = secrets.Select(LongestForm).Append(dropped).Max();
@@ -104,7 +105,7 @@ public static partial class ErrorText
             return "[not shown: its secrets could not be removed in time]";
         }
 
-        return Cut(dropped == 0 ? text : text[..^Math.Min(dropped, text.Length)]);
+        return Cut(dropped == 0 ? text : text[..^Math.Min(dropped, text.Length)], isCut);
     }
 
     /// <summary>
@@ -138,7 +139,8 @@ public static partial class ErrorText
     /// <returns>The indented text, starting with a line break.</returns>
     internal static string Block(string text) => LineStart + text.Replace("\n", LineStart, StringComparison.Ordinal);
 
-    private static string Cut(string text)
+    // Cuts a text at the most lines and characters, and says so, also when it was cut before.
+    private static string Cut(string text, bool isCut)
     {
         var end = 0;
         for (var line = 0; line < MaxLines && end >= 0; line++)
@@ -151,20 +153,28 @@ public static partial class ErrorText
             return string.Concat(text.AsSpan(0, end), string.Create(CultureInfo.InvariantCulture, $"\n[cut at {MaxLines} lines]"));
         }
 
-        if (text.Length <= MaxLength)
+        if (text.Length <= MaxLength && !isCut)
         {
             return text;
         }
 
-        var length = char.IsHighSurrogate(text[MaxLength - 1]) ? MaxLength - 1 : MaxLength;
+        var length = Math.Min(text.Length, MaxLength);
+        length -= length > 0 && char.IsHighSurrogate(text[length - 1]) ? 1 : 0;
         return string.Concat(text.AsSpan(0, length), string.Create(CultureInfo.InvariantCulture, $"\n[cut at {MaxLength} characters]"));
     }
 
-    private static string WithoutUnsafe(string text)
+    private static string WithoutUnsafe(string text) => WithoutUnsafe(text, int.MaxValue);
+
+    private static string WithoutUnsafe(string text, int max)
     {
-        var builder = new StringBuilder(text.Length);
+        var builder = new StringBuilder(Math.Min(text.Length, max));
         foreach (var character in text)
         {
+            if (builder.Length >= max)
+            {
+                break;
+            }
+
             if (character == '\t')
             {
                 builder.Append("    ");
@@ -179,7 +189,7 @@ public static partial class ErrorText
     }
 
     // The ways a secret can be written in an answer, without the characters the text loses.
-    private static IEnumerable<string> FormsOf(string secret) => EncodingsOf(secret).Select(WithoutUnsafe).Where(form => form.Length > 0);
+    private static IEnumerable<string> FormsOf(string secret) => EncodingsOf(secret).Select(form => WithoutUnsafe(form)).Where(form => form.Length > 0);
 
     // A secret as it is, in JSON, in a URL, in HTML or in base64.
     private static IEnumerable<string> EncodingsOf(string secret)

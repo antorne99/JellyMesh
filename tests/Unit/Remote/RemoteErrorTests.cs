@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -189,15 +190,18 @@ public class RemoteErrorTests
     }
 
     [Fact]
-    public async Task ALongExceptionMessageIsCutWithoutPartOfASecret()
+    public async Task ALongExceptionMessageIsCutBeforeItsSecretsAreRemoved()
     {
-        var message = new string('x', (72 * 1024) - 120) + TestValues.Token + new string('x', 1000);
+        var message = string.Concat(Enumerable.Repeat(TestValues.Token + " ", 4000)) + "the-very-end";
         var handler = new StubHandler(_ => throw new HttpRequestException(message));
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
 
-        Assert.InRange(result.Error!.ToString().Length, 60_000, 70_000);
-        Assert.DoesNotContain(TestValues.Token[..8], result.Error.ToString(), StringComparison.Ordinal);
+        var detail = result.Error!.ToString();
+        Assert.Contains(ErrorText.Removed, detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(TestValues.Token[..8], detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("the-very-end", detail, StringComparison.Ordinal);
+        Assert.Contains("cut at 65536 characters", detail, StringComparison.Ordinal);
     }
 
     [Fact]
