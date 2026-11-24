@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/antorne99/JellyMesh/main/assets/jellymesh.png",
     "versions": [
       {
+        "version": "0.5.0.3",
+        "changelog": "- Downloading a film or an episode from another server now saves it under the title's own name with the extension of the video, such as .mkv, instead of a name with no extension.\n\nNot verified: the file name in the Jellyfin apps, checked only in the server's answer and in unit tests.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.5.0.3/jellymesh_0.5.0.3.zip",
+        "checksum": "afba596e7e80287b630d6a5bfc263863",
+        "timestamp": "2026-11-20T10:14:21Z"
+      },
+      {
         "version": "0.5.0.2",
         "changelog": "- JellyMesh 0.5.0.0 and 0.5.0.1 stopped Jellyfin 12.1, 12.2 and 12.3 from starting; 0.5.0.2 starts on every Jellyfin from 12.1 on.\n- If your server stopped, start Jellyfin again: it turns JellyMesh off by itself and starts. Then install 0.5.0.2 from the catalog.\n- Downloading a film or an episode from another server now gives the video itself, as playing it does, instead of a small text file with an internal link; a download still needs the user's download permission.\n- When playback of a federated title fails, stops or falls back, the server log now says why: which server and step failed, the error with its HTTP status, how a stream broke off and after how long, and whether the playback session ended. No password, token or server address goes into the log.\n\nNot verified: Jellyfin 12.2, installs outside Docker such as Windows and macOS, and the install from the catalog after the server stopped, checked by copying the plugin into place. The log of a stream that breaks off midway and of HLS or transcoded playback, checked only in unit tests.",
         "targetAbi": "12.1.0.0",
