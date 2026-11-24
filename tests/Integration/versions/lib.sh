@@ -43,8 +43,6 @@ children_of() {
 nfo_sums() { docker exec "$PREFIX-local" sh -c "find /media /federata -name '*.nfo' -exec md5sum {} + | sort -k2"; }
 # stub_of <server id> <title>: the id of the stub of a title in the folder of a server, under any remote library.
 stub_of() { vid "$(server_folder "$1")/%/Film/$2"; }
-# type_folder <server id> <Film|Serie>: the type folder of the one remote library of that kind of a server.
-type_folder() { docker exec "$PREFIX-local" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null || true" | head -1; }
 # found <what> <id>...: fails if an id is empty.
 found() {
   local what=$1 i missing=0

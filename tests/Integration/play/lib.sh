@@ -172,12 +172,14 @@ stub_item() { get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path
 local_item() { get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$2" '[.Items[] | select((.Path // "") | (contains($t) and startswith("/media")))][0].Id // ""'; }
 stub_url() { get "$1" "/Items?Ids=$2&Fields=MediaSources" | jq -r '.Items[0].MediaSources[0].Path'; }
 
-# strm_file <server> <title> [folder]: the .strm of a title, by default in the Film folder of a remote server.
-strm_file() { docker exec "$(name_of "$1")" sh -c "find ${3:-/federata/*/Film} -name '*.strm' | grep -F \"$2\" | head -1"; }
-strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find ${3:-/federata/*/Film} -name '*.strm' | grep -F \"$2\" | head -1)\""; }
+# strm_file <server> <title> [folder]: the .strm of a title, by default in the Film folder of a remote library.
+strm_file() { docker exec "$(name_of "$1")" sh -c "find ${3:-/federata/*/*/Film} -name '*.strm' | grep -F \"$2\" | head -1"; }
+strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find ${3:-/federata/*/*/Film} -name '*.strm' | grep -F \"$2\" | head -1)\""; }
 
 # server_folder <server id>: the folder of a remote server, as the plugin names it.
 server_folder() { local id=${1//-/}; echo "/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+# type_folder <server id> <Film|Serie> [server]: the type folder of the one remote library of that kind of a remote server.
+type_folder() { docker exec "$(name_of "${3:-local}")" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null || true" | head -1; }
 # link_folder <server> <library> <path>: adds a path to a library, as an admin does. Prints the status.
 link_folder() {
   post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$2" --arg p "$3" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
