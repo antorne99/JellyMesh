@@ -101,8 +101,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    // The type only: a message could hold a path.
-                    _logger.LogError("Cannot carry the watch state of a title: {Error}", exception.GetType().Name);
+                    _logger.LogError("Cannot carry the watch state of a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                     outcome = new WatchStateMoveOutcome(move, WatchStateMoveStatus.Failed, []);
                 }
 
@@ -127,8 +126,8 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path. The records of this run are saved all the same.
-            _logger.LogError("Cannot clean up the record of the watch state carries: {Error}", exception.GetType().Name);
+            // The records of this run are saved all the same.
+            _logger.LogError("Cannot clean up the record of the watch state carries: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         // A move done may rest on a record from an earlier run that is still not on disk, so none counts as done.
@@ -500,8 +499,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                // The type only: a message could hold a path.
-                _logger.LogError("Cannot save the watch state carried to a title: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot save the watch state carried to a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 return false;
             }
 
@@ -551,8 +549,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot look up a removed title before forgetting its carries: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot look up a removed title before forgetting its carries: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

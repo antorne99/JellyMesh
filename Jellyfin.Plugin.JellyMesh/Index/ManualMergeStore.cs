@@ -121,7 +121,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of manual merges: {Error}. Its merges are not applied", exception.GetType().Name);
+            _logger.LogError("Cannot read the file of manual merges: {Error}. Its merges are not applied{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         _isDamaged = true;
@@ -137,7 +137,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of manual merges: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of manual merges: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

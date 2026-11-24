@@ -1314,7 +1314,7 @@ public class PlaybackFiltersTests
         Assert.Same(failure, executed.Exception);
         _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
         Assert.Contains(_guardLog.Lines, line => line.Contains("failed in stock: FfmpegException", StringComparison.Ordinal));
-        Assert.DoesNotContain(_guardLog.Lines, line => line.Contains("exited", StringComparison.Ordinal));
+        Assert.Contains(_guardLog.Lines, line => line.Contains("exited", StringComparison.Ordinal));
     }
 
     [Fact]

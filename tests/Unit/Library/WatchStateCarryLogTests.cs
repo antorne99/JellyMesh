@@ -182,7 +182,7 @@ public sealed class WatchStateCarryLogTests : IDisposable
         Assert.Equal(content, await File.ReadAllTextAsync(FilePath));
         Assert.False(File.Exists(FilePath + ".damaged"));
         Assert.Contains(logger.Lines, line => line.Contains(error.Name, StringComparison.Ordinal));
-        Assert.DoesNotContain(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
 
         failing = false;
 

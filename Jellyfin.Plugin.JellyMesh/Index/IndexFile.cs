@@ -140,7 +140,7 @@ public sealed class IndexFile
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the federation index file {FileName}: {Error}", Path.GetFileName(path), exception.GetType().Name);
+            _logger.LogError("Cannot read the federation index file {FileName}: {Error}{Detail:l}", Path.GetFileName(path), exception.GetType().Name, ErrorText.Of(exception));
         }
 
         return null;
@@ -159,7 +159,7 @@ public sealed class IndexFile
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged federation index: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged federation index: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

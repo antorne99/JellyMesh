@@ -432,7 +432,7 @@ public sealed class StubCleanupTaskTests : IDisposable
     }
 
     [Fact]
-    public async Task AFailedRenameFinish_IsLoggedByItsTypeOnly_AndTheLinkRuns()
+    public async Task AFailedRenameFinish_IsLoggedWhole_AndTheLinkRuns()
     {
         await TwoFilmsThatBecomeOneAsync();
         _renames
@@ -442,12 +442,12 @@ public sealed class StubCleanupTaskTests : IDisposable
         await RunAsync();
 
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
         _linker.Verify(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task AFailedMigration_IsLoggedByItsTypeOnly()
+    public async Task AFailedMigration_IsLoggedWhole()
     {
         await TwoFilmsThatBecomeOneAsync();
         _migration
@@ -457,11 +457,11 @@ public sealed class StubCleanupTaskTests : IDisposable
         await RunAsync();
 
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task AFailedLink_IsLoggedByItsTypeOnly_AndTheScanGoesOn()
+    public async Task AFailedLink_IsLoggedWhole_AndTheScanGoesOn()
     {
         await TwoFilmsThatBecomeOneAsync();
         _linker
@@ -471,7 +471,7 @@ public sealed class StubCleanupTaskTests : IDisposable
         await RunAsync();
 
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
         Assert.Single(_fixture.Registry.State.Stubs);
     }
 

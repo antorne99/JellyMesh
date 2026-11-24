@@ -178,8 +178,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Migration to the server folders failed: {Error}", exception.GetType().Name);
+            _logger.LogError("Migration to the server folders failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -218,8 +217,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("The automatic migration to the server folders failed at the step {Step}: {Error}", step, exception.GetType().Name);
+            _logger.LogError("The automatic migration to the server folders failed at the step {Step}: {Error}{Detail:l}", step, exception.GetType().Name, ErrorText.Of(exception));
             if (step != AutomaticMigrationStep.Done)
             {
                 TryStop(AutomaticMigrationError.Failed, null);
@@ -268,8 +266,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("The sync before the scan of the automatic migration failed: {Error}", exception.GetType().Name);
+            _logger.LogError("The sync before the scan of the automatic migration failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -395,7 +392,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the old folders before removing them from the libraries: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the old folders before removing them from the libraries: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return true;
         }
     }
@@ -408,7 +405,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }
@@ -438,7 +435,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            _logger.LogError("Cannot save the error of the automatic migration to the server folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot save the error of the automatic migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

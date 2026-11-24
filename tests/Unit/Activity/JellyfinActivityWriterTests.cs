@@ -77,7 +77,7 @@ public class JellyfinActivityWriterTests
     }
 
     [Fact]
-    public async Task A_failing_activity_log_is_logged_with_the_type_only_and_never_thrown()
+    public async Task A_failing_activity_log_is_logged_whole_and_never_thrown()
     {
         var manager = new Mock<IActivityManager>();
         manager.Setup(m => m.CreateAsync(It.IsAny<ActivityLog>())).ThrowsAsync(new InvalidOperationException("http://" + TestValues.Host));
@@ -89,7 +89,7 @@ public class JellyfinActivityWriterTests
 
         var line = Assert.Single(logger.Lines);
         Assert.Contains(nameof(InvalidOperationException), line, StringComparison.Ordinal);
-        Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
+        Assert.Contains(TestValues.Host, line, StringComparison.Ordinal);
     }
 
     [Fact]

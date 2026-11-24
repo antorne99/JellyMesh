@@ -110,7 +110,7 @@ public sealed class LibraryRenameJournal
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogError("Cannot save the library renames: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot save the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 return false;
             }
         }
@@ -139,7 +139,7 @@ public sealed class LibraryRenameJournal
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogError("Cannot copy a library rename to the damaged file: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot copy a library rename to the damaged file: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 copied = false;
             }
 
@@ -152,7 +152,7 @@ public sealed class LibraryRenameJournal
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogError("Cannot save the library renames: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot save the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 return SetAsideOutcome.Pending;
             }
         }
@@ -197,7 +197,7 @@ public sealed class LibraryRenameJournal
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the library renames: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the file of the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -206,7 +206,7 @@ public sealed class LibraryRenameJournal
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot read the file of the library renames for now: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the file of the library renames for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
 
@@ -219,7 +219,7 @@ public sealed class LibraryRenameJournal
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot set aside the damaged file of the library renames: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot set aside the damaged file of the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         // Dropped all the same, so it is never replayed and later renames are not blocked (row 357).
@@ -232,7 +232,7 @@ public sealed class LibraryRenameJournal
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot drop the damaged file of the library renames: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot drop the damaged file of the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }

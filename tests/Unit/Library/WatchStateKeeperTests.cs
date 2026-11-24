@@ -379,7 +379,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         await _keeper.RestoreAsync(CancellationToken.None);
 
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
-        Assert.DoesNotContain(_logger.Lines, message => message.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, message => message.Contains("secret", StringComparison.Ordinal));
 
         _failingSaves.Clear();
         await _keeper.RestoreAsync(CancellationToken.None);
@@ -460,7 +460,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.Single(_fixture.Registry.State.Stubs);
         Assert.True(Directory.Exists(_fixture.Path_(a)));
-        Assert.DoesNotContain(_logger.Lines, message => message.Contains("secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, message => message.Contains("secret", StringComparison.Ordinal));
     }
 
     // Row 416: the page names each removed server whose removal waits for the save, until the save succeeds.

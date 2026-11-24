@@ -264,7 +264,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
             if (executed.Exception is not null && !executed.ExceptionHandled)
             {
-                _logger.LogWarning("{Controller}.{Action} of a federated title failed in stock: {Error}", controller, action, executed.Exception.GetType().Name);
+                _logger.LogWarning("{Controller}.{Action} of a federated title failed in stock: {Error}{Detail:l}", controller, action, executed.Exception.GetType().Name, ErrorText.Of(executed.Exception));
             }
             else if (StatusOf(executed.Result) is >= 400 and var status)
             {

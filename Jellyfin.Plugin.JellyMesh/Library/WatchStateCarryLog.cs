@@ -153,7 +153,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _unsaved = true;
-            _logger.LogError("Cannot save the watch state carries done: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot save the watch state carries done: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
         catch
@@ -215,7 +215,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the watch state carries done: {Error}. It is set aside", exception.GetType().Name);
+            _logger.LogError("Cannot read the file of the watch state carries done: {Error}. It is set aside{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -223,7 +223,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries are suspended until it reads", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the file of the watch state carries done for now: {Error}. Carries are suspended until it reads{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
 
@@ -241,7 +241,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries are suspended until it is set aside", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of the watch state carries: {Error}. Carries are suspended until it is set aside{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

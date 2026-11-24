@@ -143,7 +143,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot save the federation index: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot save the federation index: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
         finally

@@ -212,7 +212,7 @@ big=$(docker exec "$NAME" sh -c 'find /federata -type f -size +16M | wc -l' | tr
 check "no huge image on disk" 0 "$big"
 rm -f "$WORK/fourth"
 
-echo "--- error bodies are not read"
+echo "--- error bodies are read up to 64 KB"
 set_mode pi-error
 started=$SECONDS
 check "a 500 with a body of 2 GB: refused" 503 "$(open e1 "$film")"

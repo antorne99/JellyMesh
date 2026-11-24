@@ -73,7 +73,7 @@ public sealed class AbandonedStreamCloser : BackgroundService
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogWarning("Could not close the transcode of a stream: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Could not close the transcode of a stream: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

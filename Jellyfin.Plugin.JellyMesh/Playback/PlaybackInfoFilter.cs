@@ -217,7 +217,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             KeepOnly(trimmed, versionId);
         }
 
-        _logger.LogWarning("Stock gave no PlaybackInfo for the local version {VersionId} of item {ItemId}: {Failure}", versionId, route, StockFailureOf(executed));
+        _logger.LogWarning("Stock gave no PlaybackInfo for the local version {VersionId} of item {ItemId}: {Failure:l}", versionId, route, StockFailureOf(executed));
     }
 
     private static void HideFile(MediaSourceInfo source)
@@ -281,10 +281,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         await PlayLocalCopyAsync(context, next, request, local.Id, route).ConfigureAwait(false);
     }
 
-    // Says why stock gave no usable PlaybackInfo, without any text of the answer.
+    // Says in the log why stock gave no usable PlaybackInfo, without any text of the answer.
     private static string StockFailureOf(ActionExecutedContext executed)
     {
-        return executed.Exception is { } exception ? exception.GetType().Name
+        return executed.Exception is { } exception ? exception.GetType().Name + ErrorText.Of(exception)
             : executed.Result is ObjectResult { Value: PlaybackInfoResponse response }
                 ? response.ErrorCode?.ToString() ?? (response.MediaSources.Count == 0 ? "no media source" : "no transcoding URL")
             : executed.Result is IStatusCodeActionResult { StatusCode: { } status } ? "status " + status.ToString(CultureInfo.InvariantCulture)
@@ -299,7 +299,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var executed = await next().ConfigureAwait(false);
         if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, localItemId))
         {
-            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure}", localItemId, request.Stub.Id, StockFailureOf(executed));
+            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure:l}", localItemId, request.Stub.Id, StockFailureOf(executed));
             executed.Exception = null;
             executed.ExceptionHandled = true;
             executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
@@ -338,7 +338,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
         if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalResponse(response, request, outcome))
         {
-            _logger.LogWarning("Stock gave no PlaybackInfo for the local transcode of title {StubId}: {Failure}", request.Stub.Id, StockFailureOf(executed));
+            _logger.LogWarning("Stock gave no PlaybackInfo for the local transcode of title {StubId}: {Failure:l}", request.Stub.Id, StockFailureOf(executed));
             executed.Exception = null;
             executed.ExceptionHandled = true;
             executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);

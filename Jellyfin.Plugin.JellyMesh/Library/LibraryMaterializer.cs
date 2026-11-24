@@ -353,7 +353,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(entry.ServerId);
-            _logger.LogError("Cannot write a stub series: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot write a stub series: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -386,7 +386,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(serverId);
-            _logger.LogError("Cannot write a stub season: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot write a stub season: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         return entry;
@@ -458,7 +458,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(entry.ServerId);
-            _logger.LogError("Cannot write a stub: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot write a stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -478,7 +478,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(stub.ServerId);
-            _logger.LogError("Cannot sign a stub: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot sign a stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -689,7 +689,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         run.Failed += removal.Failures.Count;
         foreach (var failure in removal.Failures)
         {
-            _logger.LogError("Cannot remove a stub: {Error}", failure.GetType().Name);
+            _logger.LogError("Cannot remove a stub: {Error}{Detail:l}", failure.GetType().Name, ErrorText.Of(failure));
         }
 
         // A stub still in the registry was not removed. The totals count the failures themselves.
@@ -712,7 +712,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         run.FoldersPending += removal.Failures.Count;
         foreach (var failure in removal.Failures)
         {
-            _logger.LogError("Cannot remove the folder of a removed server: {Error}", failure.GetType().Name);
+            _logger.LogError("Cannot remove the folder of a removed server: {Error}{Detail:l}", failure.GetType().Name, ErrorText.Of(failure));
         }
 
         if (removal.Removed > 0)

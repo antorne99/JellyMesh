@@ -955,7 +955,7 @@ public sealed class PlaybackCoordinator
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogWarning("Could not close a local transcode of a removed server: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Could not close a local transcode of a removed server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -1052,9 +1052,9 @@ public sealed class PlaybackCoordinator
         {
             return await _registry.RunPlaybackCallAsync(serverId, call, limit.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning("A call to server {ServerId} timed out after {Timeout}", serverId, timeout);
+            _logger.LogWarning("A call to server {ServerId} timed out after {Timeout}{Detail:l}", serverId, timeout, ErrorText.Of(exception));
             return RemoteResult.Fail<T>(RemoteFailure.Timeout);
         }
     }

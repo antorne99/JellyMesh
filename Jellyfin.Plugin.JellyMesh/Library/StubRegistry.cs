@@ -245,7 +245,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -274,7 +274,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the stub registry: {Error}. Stubs are minted again at the next sync", exception.GetType().Name);
+            _logger.LogError("Cannot read the stub registry: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         return StubState.Empty;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# No remote token or address in a .strm, a log or anything a browser received. Run last, with the remote up or stopped.
+# No remote token in a .strm, a log or anything a browser received, and no remote address but in the logs. Run last, with the remote up or stopped.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

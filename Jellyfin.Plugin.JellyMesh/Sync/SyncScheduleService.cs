@@ -75,7 +75,7 @@ public sealed class SyncScheduleService : BackgroundService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // What escapes a hosted service stops the whole server, and a missed schedule is not worth that.
-            _logger.LogError("Cannot prepare the sync schedule: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot prepare the sync schedule: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -118,7 +118,7 @@ public sealed class SyncScheduleService : BackgroundService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot read the migration to the server folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
@@ -146,7 +146,7 @@ public sealed class SyncScheduleService : BackgroundService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot save the schedule of {Task}: {Error}", worker.Name, exception.GetType().Name);
+            _logger.LogError("Cannot save the schedule of {Task}: {Error}{Detail:l}", worker.Name, exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

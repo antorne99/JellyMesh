@@ -1460,7 +1460,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(SyncStartResult.Started, await sync.RunAsync(CancellationToken.None));
 
         Assert.False(sync.GetStatus().IsRunning);
-        Assert.DoesNotContain(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1522,7 +1522,7 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(SyncStartResult.Started, await sync.RunAsync(CancellationToken.None));
 
         Assert.False(sync.GetStatus().IsRunning);
-        Assert.DoesNotContain(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_fixture.Sync.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
         Assert.Contains(_fixture.Sync.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 

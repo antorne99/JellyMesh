@@ -174,7 +174,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot finish the rename of a library: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot finish the rename of a library: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
         }
     }
@@ -457,7 +457,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
                     user.SetPreference(kind, values);
                 }
 
-                _logger.LogError("Cannot rewrite the library lists of a user after a rename: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot rewrite the library lists of a user after a rename: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 done = false;
             }
         }
