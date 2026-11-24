@@ -14,6 +14,13 @@ admin_ids() { # <server> <path prefix> <type>...: IDs of the items under a path
     get "$s" "/Items?Recursive=true&IncludeItemTypes=$type&Fields=Path" | jq -r --arg p "$prefix" '.Items[] | select((.Path // "") | startswith($p)) | .Id'
   done
 }
+shared_stubs() { # <server> <token> <type>: IDs of the stubs Jellyfin has in the libraries a peer is offered
+  local s=$1 library
+  as_peer "$s" "$2" GET /JellyMesh/Provider/Libraries >/dev/null
+  for library in $(jq -r '.Items[].Id' "$WORK/body"); do
+    get "$s" "/Items?ParentId=$library&Recursive=true&IncludeItemTypes=$3&Fields=Path" | jq -r '.Items[] | select((.Path // "") | startswith("/federata/")) | .Id'
+  done
+}
 provider_ids() { # <server> <token> <type>...: IDs of what a peer can read
   local s=$1 token=$2 library type
   shift 2
@@ -29,9 +36,12 @@ provider_ids() { # <server> <token> <type>...: IDs of what a peer can read
 }
 
 token=$(peer_token a peer)
-stub=$(id_of a /federata/)
+stub=$(shared_stubs a "$token" Movie | head -1)
 real=$(id_of a /media/)
 echo "stub on a: $stub, real item on a: $real"
+for id in "$stub" "$real"; do
+  check "a stub and a real film of a to ask for" yes "$([[ $id =~ ^[0-9a-f]{32}$ ]] && echo yes || echo no)"
+done
 
 echo "--- stock routes are closed to a peer"
 for path in '/Items?Recursive=true' /UserViews /Users /Library/VirtualFolders /Sessions /System/Info /Shows/NextUp; do
@@ -58,8 +68,11 @@ for s in a b; do
   real_count=$(admin_ids "$s" /media/ Movie Episode | wc -l | tr -d ' ')
   shared=$(provider_ids "$s" "$t" Movie Series Season Episode)
   shared_count=$(provider_ids "$s" "$t" Movie Episode | wc -l | tr -d ' ')
-  [ -n "$stubs" ] && has_stubs=yes || has_stubs=no
-  check "$s holds stubs in the shared libraries, so the test can fail" yes "$has_stubs"
+  for type in Movie Episode; do
+    count=$(shared_stubs "$s" "$t" "$type" | grep -c .)
+    echo "$s: $count stubs of type $type in the shared libraries"
+    check "$s holds $type stubs in the shared libraries, so the test can fail" yes "$([ "$count" -gt 0 ] && echo yes || echo no)"
+  done
   check "$s shares every real film and episode" "$real_count" "$shared_count"
   check "stubs of $s among what it shares" 0 "$(comm -12 <(sort <<<"$stubs") <(sort <<<"$shared") | grep -c .)"
   outside=0
