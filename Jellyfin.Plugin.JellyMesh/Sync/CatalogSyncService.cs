@@ -314,7 +314,14 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             catalog is { State: ServerSyncState.Stale, LastFailure: RemoteFailure.Unreachable or RemoteFailure.Timeout },
             Count(IndexedItemKind.Movie),
             Count(IndexedItemKind.Series),
-            Count(IndexedItemKind.Episode));
+            Count(IndexedItemKind.Episode))
+        {
+            Tracks = Count(IndexedItemKind.Audio),
+            MusicVideos = Count(IndexedItemKind.MusicVideo),
+            HomeVideos = Count(IndexedItemKind.Video),
+            Books = Count(IndexedItemKind.Book),
+            AudiobookFiles = Count(IndexedItemKind.AudioBook)
+        };
     }
 
     private SyncStartResult TryClaim()

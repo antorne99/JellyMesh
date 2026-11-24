@@ -27,4 +27,20 @@ public sealed record ServerSyncReport(
     bool IsOffline,
     int Movies,
     int Series,
-    int Episodes);
+    int Episodes)
+{
+    /// <summary>Gets the music tracks in the index.</summary>
+    public int Tracks { get; init; }
+
+    /// <summary>Gets the music videos in the index.</summary>
+    public int MusicVideos { get; init; }
+
+    /// <summary>Gets the home videos in the index.</summary>
+    public int HomeVideos { get; init; }
+
+    /// <summary>Gets the ebooks in the index.</summary>
+    public int Books { get; init; }
+
+    /// <summary>Gets the audiobook files in the index, where a book in several files has one entry per file.</summary>
+    public int AudiobookFiles { get; init; }
+}
