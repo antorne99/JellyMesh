@@ -4,6 +4,7 @@
 # library each library lists its own stub, and the new one takes the whole watch state: position, play count, favourite,
 # played, of each user. With the single library on, the two stubs are versions of one title
 # there and stay in the libraries of the server (D29). Back to per type, one stub is left with the state of both.
+# The state of one episode is never that of a file of two: not when its stub takes the second, not when it joins (row 543).
 # A stock remote with two film libraries and two series libraries that share titles, and a consumer with the plugin.
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-f44b] [PORT=18990] [KEEP=1] split.sh
 set -euo pipefail
@@ -34,6 +35,8 @@ REMOTE_URL="http://host.docker.internal:$((PORT + 1))"
 SEEN_FILM="JM Confronto Risoluzione"
 HALF_FILM="JM Confronto Bitrate"
 EPISODE="Serie Divisa S01E05"
+WIDE="JM Serie Larga"
+JOINED="JM Serie Riunita"
 own() { get local /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" '.Servers[] | select(.Id == $id) | .AutomaticLibraries'; }
 shared() { get local /JellyMesh/Admin/SharedLibraries; }
 id_of() { get local /Library/VirtualFolders | jq -r --arg n "$1" '.[] | select(.Name == $n) | .ItemId'; }
@@ -89,8 +92,22 @@ docker volume create "$PREFIX-media" >/dev/null
 START_ENV="-v $MEDIA/remoto-jellymesh:/bambini:ro" start remote "$MEDIA/remoto-standard:/media:ro"
 library remote "Film HD" movies /media/film
 library remote "Film Bambini" movies /bambini/film
-library remote "Telefilm HD" tvshows /media/serie
-library remote "Telefilm Bambini" tvshows /bambini/serie
+# A series whose only episode becomes a file of two, and one with the best copy of both and a worse one of each. Series IDs
+# make an episode and a file that starts with it share their state in Jellyfin.
+docker exec "$PREFIX-remote" sh -c '
+  set -e
+  series() { mkdir -p "/divisi/$1/$2 (2026)/Season 01"; printf "%s" "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><tvshow><title>$2</title><year>2026</year><uniqueid type=\"tvdb\" default=\"true\">$3</uniqueid></tvshow>" >"/divisi/$1/$2 (2026)/tvshow.nfo"; }
+  one="/media/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E01.mkv"
+  two="/bambini/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv"
+  series hd "$1" 999000301
+  cp "$one" "/divisi/hd/$1 (2026)/Season 01/$1 S01E01.mkv"
+  series hd "$2" 999000302
+  cp "$two" "/divisi/hd/$2 (2026)/Season 01/$2 S01E01-E02.mkv"
+  series bambini "$2" 999000302
+  cp "$one" "/divisi/bambini/$2 (2026)/Season 01/$2 S01E01.mkv"
+  cp "$one" "/divisi/bambini/$2 (2026)/Season 01/$2 S01E02.mkv"' sh "$WIDE" "$JOINED"
+library remote "Telefilm HD" tvshows /media/serie /divisi/hd
+library remote "Telefilm Bambini" tvshows /bambini/serie /divisi/bambini
 user remote jellymesh >/dev/null
 scan remote
 start local "$PREFIX-media:/media"
@@ -121,7 +138,28 @@ mark "$SEEN" '{"Played":true,"PlayCount":1,"LastPlayedDate":"2026-11-04T20:00:00
 STATES="$(data "$SEEN") / $(data "$HALF") / $(data "$EP")"
 check "the state is set" "true 3 true 0 / false 1 true 600000000 / false 1 false 300000000" "$STATES"
 
+echo "--- a stub of one episode that takes a second one loses its state, and stays [row 543]"
+WIDE_ID=$(in_library 'Casa - Serie' Episode "$WIDE")
+numbers() { get local "/Items?userId=$ME&Ids=$WIDE_ID" | jq -r '.Items[0] | "\(.IndexNumber) \(.IndexNumberEnd)"'; }
+check "the series of one episode has one item" "1 null" "$(numbers)"
+mark "$WIDE_ID" '{"Played":true,"PlayCount":2,"IsFavorite":true,"LastPlayedDate":"2026-11-05T20:00:00Z"}'
+mark "$WIDE_ID" '{"PlaybackPositionTicks":300000000,"PlayCount":1,"LastPlayedDate":"2026-11-06T20:00:00Z"}' "$OTHER"
+check "its state is set" "true 2 true 0 / false 1 false 300000000" "$(data "$WIDE_ID") / $(data "$WIDE_ID" "$OTHER")"
+docker exec "$PREFIX-remote" sh -c 'cd "/divisi/hd/$1 (2026)/Season 01" && mv "$1 S01E01.mkv" "$1 S01E01-E02.mkv"' sh "$WIDE"
+scan remote
+wide() { echo "$(strm "$WIDE") $(numbers)"; }
+until_is "1 1 2" wide
+check "its stub, the same item, has both episodes" "1 1 2" "$(wide)"
+check "nobody has a state on it" "false 0 false 0 / false 0 false 0" "$(data "$WIDE_ID") / $(data "$WIDE_ID" "$OTHER")"
+scan local
+docker restart "$PREFIX-local" >/dev/null
+sleep 3
+wait_ready local
+scan local
+check "nor after a scan and a restart" "1 1 2 false 0 false 0 / false 0 false 0" "$(wide) $(data "$WIDE_ID") / $(data "$WIDE_ID" "$OTHER")"
+
 echo "--- per remote library: one stub in each library, with the whole state [rows 439 and 507 c]"
+check "the best file of two episodes is one stub" 1 "$(strm "$JOINED")"
 mode ByRemoteLibrary
 until_is "1 1 1 1" placed
 check "the film and the episode are in both libraries of their type" "1 1 1 1" "$(placed)"
@@ -151,6 +189,16 @@ sync_now local
 scan local
 check "and a sync and a scan do not copy it again" "false 1 true 600000000 / false 1 true 900000000" "$(data "$HALF_HD") / $(data "$HALF_KIDS")"
 
+JOINED_HD=$(in_library 'Casa - Telefilm HD' Episode "$JOINED")
+JOINED_KIDS=$(in_library 'Casa - Telefilm Bambini' Episode "$JOINED")
+check "the file of two episodes and those of one are three stubs" "3 1 2" "$(strm "$JOINED") $(wc -w <<<"$JOINED_HD" | tr -d ' ') $(wc -w <<<"$JOINED_KIDS" | tr -d ' ')"
+for id in $JOINED_KIDS; do
+  mark "$id" '{"Played":true,"PlayCount":4,"IsFavorite":true,"LastPlayedDate":"2026-11-08T20:00:00Z"}'
+done
+mark "$JOINED_HD" '{"PlaybackPositionTicks":500000000,"PlayCount":1,"LastPlayedDate":"2026-11-07T20:00:00Z"}' "$OTHER"
+read -r KIDS_1 KIDS_2 <<<"$JOINED_KIDS"
+check "each has its own state" "false 0 false 0 / true 4 true 0 / true 4 true 0" "$(data "$JOINED_HD") / $(data "$KIDS_1") / $(data "$KIDS_2")"
+
 echo "--- with the single library: versions of one title there, still one in each library of the server [row 507 a, D29]"
 post local /JellyMesh/Admin/SharedLibraries '{"Enabled":true}' >/dev/null
 check "the switch-on answers 202" 202 "$(status)"
@@ -176,5 +224,14 @@ until_is "1 1 1" one
 check "each is one item of the library again" "1 1 1" "$(one)"
 check "the state of both copies is on it, the newest position included" "true 3 true 0 / false 1 true 900000000 / false 1 false 300000000" \
   "$(data "$(in_library 'Casa - Film' Movie "$SEEN_FILM")") / $(data "$(in_library 'Casa - Film' Movie "$HALF_FILM")") / $(data "$(in_library 'Casa - Serie' Episode "$EPISODE")")"
+one_joined() { echo "$(strm "$JOINED") $(in_library 'Casa - Serie' Episode "$JOINED")"; }
+until_is "1 $JOINED_HD" one_joined
+check "the stubs of one episode joined that of both, the same item" "1 $JOINED_HD" "$(one_joined)"
+check "which has its own state and not that of one episode" "false 0 false 0 / false 1 false 500000000" "$(data "$JOINED_HD") / $(data "$JOINED_HD" "$OTHER")"
+docker restart "$PREFIX-local" >/dev/null
+sleep 3
+wait_ready local
+scan local
+check "also after a restart and a scan" "1 $JOINED_HD false 0 false 0 / false 1 false 500000000" "$(one_joined) $(data "$JOINED_HD") / $(data "$JOINED_HD" "$OTHER")"
 
 [ "$FAILED" = 0 ] && echo "all passed" || { echo "some checks failed"; exit 1; }
