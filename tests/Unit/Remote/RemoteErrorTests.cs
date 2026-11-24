@@ -192,6 +192,33 @@ public class RemoteErrorTests
         Assert.Contains("before", result.Error!.ToString(), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("tokens={")]
+    [InlineData("tokens=[")]
+    public void AnOpenBracketDoesNotTakeTheStackTrace(string open)
+    {
+        var error = ThrownWith("before " + open + "\n  \"a\": \"" + OtherToken + "\"\n  after");
+
+        var text = ErrorText.Of(error);
+
+        Assert.DoesNotContain(OtherToken, text, StringComparison.Ordinal);
+        Assert.Contains("before", text, StringComparison.Ordinal);
+        Assert.Contains(nameof(ThrownWith), text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("token", ' ')]
+    [InlineData(":", '\\')]
+    [InlineData("Bearer", ' ')]
+    [InlineData("tokens={", '\n')]
+    [InlineData("tokens=[", '\n')]
+    public void AHostileTextIsCleanedInTime(string start, char repeated)
+    {
+        var text = ErrorText.Of(new InvalidOperationException("before " + start + new string(repeated, 64_000)));
+
+        Assert.Contains("before", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ALongExceptionMessageIsCutBeforeItsSecretsAreRemoved()
     {
@@ -323,6 +350,18 @@ public class RemoteErrorTests
         Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
         Assert.Empty(handler.Requests);
         Assert.Contains("//elsewhere/x.m3u8", result.Error!.ToString(), StringComparison.Ordinal);
+    }
+
+    private static InvalidOperationException ThrownWith(string message)
+    {
+        try
+        {
+            throw new InvalidOperationException(message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return exception;
+        }
     }
 
     private static JellyfinRemoteClient ClientFor(StubHandler handler, TimeSpan? limit = null) => new(new StubHttpClientFactory(handler))
