@@ -41,15 +41,16 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id_a=$(add_remote local a "http://host.docker.internal:$(port_of a)" jellymesh)
 id_b=$(add_remote local b "http://host.docker.internal:$(port_of b)" jellymesh)
-for id in "$id_a" "$id_b"; do
-  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
-done
 import_all local "$id_a"
 import_all local "$id_b"
 sync_now local
+for id in "$id_a" "$id_b"; do
+  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
+done
 scan local
 
 winner=$(get local /JellyMesh/Admin/Index/Decisions | jq -r '[.Contents[] | select((.Backups // []) | length > 0) | select(.Identity.Key | test("tears|2285752|133701"; "i"))][0].Winner.ServerName // ""')
@@ -64,10 +65,8 @@ play() { # play <user>: a PlaybackInfo of the stub as that user; prints the stat
   login "$1" "$1"
   post "$1" "/Items/$tears/PlaybackInfo?UserId=$(user_id local "$1")&AutoOpenLiveStream=false" "$DIRECT" | jq -r '.MediaSources | length'
 }
-record() { # record <user>: the server recorded for that user on any stub
-  docker exec "$PREFIX-local" sh -c 'cat "$(find /config -name last-served.json | head -1)"' \
-    | jq -r --arg u "$(user_id local "$1" | tr -d -)" '[.Entries[] | select((.UserId | gsub("-"; "")) == $u) | .ServerId | gsub("-"; "")][0] // ""'
-}
+# record <user>: the server recorded for that user on any stub.
+record() { plain "$(db_query local "select server_id from last_served_sources where lower(replace(user_id, '-', '')) = '$(plain "$(user_id local "$1")")' limit 1;")"; }
 plain() { echo "$1" | tr -d - | tr '[:upper:]' '[:lower:]'; }
 
 docker stop "$PREFIX-$winner" >/dev/null
@@ -88,9 +87,10 @@ login local
 check "after a restart alice still has the backup" "$(plain "$(id_of "$backup")")" "$(record alice)"
 check "after a restart bob still has the winner" "$(plain "$(id_of "$winner")")" "$(record bob)"
 
-file=$(docker exec "$PREFIX-local" sh -c 'cat "$(find /config -name last-served.json | head -1)"')
-check "no address in the record" 0 "$(echo "$file" | grep -ciE 'http|host\.docker|:[0-9]{4,5}' || true)"
-check "no token in the record" 0 "$(echo "$file" | grep -ciE 'token|api_?key|sig=' || true)"
-check "no remote item in the record" 0 "$(echo "$file" | grep -c "MediaSourceId\|ItemId" || true)"
-echo "$file"
+kept=$(db_query local "select sql from sqlite_master where name = 'last_served_sources';"; db_query local "select * from last_served_sources;")
+check "both records are there to read" 2 "$(db_query local 'select count(*) from last_served_sources;')"
+check "no address in the record" 0 "$(echo "$kept" | grep -ciE 'http|host\.docker|:[0-9]{4,5}' || true)"
+check "no token in the record" 0 "$(echo "$kept" | grep -ciE 'token|api_?key|sig=' || true)"
+check "no remote item in the record" 0 "$(echo "$kept" | grep -ciE 'item_id|media_source' || true)"
+echo "$kept"
 exit "$FAILED"
