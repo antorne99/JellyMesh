@@ -92,10 +92,19 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
             return;
         }
 
-        var user = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User;
-        context.Result = user is null || _stubs.Sees(user, itemId)
-            ? await ServeAsync(context, itemId, anonymous: user is null).ConfigureAwait(false)
-            : new NotFoundResult();
+        try
+        {
+            var user = (await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User;
+            context.Result = user is null || _stubs.Sees(user, itemId)
+                ? await ServeAsync(context, itemId, anonymous: user is null).ConfigureAwait(false)
+                : new NotFoundResult();
+        }
+        catch (OperationCanceledException) when (context.HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            // The client went: an exception would be a line of the Jellyfin log for each request.
+            context.HttpContext.Abort();
+            context.Result = new EmptyResult();
+        }
     }
 
     /// <inheritdoc />

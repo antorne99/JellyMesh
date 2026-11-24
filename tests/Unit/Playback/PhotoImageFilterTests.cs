@@ -534,13 +534,15 @@ public class PhotoImageFilterTests
         using var left = new CancellationTokenSource();
         var filter = Filter();
         var slow = Enumerable.Range(0, AnonymousPlaces).Select(_ => RunAsync(filter, SlowRequest(gone.Token).Context)).ToList();
-        var waits = Enumerable.Range(0, AnonymousPlaces).Select(_ => RunAsync(filter, SlowRequest(left.Token).Context)).ToList();
+        var waits = Enumerable.Range(0, AnonymousPlaces)
+            .Select(_ => SlowRequest(left.Token))
+            .Select(request => (request.Context, request.Lifetime, Run: RunAsync(filter, request.Context)))
+            .ToList();
 
         await left.CancelAsync();
-        foreach (var wait in waits)
-        {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wait);
-        }
+        await Task.WhenAll(waits.Select(wait => wait.Run)).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.All(waits, wait => Assert.IsType<EmptyResult>(wait.Context.Result));
+        Assert.All(waits, wait => Assert.True(wait.Lifetime.Aborted));
 
         Assert.Equal(AnonymousPlaces, _asked.Count);
         await gone.CancelAsync();
@@ -704,9 +706,17 @@ public class PhotoImageFilterTests
         AssertMissing(context);
     }
 
-    [Fact]
-    public async Task A_client_that_went_ends_the_read()
+    // Jellyfin logs an error for any exception, so a client that went ends its read without one, and pauses nothing.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_client_that_went_ends_the_read(bool signedIn)
     {
+        if (signedIn)
+        {
+            SignedIn(sees: true);
+        }
+
         using var gone = new CancellationTokenSource();
         _answer = async token =>
         {
@@ -714,9 +724,44 @@ public class PhotoImageFilterTests
             await Task.Delay(Timeout.Infinite, token);
             return Image(_jpeg);
         };
-        var context = Request();
-        context.HttpContext.RequestAborted = gone.Token;
+        var (context, lifetime) = SlowRequest(gone.Token);
+        var filter = Filter();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunAsync(Filter(), context));
+        Assert.False(await RunAsync(filter, context));
+
+        Assert.IsType<EmptyResult>(context.Result);
+        Assert.True(lifetime.Aborted);
+        _answer = _ => Task.FromResult(Image(_jpeg));
+        var after = Request();
+        await RunAsync(filter, after);
+        AssertServed(after);
+    }
+
+    [Fact]
+    public async Task A_client_that_went_during_the_authorization_ends_the_request()
+    {
+        using var gone = new CancellationTokenSource();
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .Returns(async () =>
+            {
+                await gone.CancelAsync();
+                gone.Token.ThrowIfCancellationRequested();
+                return new AuthorizationInfo();
+            });
+        var (context, _) = SlowRequest(gone.Token);
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        Assert.IsType<EmptyResult>(context.Result);
+        Assert.Empty(_asked);
+    }
+
+    // Only a client that went is answered with nothing: any other cancellation is still an error.
+    [Fact]
+    public async Task A_cancellation_of_a_client_still_there_is_an_error()
+    {
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>())).ThrowsAsync(new OperationCanceledException());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunAsync(Filter(), Request()));
     }
 }
