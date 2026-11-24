@@ -63,9 +63,10 @@ public sealed class StubMatcher
 
     /// <summary>
     /// Claims the stubs of a whole catalog. Contents with a winner choose first, because a stub that can still serve one
-    /// must not go just because another content sharing its remote item turned local. Then every stub left whose remote
-    /// item now belongs to a content with a stub is merged into that stub: two copies that became one title. A stub of
-    /// several episodes is merged into the stub of each (§10 row 537).
+    /// must not go just because another content sharing its remote item turned local. A stub goes to the content of its own
+    /// key before one that shares an item. Then every stub left whose remote item now belongs to a content with a stub is
+    /// merged into that stub: two copies that became one title. A stub of several episodes is merged into the stub of each
+    /// (§10 row 537).
     /// </summary>
     /// <param name="contents">The contents.</param>
     /// <returns>One claim per content, those with a winner first.</returns>
@@ -77,7 +78,15 @@ public sealed class StubMatcher
         foreach (var part in contents.ToLookup(content => content.IsLocal).OrderBy(part => part.Key))
         {
             var start = claims.Count;
-            claims.AddRange(part.Select(content => new StubClaim(content, ClaimOwn(content))));
+            claims.AddRange(part.Select(content => new StubClaim(content, ClaimFirst(content, _byKey[content.Identity.Key]))));
+            for (var index = start; index < claims.Count; index++)
+            {
+                if (claims[index].Stub is null)
+                {
+                    claims[index] = claims[index] with { Stub = ClaimOwn(claims[index].Content) };
+                }
+            }
+
             var owners = OwnersOf(claims);
             for (var index = start; index < claims.Count; index++)
             {
