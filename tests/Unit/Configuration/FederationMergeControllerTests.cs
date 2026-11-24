@@ -129,6 +129,29 @@ public sealed class FederationMergeControllerTests
     }
 
     [Fact]
+    public async Task TwoLocalMusicVideosAreRefusedInWordsOfMusicVideos()
+    {
+        ListTitles(ContentKind.MusicVideo, true, true, false);
+
+        var result = await Controller().Merge(new MergeRequest(["key0", "key1"]), CancellationToken.None);
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Equal("Two local music videos cannot be merged: JellyMesh does not change local files. Select at most one music video with a local copy.", failure.Message);
+        Assert.Empty(_store.Merges);
+    }
+
+    [Fact]
+    public void APreviewOfTwoLocalMusicVideosIsTheSameRefusal()
+    {
+        ListTitles(ContentKind.MusicVideo, true, true);
+
+        var result = Controller().Preview(new MergeRequest(["key0", "key1"])).Result;
+
+        var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Contains("Two local music videos", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AnOutdatedListIsAConflict()
     {
         ListTitles(false, false);

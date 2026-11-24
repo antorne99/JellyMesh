@@ -118,7 +118,7 @@ public sealed class MusicVideoMergeTests : IDisposable
     }
 
     [Fact]
-    public async Task TwoLocalMusicVideosCannotBeMerged_AsTwoLocalTitles()
+    public async Task TwoLocalMusicVideosCannotBeMerged()
     {
         _local.Add(LocalClip(Guid.NewGuid(), "tt1"));
         _local.Add(LocalClip(Guid.NewGuid(), "tt2"));
@@ -128,7 +128,7 @@ public sealed class MusicVideoMergeTests : IDisposable
 
         var outcome = await service.MergeAsync([KeyOf(found, "a"), KeyOf(found, "b")], CancellationToken.None);
 
-        Assert.Equal(ManualMergeOutcome.TwoLocalTitles, outcome);
+        Assert.Equal(ManualMergeOutcome.TwoLocalMusicVideos, outcome);
         Assert.Empty(_store.Merges);
     }
 

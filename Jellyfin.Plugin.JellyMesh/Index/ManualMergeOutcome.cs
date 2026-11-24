@@ -19,4 +19,7 @@ public enum ManualMergeOutcome
 
     /// <summary>Two of the series titles have a local copy, and local series cannot become one.</summary>
     TwoLocalSeries,
+
+    /// <summary>Two of the music video titles have a local copy, and local music videos cannot become one.</summary>
+    TwoLocalMusicVideos,
 }

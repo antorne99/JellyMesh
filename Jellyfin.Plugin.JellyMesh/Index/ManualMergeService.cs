@@ -257,7 +257,13 @@ public sealed class ManualMergeService
 
         if (titles.Count(title => title.HasLocalCopy) > 1)
         {
-            return (titles[0].Copies[0].Copy.Kind == ContentKind.Episode ? ManualMergeOutcome.TwoLocalSeries : ManualMergeOutcome.TwoLocalTitles, titles);
+            var outcome = titles[0].Copies[0].Copy.Kind switch
+            {
+                ContentKind.Episode => ManualMergeOutcome.TwoLocalSeries,
+                ContentKind.MusicVideo => ManualMergeOutcome.TwoLocalMusicVideos,
+                _ => ManualMergeOutcome.TwoLocalTitles
+            };
+            return (outcome, titles);
         }
 
         return (ManualMergeOutcome.Merged, titles);
