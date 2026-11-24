@@ -54,12 +54,13 @@ up() {
   sleep 3
   wait_ready local
   login local
-  settings local '.FederatedFolderPath = "/federata"' >/dev/null
+  # The admin links the folders by hand, so JellyMesh makes no library for the servers.
+  settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
   local id
   id=$(add_remote local remote "http://host.docker.internal:$((PORT + 1))" jellymesh)
-  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
   import_all local "$id"
   sync_now local
+  check "the folder of the server joins the library" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
   scan local
   # The scan right after the sync sometimes misses the new stubs.
   local i

@@ -136,7 +136,7 @@ position=$(user_data "$stub_direct" | jq .PlaybackPositionTicks)
 docker start "$PREFIX-remote" >/dev/null
 wait_ready remote
 sync_now local
-check "the local copy is the primary" "$(vid "/media/film/$DIRECT")" "$(primary_of "$(vid "$(server_folder "$(cat "$WORK/id-remote")")/Film/$DIRECT")")"
+check "the local copy is the primary" "$(vid "/media/film/$DIRECT")" "$(primary_of "$(vid "$(server_folder "$(cat "$WORK/id-remote")")/%/Film/$DIRECT")")"
 check "the copy is played too" true "$(user_data "$local_direct" | jq .Played)"
 check "the stub keeps its position" "$position" "$(user_data "$stub_direct" | jq .PlaybackPositionTicks)"
 check "and its state" "$(echo "$data" | jq -c '{Played, LastPlayedDate}')" "$(user_data "$stub_direct" | jq -c '{Played, LastPlayedDate}')"
