@@ -281,7 +281,9 @@ public sealed class VersionLinker : IVersionLinker
     {
         var items = new Dictionary<Guid, ItemLinks>();
         var stubs = new Dictionary<string, Guid>(StringComparer.Ordinal);
-        foreach (var stub in group.StubIds.Select(_registry.Find).OfType<StubEntry>())
+
+        // A stub still to clear joins after: the played flag of its one episode is not that of the versions (§10 row 543).
+        foreach (var stub in group.StubIds.Select(_registry.Find).OfType<StubEntry>().Where(stub => stub.StateOfOneUntil is null))
         {
             if (run.FindStub(stub) is { } links && items.TryAdd(links.Id, links))
             {
