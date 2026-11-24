@@ -199,7 +199,7 @@ Under **Catalog**, **Sync history** lists the last 50 syncs and the last 7 night
 
 ### Errors
 
-When something fails, the plugin page has **Full error**: the call, its status, what the remote server answered, and the exceptions with their stack traces. It is in the message, on the card of the server until it answers again, and in each part of the page that can't be read. Each text is cut at 64 KB or 2000 lines. Jellyfin's log holds the same text, up to 20 whole errors and 512 KB a minute for each server, and as many for the logins, logouts and checks of all servers together. Both show the address of the remote server; neither shows tokens or passwords, and an answer that holds the password is hidden whole. An error of the remote server has no stack trace here: look in its own log.
+When something fails, the plugin page has **Full error**: the call, its status, what the remote server answered, and the exceptions with their stack traces. It is in the message, on the card of the server until it answers again, and in each part of the page that can't be read. Each text is cut at 64 KB or 2000 lines. Jellyfin's log holds the same text, up to 20 whole errors and 512 KB a minute, and 50 MB a day, for each server; as many for the logins, logouts and checks of all servers together, and as many for the playback errors that belong to no server. Past a limit an error is one short line. Both show the address of the remote server; neither shows tokens or passwords, and an answer that holds the password is hidden whole. An error of the remote server has no stack trace here: look in its own log.
 
 ## Versions
 

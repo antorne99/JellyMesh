@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.MediaEncoding;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -23,6 +24,7 @@ public sealed class AbandonedStreamCloser : BackgroundService
     private readonly ITranscodeManager _transcodes;
     private readonly TimeProvider _clock;
     private readonly ILogger<AbandonedStreamCloser> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AbandonedStreamCloser"/> class.
@@ -31,8 +33,10 @@ public sealed class AbandonedStreamCloser : BackgroundService
     /// <param name="transcodes">The transcode manager.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
-    public AbandonedStreamCloser(StreamSlots slots, ITranscodeManager transcodes, TimeProvider clock, ILogger<AbandonedStreamCloser> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public AbandonedStreamCloser(StreamSlots slots, ITranscodeManager transcodes, TimeProvider clock, ILogger<AbandonedStreamCloser> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _slots = slots;
         _transcodes = transcodes;
         _clock = clock;
@@ -73,7 +77,7 @@ public sealed class AbandonedStreamCloser : BackgroundService
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogWarning("Could not close the transcode of a stream: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Could not close the transcode of a stream: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
     }
 

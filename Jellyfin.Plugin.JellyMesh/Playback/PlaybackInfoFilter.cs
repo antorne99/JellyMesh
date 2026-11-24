@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -39,6 +40,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     private readonly PlaybackVersions _versions;
     private readonly SegmentOffer _segments;
     private readonly ILogger<PlaybackInfoFilter> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackInfoFilter"/> class.
@@ -51,6 +53,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     /// <param name="versions">The versions of a title.</param>
     /// <param name="segments">Whether a playback offers the segments of its item.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public PlaybackInfoFilter(
         StubLookup stubs,
         IAuthorizationContext authorization,
@@ -59,8 +62,10 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         LocalCopyLookup localCopies,
         PlaybackVersions versions,
         SegmentOffer segments,
-        ILogger<PlaybackInfoFilter> logger)
+        ILogger<PlaybackInfoFilter> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _logger = logger;
         _stubs = stubs;
         _authorization = authorization;
@@ -282,9 +287,9 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
     }
 
     // Says in the log why stock gave no usable PlaybackInfo, without any text of the answer.
-    private static string StockFailureOf(ActionExecutedContext executed)
+    private string StockFailureOf(ActionExecutedContext executed)
     {
-        return executed.Exception is { } exception ? exception.GetType().Name + ErrorText.Of(exception)
+        return executed.Exception is { } exception ? exception.GetType().Name + _errorLogs.Playback.Of(exception)
             : executed.Result is ObjectResult { Value: PlaybackInfoResponse response }
                 ? response.ErrorCode?.ToString() ?? (response.MediaSources.Count == 0 ? "no media source" : "no transcoding URL")
             : executed.Result is IStatusCodeActionResult { StatusCode: { } status } ? "status " + status.ToString(CultureInfo.InvariantCulture)

@@ -37,6 +37,7 @@ public sealed class PlaybackCoordinator
     private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackCoordinator> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
@@ -59,6 +60,7 @@ public sealed class PlaybackCoordinator
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="transcodes">The transcode manager, which closes the local transcodes of a removed server.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public PlaybackCoordinator(
         IRemoteServerRegistry registry,
         IRemotePlaybackClient client,
@@ -67,8 +69,10 @@ public sealed class PlaybackCoordinator
         ILastServedSourceStore lastServed,
         TimeProvider clock,
         ILogger<PlaybackCoordinator> logger,
-        ITranscodeManager? transcodes = null)
+        ITranscodeManager? transcodes = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _client = client;
         _sessions = sessions;
@@ -955,7 +959,7 @@ public sealed class PlaybackCoordinator
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogWarning("Could not close a local transcode of a removed server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Could not close a local transcode of a removed server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
     }
 
@@ -1054,7 +1058,7 @@ public sealed class PlaybackCoordinator
         }
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning("A call to server {ServerId} timed out after {Timeout}{Detail:l}", serverId, timeout, ErrorText.Of(exception));
+            _logger.LogWarning("A call to server {ServerId} timed out after {Timeout}{Detail:l}", serverId, timeout, _errorLogs.For(serverId).Of(exception));
             return RemoteResult.Fail<T>(RemoteFailure.Timeout);
         }
     }
