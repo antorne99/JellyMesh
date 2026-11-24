@@ -266,6 +266,14 @@ For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension o
 
 **On the remote** the dedicated user needs no download permission: JellyMesh never calls `Download` there.
 
+### Clients
+
+Music, audiobooks and ebooks have been tried on real 12.4 servers through the API, and photos with jellyfin-web. Finamp, Swiftfin and the other native apps have not been tried on them, and what is said here about the apps comes from their source.
+
+- **Swiftfin** shows only libraries of films, series, collections and folders, and libraries with no type. It shows no music, music videos, home videos, photos or books.
+- **Finamp** streams the file of a track by default, so it needs no [download permission](#download-permission).
+- **Books:** jellyfin-web has no reader for `.mobi`, `.azw` and `.azw3`, which open only in an app that downloads the file.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.
