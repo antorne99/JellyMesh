@@ -43,6 +43,7 @@ public static class StubPlanner
         ArgumentNullException.ThrowIfNull(input);
 
         var catalog = IndexItemLookup.Build(input.Snapshot);
+        input = WithLostSeries(input, catalog, stub => stub.ServerId is null);
 
         // Stubs of the server folders belong to PlanByServer alone.
         var flat = input.State.Stubs.Where(stub => stub.ServerId is null).ToList();
@@ -132,6 +133,7 @@ public static class StubPlanner
 
         // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
         var legacy = input.KeepsOlderLayout;
+        input = WithLostSeries(input, catalog, stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)));
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
@@ -616,6 +618,59 @@ public static class StubPlanner
         };
     }
 
+    // Gives each series folder that has none its row again, with the remote series of its stubs, and each stub the row of its
+    // folder when its own is gone. A stub in no series folder, or of no known series, loses the row it names.
+    private static StubPlanInput WithLostSeries(StubPlanInput input, IndexItemLookup catalog, Func<StubEntry, bool> isPlanned)
+    {
+        var rows = input.State.Series.Select(entry => entry.Id).ToHashSet(StringComparer.Ordinal);
+        var lost = input.State.Stubs.Where(stub => stub.Kind == StubKind.Episode && !(stub.SeriesStubId is { } id && rows.Contains(id)) && isPlanned(stub)).ToList();
+        if (lost.Count == 0)
+        {
+            return input;
+        }
+
+        var byFolder = input.State.Series
+            .DistinctBy(entry => entry.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(entry => entry.RelativePath, entry => entry.Id, StringComparer.OrdinalIgnoreCase);
+        var works = input.View.Contents.Where(content => content.Identity.Kind == ContentKind.Episode).ToLookup(content => content.Identity.Key, content => content.Identity.WorkKey, StringComparer.Ordinal);
+        var keys = input.State.Series.Select(entry => (entry.ServerId, entry.WorkKey)).ToHashSet();
+        var found = new List<SeriesStub>();
+        foreach (var folder in lost.GroupBy(SeriesFolderOf, StringComparer.OrdinalIgnoreCase).Where(folder => !byFolder.ContainsKey(folder.Key) && IsSeriesFolder(folder.Key)))
+        {
+            var sources = folder.SelectMany(stub => stub.Sources)
+                .Select(source => (source.ServerId, catalog.Find(source.ServerId, source.ItemId)?.SeriesId))
+                .Where(source => source.SeriesId is not null)
+                .Distinct()
+                .Select(source => new StubSource(source.ServerId, source.SeriesId!, string.Empty))
+                .ToList();
+
+            // With sources no work has its key, so it goes to a work of its remote series. Else it takes a key no row has.
+            var id = NewId();
+            var server = folder.First().ServerId;
+            var key = sources.Count > 0 ? id : folder.SelectMany(stub => works[stub.IdentityKey]).FirstOrDefault(work => keys.Add((server, work)));
+            if (key is not null)
+            {
+                found.Add(new SeriesStub { Id = id, ServerId = server, RelativePath = folder.Key, WorkKey = key, Sources = sources, NeedsRefresh = true });
+                byFolder.Add(folder.Key, id);
+            }
+        }
+
+        var owners = lost.ToDictionary(stub => stub.Id, stub => byFolder.GetValueOrDefault(SeriesFolderOf(stub)), StringComparer.Ordinal);
+        return input with
+        {
+            State = input.State with
+            {
+                Stubs = input.State.Stubs.Select(stub => owners.TryGetValue(stub.Id, out var owner) ? stub with { SeriesStubId = owner } : stub).ToList(),
+                Series = [.. input.State.Series, .. found]
+            }
+        };
+    }
+
+    // The folder above the season folder of an episode stub.
+    private static string SeriesFolderOf(StubEntry stub) => Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath)) ?? string.Empty;
+
+    private static bool IsSeriesFolder(string folder) => string.Equals(Path.GetFileName(Path.GetDirectoryName(folder)), TypeFolder.Series.Name, StringComparison.Ordinal);
+
     private static SeriesPlan SeriesPlanOf(
         StubPlanInput input,
         ResolvedContent content,
@@ -928,13 +983,14 @@ public static class StubPlanner
     {
         private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
 
-        // Finds the series stub of a work by its key, then by a remote series among the stubs no other work has.
+        // Finds the series stub of a work by its key, then by a remote series among those no other work has, written ones first.
         public SeriesStub? Claim(string workKey, List<(Guid ServerId, IndexedItem Item)> known)
         {
             var stub = Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
-                ?? Existing.FirstOrDefault(entry => !Contents.Contains(entry.WorkKey)
+                ?? Existing.Where(entry => !Contents.Contains(entry.WorkKey)
                     && !_claimed.Contains(entry.Id)
-                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
+                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)))
+                    .MinBy(entry => entry.ContentHash is null);
             if (stub is not null)
             {
                 _claimed.Add(stub.Id);
@@ -957,6 +1013,10 @@ public static class StubPlanner
             foreach (var stub in stubs)
             {
                 _taken.Add(stub.Kind == StubKind.Movie ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
+                if (stub.Kind == StubKind.Episode)
+                {
+                    _taken.Add(SeriesFolderOf(stub));
+                }
             }
 
             foreach (var entry in series)
