@@ -846,14 +846,47 @@ public class FederationAdminControllerTests
         var server = await fixture.AddServerAsync();
         failing = true;
 
-        for (var call = 0; call < RemoteServerRegistry.MaxDetailsPerMinute + 5; call++)
+        for (var call = 0; call < ErrorLogLimit.MaxPerMinute + 5; call++)
         {
             await fixture.Registry.TestAsync(server.Id, CancellationToken.None);
         }
 
         var calls = fixture.Logger.Lines.Where(line => line.Contains("Call to remote server", StringComparison.Ordinal)).ToList();
-        Assert.Equal(RemoteServerRegistry.MaxDetailsPerMinute + 5, calls.Count);
-        Assert.Equal(RemoteServerRegistry.MaxDetailsPerMinute, calls.Count(line => line.Contains("No route", StringComparison.Ordinal)));
+        Assert.Equal(ErrorLogLimit.MaxPerMinute + 5, calls.Count);
+        Assert.Equal(ErrorLogLimit.MaxPerMinute, calls.Count(line => line.Contains("No route", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task AServerThatAnswersLargeErrorsStopsFillingTheLog()
+    {
+        var failing = false;
+        var handler = new StubHandler(request => failing
+            ? StubHandler.Json(new string('x', 100_000), HttpStatusCode.InternalServerError)
+            : StubHandler.StockServer_Respond(request));
+        using var fixture = new RegistryFixture(handler);
+        var server = await fixture.AddServerAsync();
+        failing = true;
+
+        for (var call = 0; call < ErrorLogLimit.MaxPerMinute; call++)
+        {
+            await fixture.Registry.TestAsync(server.Id, CancellationToken.None);
+        }
+
+        Assert.InRange(fixture.Logger.Lines.Sum(line => line.Length), ErrorText.MaxLength, (2 * ErrorLogLimit.MaxCharactersPerMinute) + 20_000);
+    }
+
+    [Fact]
+    public async Task RefusedNewServersStopFillingTheLog()
+    {
+        var handler = new StubHandler(_ => throw new HttpRequestException("No route"));
+        using var fixture = new RegistryFixture(handler);
+
+        for (var call = 0; call < ErrorLogLimit.MaxPerMinute + 5; call++)
+        {
+            await fixture.Registry.AddAsync("new", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+        }
+
+        Assert.Equal(ErrorLogLimit.MaxPerMinute, fixture.Logger.Lines.Count(line => line.Contains("No route", StringComparison.Ordinal)));
     }
 
     [Fact]

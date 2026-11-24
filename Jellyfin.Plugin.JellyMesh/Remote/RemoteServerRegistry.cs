@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
@@ -20,11 +19,6 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 {
     /// <summary>
-    /// The most whole errors of one server written to the log in a minute; the others keep their kind.
-    /// </summary>
-    public const int MaxDetailsPerMinute = 20;
-
-    /// <summary>
     /// The longest a removal waits for the remote to end its login (413).
     /// </summary>
     public static readonly TimeSpan LogoutTimeout = TimeSpan.FromSeconds(3);
@@ -35,6 +29,9 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private readonly ILogger<RemoteServerRegistry> _logger;
     private readonly IActivityWriter? _activity;
     private readonly ConcurrentDictionary<Guid, ServerRuntime> _runtimes = new();
+
+    // The errors of logins, logouts and checks, of all the servers.
+    private readonly ErrorLogLimit _errorLog = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RemoteServerRegistry"/> class.
@@ -95,7 +92,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
         if (!login.IsSuccess)
         {
-            _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(name), login.Failure, login.Detail);
+            _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(name), login.Failure, _errorLog.Of(login.Detail));
             return login.FailAs<RemoteServerInfo>();
         }
 
@@ -236,7 +233,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
             if (!login.IsSuccess)
             {
-                _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}{Detail:l}", LogText.Clean(stored.Name), login.Failure, login.Detail);
+                _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}{Detail:l}", LogText.Clean(stored.Name), login.Failure, _errorLog.Of(login.Detail));
                 return login.FailAs<RemoteServerInfo>();
             }
 
@@ -541,7 +538,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 "Call to remote server {ServerName} failed: {Failure}{Detail:l}",
                 LogText.Clean(server.Name),
                 result.Attempt.Failure,
-                runtime.MayLogDetail() ? result.Attempt.Detail : ErrorText.Block("More than " + MaxDetailsPerMinute.ToString(CultureInfo.InvariantCulture) + " whole errors of this server in a minute: the rest are not written"));
+                runtime.ErrorLog.Of(result.Attempt.Detail));
         }
 
         return result.Attempt;
@@ -662,7 +659,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return (result.Value!, null);
         }
 
-        _logger.LogWarning("Capability detection on remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(serverName), result.Failure, result.Detail);
+        _logger.LogWarning("Capability detection on remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(serverName), result.Failure, _errorLog.Of(result.Detail));
         return (new RemoteCapabilities(RemoteMode.Unknown, 0), result.Error);
     }
 
@@ -676,7 +673,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var result = await _client.LogoutAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
-            _logger.LogInformation("Could not end an unused login on a remote server: {Failure}{Detail:l}", result.Failure, result.Detail);
+            _logger.LogInformation("Could not end an unused login on a remote server: {Failure}{Detail:l}", result.Failure, _errorLog.Of(result.Detail));
         }
     }
 
@@ -692,7 +689,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         else
         {
             // A logout cut by the limit may still reach the remote later.
-            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, logout.Detail);
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLog.Of(logout.Detail));
         }
     }
 
@@ -746,7 +743,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
         else
         {
-            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, logout.Detail);
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLog.Of(logout.Detail));
         }
     }
 
@@ -771,7 +768,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
         foreach (var logout in await EndFreshAndKeptAsync(serverId, runtime, endpoint, fresh, freshMayBeRevoked).ConfigureAwait(false))
         {
-            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, logout.Detail);
+            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLog.Of(logout.Detail));
         }
     }
 
@@ -783,7 +780,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var runtime = _runtimes.TryGetValue(server.Id, out var held) ? held : null;
         foreach (var logout in await EndFreshAndKeptAsync(server.Id, runtime, endpoint, login, freshMayBeRevoked: true).ConfigureAwait(false))
         {
-            _logger.LogWarning("Could not end a login on unsaved remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, logout.Detail);
+            _logger.LogWarning("Could not end a login on unsaved remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLog.Of(logout.Detail));
         }
     }
 
@@ -826,7 +823,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var logout = await LogOutWithinLimitAsync(endpoint, session).ConfigureAwait(false);
         if (!logout.IsSuccess && !(refusedIsEnded && logout.Failure == RemoteFailure.AuthenticationFailed))
         {
-            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login{Detail:l}", LogText.Clean(serverName), logout.Failure, logout.Detail);
+            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login{Detail:l}", LogText.Clean(serverName), logout.Failure, _errorLog.Of(logout.Detail));
         }
     }
 
@@ -970,10 +967,10 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         private bool? _reachable;
         private RemoteSession? _session;
         private bool _forgotten;
-        private long _detailsSince;
-        private int _detailsLogged;
 
         public SemaphoreSlim LoginGate { get; } = new(1, 1);
+
+        public ErrorLogLimit ErrorLog { get; } = new();
 
         public RemoteSession? Session
         {
@@ -1022,22 +1019,6 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 {
                     onChange!(reachable.Value);
                 }
-            }
-        }
-
-        // Whether a whole error may still go to the log in this minute, so that a failing remote cannot fill the disk.
-        public bool MayLogDetail()
-        {
-            lock (_gate)
-            {
-                var now = Environment.TickCount64;
-                if (now - _detailsSince >= 60_000 || _detailsLogged == 0)
-                {
-                    _detailsSince = now;
-                    _detailsLogged = 0;
-                }
-
-                return ++_detailsLogged <= MaxDetailsPerMinute;
             }
         }
 
