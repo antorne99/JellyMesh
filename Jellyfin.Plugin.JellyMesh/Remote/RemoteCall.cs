@@ -29,7 +29,8 @@ internal sealed class RemoteCall
     private readonly string _step;
     private readonly HttpMethod _method;
     private readonly string _url;
-    private readonly IReadOnlyCollection<string> _secrets;
+    private readonly IReadOnlyCollection<string> _tokens;
+    private readonly string? _password;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RemoteCall"/> class.
@@ -37,13 +38,15 @@ internal sealed class RemoteCall
     /// <param name="step">The name of the step.</param>
     /// <param name="method">The method.</param>
     /// <param name="url">The URL or the path asked.</param>
-    /// <param name="secrets">The secrets sent.</param>
-    public RemoteCall(string step, HttpMethod method, string url, params string?[] secrets)
+    /// <param name="token">The token sent, if any.</param>
+    /// <param name="password">The password sent, if any.</param>
+    public RemoteCall(string step, HttpMethod method, string url, string? token, string? password = null)
     {
         _step = step.EndsWith("Async", StringComparison.Ordinal) ? step[..^"Async".Length] : step;
         _method = method;
         _url = url;
-        _secrets = secrets.OfType<string>().ToList();
+        _tokens = string.IsNullOrEmpty(token) ? [] : [token];
+        _password = string.IsNullOrEmpty(password) ? null : password;
     }
 
     /// <summary>
@@ -54,7 +57,7 @@ internal sealed class RemoteCall
     /// <returns>The error.</returns>
     public RemoteError Error(Exception? exception, string? reason = null) => Bare(reason) with
     {
-        Exception = exception is null ? null : ErrorText.Clean(exception.ToString(), _secrets)
+        Exception = exception is null ? null : ExceptionText(exception)
     };
 
     /// <summary>
@@ -73,22 +76,23 @@ internal sealed class RemoteCall
 
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_bodyLimit);
+        var whole = false;
         var read = new MemoryStream();
         await using (read.ConfigureAwait(false))
         {
             try
             {
-                await ReadStartAsync(response.Content, read, limit.Token).ConfigureAwait(false);
+                whole = await ReadStartAsync(response.Content, read, limit.Token).ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is OperationCanceledException or IOException or HttpRequestException)
             {
-                error = error with { Exception = ErrorText.Clean(exception.ToString(), _secrets) };
+                error = error with { Exception = ExceptionText(exception) };
             }
 
             return error with
             {
                 ElapsedMilliseconds = Elapsed(),
-                Body = BodyText(read.ToArray(), response.Content.Headers.ContentType?.MediaType)
+                Body = BodyText(read.ToArray(), whole, response.Content.Headers.ContentType?.MediaType)
             };
         }
     }
@@ -109,21 +113,21 @@ internal sealed class RemoteCall
     /// <param name="body">The body.</param>
     /// <param name="contentType">The type of the body.</param>
     /// <param name="exception">The exception of its parsing, if any.</param>
-    /// <param name="secret">A secret the answer holds, if any.</param>
+    /// <param name="token">A token the answer holds, if any.</param>
     /// <returns>The error.</returns>
-    public RemoteError Unusable(HttpStatusCode status, byte[] body, string? contentType, Exception? exception, string? secret = null)
+    public RemoteError Unusable(HttpStatusCode status, byte[] body, string? contentType, Exception? exception, string? token = null)
     {
         var start = body.AsSpan(0, Math.Min(body.Length, ErrorText.MaxLength + MarginBytes)).ToArray();
         return Answered(status, null, "The answer is not what a Jellyfin server sends here") with
         {
-            Answer = OneLine(string.Create(CultureInfo.InvariantCulture, $"{contentType ?? "no type"}; {body.Length} bytes")),
-            Body = BodyText(start, contentType, secret),
-            Exception = exception is null ? null : ErrorText.Clean(exception.ToString(), WithSecret(secret))
+            Answer = string.Create(CultureInfo.InvariantCulture, $"{Theirs(contentType ?? "no type")}; {body.Length} bytes"),
+            Body = BodyText(start, start.Length == body.Length, contentType, token),
+            Exception = exception is null ? null : ExceptionText(exception, token)
         };
     }
 
-    // Reads the start of a body into a buffer, which keeps what came before a failure.
-    private static async Task ReadStartAsync(HttpContent content, MemoryStream buffer, CancellationToken cancellationToken)
+    // Reads the start of a body into a buffer, which keeps what came before a failure. Says whether it was all.
+    private static async Task<bool> ReadStartAsync(HttpContent content, MemoryStream buffer, CancellationToken cancellationToken)
     {
         var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         await using (stream.ConfigureAwait(false))
@@ -137,6 +141,14 @@ internal sealed class RemoteCall
                 await buffer.WriteAsync(chunk.AsMemory(0, kept), CancellationToken.None).ConfigureAwait(false);
             }
         }
+
+        return buffer.Length < ErrorText.MaxLength + MarginBytes;
+    }
+
+    private static IEnumerable<string> MessagesOf(Exception exception)
+    {
+        var inner = exception is AggregateException aggregate ? aggregate.InnerExceptions : (IEnumerable<Exception>)(exception.InnerException is { } one ? [one] : []);
+        return inner.SelectMany(MessagesOf).Prepend(exception.Message).Where(message => message.Length > 0);
     }
 
     private static bool IsText(string? contentType)
@@ -151,21 +163,38 @@ internal sealed class RemoteCall
 
     private long Elapsed() => (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds;
 
-    private IReadOnlyCollection<string> WithSecret(string? secret) => secret is null ? _secrets : [.. _secrets, secret];
+    private IReadOnlyCollection<string> TokensWith(string? token) => string.IsNullOrEmpty(token) ? _tokens : [.. _tokens, token];
 
-    private string OneLine(string text) => ErrorText.Clean(text, _secrets).Replace("\n", " ", StringComparison.Ordinal);
+    private string OneLine(string text) => ErrorText.Clean(text, _tokens).Replace("\n", " ", StringComparison.Ordinal);
+
+    // Cleans a line the remote wrote, which is hidden whole if it holds the password.
+    private string Theirs(string text) => HoldsPassword(text) ? ErrorText.Hidden : OneLine(text);
+
+    private bool HoldsPassword(string text) => _password is not null && ErrorText.Holds(text, _password);
+
+    // Writes an exception without the messages that hold the password. What the plugin or .NET wrote around them stays.
+    private string ExceptionText(Exception exception, string? token = null)
+    {
+        var text = exception.ToString();
+        foreach (var message in MessagesOf(exception).Where(HoldsPassword).OrderByDescending(message => message.Length))
+        {
+            text = text.Replace(message, ErrorText.Hidden, StringComparison.Ordinal);
+        }
+
+        return ErrorText.Clean(text, TokensWith(token));
+    }
 
     private RemoteError Bare(string? reason) => new(_step, OneLine(_method + " " + _url), Elapsed()) { Reason = reason };
 
     private RemoteError Answered(HttpStatusCode status, string? phrase, string? reason) => Bare(reason) with
     {
-        Status = OneLine(string.Create(CultureInfo.InvariantCulture, $"HTTP {(int)status} {phrase ?? status.ToString()}"))
+        Status = string.Create(CultureInfo.InvariantCulture, $"HTTP {(int)status} {Theirs(phrase ?? status.ToString())}")
     };
 
     // Describes an answer by its type, its length and the headers that tell who sent it.
     private string AnswerOf(HttpResponseMessage response)
     {
-        var parts = new List<string> { response.Content.Headers.ContentType?.ToString() ?? "no type" };
+        var parts = new List<string> { Theirs(response.Content.Headers.ContentType?.ToString() ?? "no type") };
         if (response.Content.Headers.ContentLength is { } length)
         {
             parts.Add(string.Create(CultureInfo.InvariantCulture, $"{length} bytes"));
@@ -175,22 +204,33 @@ internal sealed class RemoteCall
         {
             if (response.Headers.TryGetValues(name, out var values))
             {
-                parts.Add(name + ": " + string.Join(", ", values));
+                parts.Add(Theirs(name + ": " + string.Join(", ", values)));
             }
         }
 
-        return OneLine(string.Join("; ", parts));
+        return string.Join("; ", parts);
     }
 
-    private string? BodyText(byte[] body, string? contentType, string? secret = null)
+    private string? BodyText(byte[] body, bool whole, string? contentType, string? token = null)
     {
         if (body.Length == 0)
         {
             return null;
         }
 
-        return IsText(contentType)
-            ? ErrorText.Clean(Encoding.UTF8.GetString(body), WithSecret(secret))
-            : "[not shown: it is not text]";
+        if (!IsText(contentType))
+        {
+            return "[not shown: it is not text]";
+        }
+
+        var text = Encoding.UTF8.GetString(body);
+        if (HoldsPassword(text))
+        {
+            return ErrorText.Hidden;
+        }
+
+        var tokens = TokensWith(token);
+        var dropped = whole ? 0 : tokens.Append(_password ?? string.Empty).Max(ErrorText.LongestForm);
+        return ErrorText.Clean(text, tokens, dropped);
     }
 }

@@ -99,7 +99,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         ArgumentNullException.ThrowIfNull(credentials);
 
         var body = JsonSerializer.SerializeToUtf8Bytes(new AuthenticateRequest(credentials.Username, credentials.Password));
-        var response = await SendAsync(endpoint, HttpMethod.Post, "/Users/AuthenticateByName", null, body, cancellationToken, secret: credentials.Password).ConfigureAwait(false);
+        var response = await SendAsync(endpoint, HttpMethod.Post, "/Users/AuthenticateByName", null, body, cancellationToken, password: credentials.Password).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
             return response.FailAs<RemoteSession>();
@@ -490,16 +490,16 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         byte[]? body,
         CancellationToken cancellationToken,
         int maxBytes = MaxResponseBytes,
-        string? secret = null,
+        string? password = null,
         [CallerMemberName] string step = "")
     {
         if (!RemoteUrl.TryCombine(endpoint.BaseUrl, path, out var uri))
         {
-            var refused = new RemoteCall(step, method, path, session?.AccessToken, secret);
+            var refused = new RemoteCall(step, method, path, session?.AccessToken, password);
             return RawResponse.Failed(refused, RemoteFailure.InvalidResponse, null, refused.Error(null, "The path cannot be joined to the address of the server; nothing was sent"));
         }
 
-        var call = new RemoteCall(step, method, uri.AbsoluteUri, session?.AccessToken, secret);
+        var call = new RemoteCall(step, method, uri.AbsoluteUri, session?.AccessToken, password);
 
         using var client = _httpClientFactory.CreateClient(HttpClientName);
 
@@ -575,11 +575,11 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
         public RemoteResult<T> FailAs<T>() => RemoteResult.FailWithError<T>(Failure, Failure == RemoteFailure.ResponseTooLarge ? null : (int?)Status, Error);
 
-        // Refuses an answer that was read, with the exception of its parsing and a secret it holds.
-        public RemoteResult<T> Refuse<T>(JsonException? exception, string? secret = null) => RemoteResult.FailWithError<T>(
+        // Refuses an answer that was read, with the exception of its parsing and a token it holds.
+        public RemoteResult<T> Refuse<T>(JsonException? exception, string? token = null) => RemoteResult.FailWithError<T>(
             RemoteFailure.InvalidResponse,
             null,
-            Call.Unusable(Status!.Value, Body, ContentType, exception, secret));
+            Call.Unusable(Status!.Value, Body, ContentType, exception, token));
     }
 
     private sealed record AuthenticateRequest(string Username, string Pw);

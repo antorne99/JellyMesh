@@ -11,6 +11,11 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 internal static class RemoteAnswers
 {
     /// <summary>
+    /// The most characters of a value that goes back in a header.
+    /// </summary>
+    public const int MaxHeaderValueLength = 1024;
+
+    /// <summary>
     /// Checks an item of a catalog.
     /// </summary>
     /// <param name="item">The item.</param>
@@ -56,10 +61,10 @@ internal static class RemoteAnswers
     /// header of its own.
     /// </summary>
     /// <param name="value">The value.</param>
-    /// <returns>Whether it is plain text.</returns>
+    /// <returns>Whether it is plain text that is not too long.</returns>
     public static bool CanGoInAHeader(string? value)
     {
-        return !string.IsNullOrEmpty(value) && value.All(character => character is > ' ' and < '\u007f');
+        return !string.IsNullOrEmpty(value) && value.Length <= MaxHeaderValueLength && value.All(character => character is > ' ' and < '\u007f');
     }
 
     private static bool HasNoNull<T>(IEnumerable<T>? list)

@@ -75,6 +75,17 @@ public class RemoteErrorTests
     [InlineData("\x5cu0022Pw\x5cu0022:\x5cu0022" + OtherToken + "\x5cu0022")]
     [InlineData("http://someone:" + OtherToken + "@host/")]
     [InlineData("{\"password\" : \"" + OtherToken + "\"}")]
+    [InlineData("'token' => '" + OtherToken + "'")]
+    [InlineData("[\"AccessToken\"]=> \"" + OtherToken + "\"")]
+    [InlineData("<AccessToken>" + OtherToken + "</AccessToken>")]
+    [InlineData("&#34;AccessToken&#34;:&#34;" + OtherToken + "&#34;")]
+    [InlineData("&#x22;AccessToken&#x22;:&#x22;" + OtherToken + "&#x22;")]
+    [InlineData("{\"tokens\":[\"" + OtherToken + "\"]}")]
+    [InlineData("pwd=" + OtherToken)]
+    [InlineData("{\"NewPw\":\"" + OtherToken + "\"}")]
+    [InlineData("X-Api-Key: " + OtherToken)]
+    [InlineData("http://x/a.strm?a=b&amp;sig=" + OtherToken)]
+    [InlineData("http://a:" + OtherToken + "@x@host/")]
     public async Task TheBodyOfTheRemoteIsShownWithoutTokens(string echoed)
     {
         var handler = new StubHandler(_ => StubHandler.Json("before " + echoed + " after", HttpStatusCode.InternalServerError));
@@ -94,15 +105,83 @@ public class RemoteErrorTests
     [InlineData("a b&c=d+e", "a+b%26c%3dd%2be")]
     [InlineData("<pass>word", "\x5cu003Cpass\x5cu003Eword")]
     [InlineData("<pass>word", "&lt;pass&gt;word")]
-    public async Task TheBodyOfTheRemoteIsShownWithoutThePassword(string password, string echoed)
+    [InlineData("pass/word", "pass\\/word")]
+    [InlineData("a\tb-password", "a\tb-password")]
+    public async Task ABodyThatHoldsThePasswordIsNotShown(string password, string echoed)
     {
         var handler = new StubHandler(_ => StubHandler.Json("sent " + echoed + " refused", HttpStatusCode.InternalServerError));
         var credentials = new RemoteCredentials { Username = "user", Password = password };
 
         var result = await ClientFor(handler).AuthenticateAsync(_endpoint, credentials, CancellationToken.None);
 
-        Assert.DoesNotContain(echoed, result.Error!.ToString(), StringComparison.Ordinal);
-        Assert.Contains("refused", result.Error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("sent ", result.Error!.ToString(), StringComparison.Ordinal);
+        Assert.Contains("HTTP 500", result.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("jellyfin")]
+    [InlineData("users")]
+    [InlineData("remote")]
+    [InlineData("http")]
+    public async Task ACommonPasswordLeavesNoHoleInWhatThePluginWrites(string password)
+    {
+        var handler = new StubHandler(_ => throw new HttpRequestException("no answer"));
+        var credentials = new RemoteCredentials { Username = "user", Password = password };
+
+        var result = await ClientFor(handler).AuthenticateAsync(_endpoint, credentials, CancellationToken.None);
+
+        var detail = result.Error!.ToString();
+        Assert.Contains("POST " + TestValues.Url + "/Users/AuthenticateByName", detail, StringComparison.Ordinal);
+        Assert.Contains("System.Net.Http.HttpRequestException: no answer", detail, StringComparison.Ordinal);
+        Assert.Contains("at Jellyfin.Plugin.JellyMesh.Remote.JellyfinRemoteClient.", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain(ErrorText.Removed, detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnExceptionMessageThatHoldsThePasswordIsNotShown()
+    {
+        var handler = new StubHandler(_ => throw new HttpRequestException("got pa55-w0rd-sentinel back"));
+        var credentials = new RemoteCredentials { Username = "user", Password = "pa55-w0rd-sentinel" };
+
+        var result = await ClientFor(handler).AuthenticateAsync(_endpoint, credentials, CancellationToken.None);
+
+        Assert.DoesNotContain("pa55-w0rd-sentinel", result.Error!.ToString(), StringComparison.Ordinal);
+        Assert.Contains("System.Net.Http.HttpRequestException: ", result.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATokenTooLongIsRefusedAndNotShown()
+    {
+        var token = new string('<', 8 * 1024 * 1024);
+        var handler = new StubHandler(_ => StubHandler.Json("{\"AccessToken\":\"" + token + "\",\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":false}}}"));
+
+        var result = await ClientFor(handler).AuthenticateAsync(_endpoint, TestValues.Credentials, CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+        Assert.DoesNotContain("<<<<", result.Error!.ToString(), StringComparison.Ordinal);
+        Assert.Contains("[not shown", result.Error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ABodyOfManyLinesIsCutAtItsLines()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json(new string('\n', 60_000), HttpStatusCode.InternalServerError));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.InRange(result.Detail.Length, 1, 40_000);
+        Assert.Contains("cut at 2000 lines", result.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASecretCutByABodyThatStopsIsNotShown()
+    {
+        var part = TestValues.Token[..^2];
+        var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway) { Content = new StreamContent(new StoppingStream("before " + part)) });
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.DoesNotContain(part, result.Error!.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -216,6 +295,16 @@ public class RemoteErrorTests
         Delay = (_, _) => Task.CompletedTask,
         RequestLimit = limit ?? JellyfinRemoteClient.RequestTimeout
     };
+
+    // A body that breaks off after a text.
+    private sealed class StoppingStream(string text) : MemoryStream(System.Text.Encoding.UTF8.GetBytes(text))
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await base.ReadAsync(buffer, cancellationToken);
+            return read > 0 ? read : throw new IOException("The connection broke");
+        }
+    }
 
     // A body that never arrives.
     private sealed class SilentStream : Stream
