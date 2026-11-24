@@ -40,9 +40,10 @@ titles_of() { # <server>: every film and episode, one per line, with the IDs of 
     '.Items[] | {Id, Type} + (.MediaSources // [] | map({Id, File: ((.Path // "") | startswith("/media/"))}) |
       {Files: map(select(.File).Id), Stubs: map(select(.File | not).Id)})'
 }
-ask_version() { # <server> <token> <item> [version]: the status of PlaybackInfo, with the slot it may take freed
+ask_version() { # <server> <token> <item> [version]: the status of PlaybackInfo, the versions in $WORK/asked, and its slot freed
   local code session
   code=$(as_peer "$1" "$2" POST "/Items/$3/PlaybackInfo${4:+?mediaSourceId=$4}")
+  jq -r '.MediaSources[]?.Id' "$WORK/body" 2>/dev/null | sort -u >"$WORK/asked"
   session=$(jq -r '.PlaySessionId // empty' "$WORK/body" 2>/dev/null)
   [ -z "$session" ] || as_peer "$1" "$2" DELETE "/JellyMesh/Provider/Streams/$session" >/dev/null
   echo "$code"
@@ -123,6 +124,14 @@ for s in a b; do
   check "$s has file versions" yes "$(some "$files")"
   check "file versions of $s a peer does not receive" 0 "$(comm -23 <(echo "$files") <(echo "$versions") | grep -c .)"
   check "stub versions of $s among those a peer receives" 0 "$(comm -12 <(echo "$linked") <(echo "$versions") | grep -c .)"
+  by_file='' other=''
+  while read -r item version; do
+    [ -n "$version" ] || continue
+    [ "$version" = "$item" ] || other+="$version "
+    by_file+="$(ask_version "$s" "$t" "$item" "$version"),$([ "$(cat "$WORK/asked")" = "$version" ] && echo alone || echo not-alone) "
+  done < <(jq -r '.Id as $item | select(.Stubs != [] or (.Files | length > 1)) | .Files | (if index($item) then $item else .[0] // empty end) as $real | .[] | "\($real) \(.)"' <<<"$titles")
+  check "PlaybackInfo of a file version of $s, with that version and no other in the answer" 200,alone "$(tr ' ' '\n' <<<"$by_file" | grep . | sort -u | paste -sd' ' -)"
+  [ "$s" = b ] || check "$s has a file version that is not the item asked, so the test can fail" yes "$(some "$other")"
   by_item='' by_version=''
   while read -r item version type; do
     [ -n "$version" ] || continue
