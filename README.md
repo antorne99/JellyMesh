@@ -211,14 +211,14 @@ JellyMesh imports these kinds of library from other servers. Each imported libra
 | Series | `Serie` | Shows | Series, seasons and episodes |
 | Music | `Musica` | Music | Tracks |
 | Music videos | `Video musicali` | Music videos | Music videos |
-| Home videos | `Video domestici` | Home videos and photos | Videos and their folders |
+| Home videos and photos | `Video domestici` | Home videos and photos | Videos, photos and their folders |
 | Books | `Libri` | Books | Ebooks, PDFs, comics and audiobooks |
 | No type (mixed) | `Film` and `Serie` | Movies for `Film` and Shows for `Serie`, or no type for both | Films and series only; anything else in it is left out |
 
 - Playlists and channels are not imported.
 - Between JellyMesh servers, libraries of films, series, music, music videos, home videos, ebooks, comics and audiobooks, and libraries with no type, can be shared.
 - Films, series and music videos are matched across servers and shown once. The rest is never merged with a copy on another server or with a local one.
-- Metadata protection covers every type. JellyMesh writes no `.nfo` for tracks, books and audiobooks: it writes their metadata in Jellyfin itself, and locks the whole item when protection is on.
+- Metadata protection covers every type. JellyMesh writes no `.nfo` for tracks, books, audiobooks and photos: it writes their metadata in Jellyfin itself, and locks the whole item when protection is on.
 
 ### Music videos and home videos
 
@@ -245,6 +245,17 @@ Opening or downloading the book reads the file from the remote. If the remote is
 Each audio file of an audiobook on the remote is one item, in `Libri/<author>/<book>/`, with its own cover and chapters, so an audiobook in several files shows as several items. It plays as a track does.
 
 A plain library scan does not put back a field you change by hand on an audiobook. A metadata refresh of the item does, and so does a change on the remote.
+
+### Photos and GPS
+
+For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension of the remote file, in the album folders of the remote. It also keeps a thumbnail of at most 640 pixels a side, outside the libraries, and a cover for each album. None of them is the original or carries EXIF data.
+
+- **What Jellyfin knows:** the size and the camera data of the photo are read from the remote. Latitude, longitude and altitude never are.
+- **The image** is asked of the remote, and is always a re-encoded JPEG without EXIF data. When the remote is offline it is missing.
+- **`Download` and `File` give the original file of the remote as it is, with its EXIF data and, if it has one, its GPS position.** Anyone who can see a federated photo can read from the file where it was taken. The photo viewer of jellyfin-web opens photos through `Download`. When the remote is offline, both answer HTTP 503.
+- **The image is anonymous, as it is in Jellyfin for local photos:** anyone who knows the ID of a photo gets its image without signing in, while a signed-in user who can't see the photo gets HTTP 404. `Download` and `File` always need a signed-in user.
+- **Libraries with photos turned off:** the libraries JellyMesh makes for `Video domestici` have photos on. In a library you made, federated photos don't show while its photos option is off.
+- **HEIC photos** are not imported, because Jellyfin 12.4 does not list them as photos.
 
 ## Versions
 
