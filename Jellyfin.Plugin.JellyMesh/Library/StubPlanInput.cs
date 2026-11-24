@@ -33,6 +33,9 @@ public sealed record StubPlanInput(
     /// </summary>
     public bool KeepsOlderLayout { get; init; }
 
+    /// <summary>Gets the time of the plan.</summary>
+    public DateTime Now { get; init; }
+
     /// <summary>
     /// Gets the local library a type folder of a remote library goes to, as a key: folders with one key hold one stub per
     /// title. By default one local library per server and type.

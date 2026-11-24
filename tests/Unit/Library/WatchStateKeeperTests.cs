@@ -690,6 +690,22 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // Row 543: the state still to clear is of one episode of the several its stub covers.
+    [Fact]
+    public async Task AStateStillToClearIsNotKept()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        Watch(_anna, FilmItem(a));
+        var stub = StubOf(a);
+
+        Assert.True(await _keeper.KeepAsync(_fixture.Root, [stub with { StateOfOneUntil = _watched }], [], CancellationToken.None));
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+
+        Assert.True(await _keeper.KeepAsync(_fixture.Root, [stub], [], CancellationToken.None));
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task AServerThatNeverRemovedOneWritesNothing()
     {

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -141,15 +142,34 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
             .ToList();
     }
 
+    // Null when the libraries cannot be read: the title waits for the next sync.
+    private LibraryPlacement? ReadPlacement()
+    {
+        try
+        {
+            return LibraryPlacement.Read(_library, _store);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot read the libraries to link a new local title: {Error}", exception.GetType().Name);
+            return null;
+        }
+    }
+
     // Returns whether a group holds a local copy of the title. Only the planned groups of the title are saved; the stubs,
     // their files and the other groups wait for the next sync.
     private async Task<bool> SaveGroupsAsync(IReadOnlyCollection<Guid> local, CancellationToken cancellationToken)
     {
+        if (ReadPlacement() is not { } placement)
+        {
+            return false;
+        }
+
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
         var state = _registry.State;
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, false, _ => string.Empty, _ => null));
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, false, _ => string.Empty, _ => null) { PlacementOf = placement.KeyOf });
 
         var planned = plan.State.Groups.Where(group => group.LocalItemIds.Any(local.Contains)).ToList();
         if (planned.Count == 0)

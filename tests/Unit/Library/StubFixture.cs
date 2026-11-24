@@ -43,6 +43,7 @@ internal sealed class StubFixture : IDisposable
         Updater = new StubItemUpdater(Library.Object);
         Technical = new StubTechnicalData(Sync.Index, Streams.Object, Chapters.Object);
         Remover = new StubRemover(Library.Object);
+        Cleaner = new WatchStateCleaner(Library.Object, Users.Object, UserData.Object, new CapturingLogger<WatchStateCleaner>());
         Materializer = new LibraryMaterializer(
             Registry,
             Hooked,
@@ -58,7 +59,8 @@ internal sealed class StubFixture : IDisposable
             Sync.Clock,
             Logger,
             Refresher,
-            Linker.Object);
+            Linker.Object,
+            cleaner: Cleaner);
         Linker.Setup(linker => linker.DetachForRemovalAsync(It.IsAny<IReadOnlyCollection<StubEntry>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
     }
@@ -70,6 +72,10 @@ internal sealed class StubFixture : IDisposable
     public FakeCatalog LocalCatalog { get; } = new();
 
     public Mock<ILibraryManager> Library { get; } = new();
+
+    public Mock<IUserManager> Users { get; } = new();
+
+    public Mock<IUserDataManager> UserData { get; } = new();
 
     public Mock<IMediaStreamRepository> Streams { get; } = new();
 
@@ -100,6 +106,8 @@ internal sealed class StubFixture : IDisposable
     public StubTechnicalData Technical { get; }
 
     public StubRemover Remover { get; }
+
+    public WatchStateCleaner Cleaner { get; }
 
     public CapturingLogger<LibraryMaterializer> Logger { get; } = new();
 

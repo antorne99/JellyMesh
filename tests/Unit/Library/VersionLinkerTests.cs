@@ -652,6 +652,31 @@ public sealed class VersionLinkerTests : IDisposable
         _userData.Verify(data => data.SaveUserData(_user, local, It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // Row 543: what it was played is of one episode, and a local copy would take it.
+    [Fact]
+    public async Task AStubWithTheStateOfOneEpisodeIsNotLinkedBeforeItIsCleared()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080) with { StateOfOneUntil = _newer };
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"], [local.Id]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        Data(itemA).Played = true;
+        Data(itemA).LastPlayedDate = _older;
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+        Assert.Equal((false, false), (Data(local).Played, Data(itemB).Played));
+        Assert.Equal([itemB.Id], LinkedIds(local));
+        Assert.Null(itemA.PrimaryVersionId);
+
+        Data(itemA).Played = false;
+        Data(itemA).LastPlayedDate = null;
+        await SaveAsync([a with { StateOfOneUntil = null }, b], Group("g", ["sa", "sb"], [local.Id]));
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Equal(local.Id, itemA.PrimaryVersionId);
+    }
+
     [Fact]
     public async Task TheVersionPlayedLastDecidesPlayed()
     {

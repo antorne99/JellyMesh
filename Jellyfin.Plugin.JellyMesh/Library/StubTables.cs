@@ -13,6 +13,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 internal static class StubTables
 {
     private static readonly IReadOnlyList<StubSource> _noSources = [];
+    private static readonly IReadOnlyList<string> _noCopies = [];
     private static readonly IReadOnlyList<SeasonStub> _noSeasons = [];
 
     /// <summary>
@@ -117,6 +118,30 @@ internal static class StubTables
         """);
 
     /// <summary>
+    /// Creates the tables of the splits that wait for their watch state and of the copies of some episodes of a stub, and the
+    /// mark of the stubs whose older watch state is of one episode, inside the transaction of a schema step.
+    /// </summary>
+    /// <param name="connection">The connection that writes.</param>
+    /// <param name="transaction">The transaction of the schema step.</param>
+    public static void AddSplits(SqliteConnection connection, SqliteTransaction transaction) => StoreCommands.Execute(
+        connection,
+        transaction,
+        """
+        CREATE TABLE stub_splits (
+            position INTEGER NOT NULL PRIMARY KEY,
+            stub_id TEXT NOT NULL,
+            from_stub_id TEXT NOT NULL
+        );
+        ALTER TABLE stub_entries ADD COLUMN state_of_one_until_ticks INTEGER;
+        CREATE TABLE stub_entry_part_copies (
+            stub_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            item_id TEXT NOT NULL,
+            PRIMARY KEY (stub_id, position)
+        ) WITHOUT ROWID;
+        """);
+
+    /// <summary>
     /// Reads the whole registry.
     /// </summary>
     /// <param name="connection">A read connection.</param>
@@ -127,13 +152,15 @@ internal static class StubTables
     public static StubState Load(SqliteConnection connection, SqliteTransaction transaction)
     {
         var entrySources = ReadSources(connection, transaction, "SELECT stub_id, server_id, item_id, media_source_id, library_id FROM stub_entry_sources ORDER BY stub_id, position;");
+        var partCopies = ReadPartCopies(connection, transaction);
         var stubs = new List<StubEntry>();
         using (var command = StoreCommands.Command(
             connection,
             transaction,
             """
             SELECT id, server_id, kind, relative_path, identity_key, series_stub_id, season_number, episode_number,
-                episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks
+                episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks,
+                state_of_one_until_ticks
             FROM stub_entries ORDER BY ordinal;
             """))
         using (var reader = command.ExecuteReader())
@@ -157,7 +184,9 @@ internal static class StubTables
                     TechnicalTag = reader.GetTextOrNull(11),
                     UrlTag = reader.GetTextOrNull(12),
                     StrmWrittenUtc = reader.IsDBNull(13) ? null : new DateTime(reader.GetInt64(13), DateTimeKind.Utc),
-                    Sources = entrySources.GetValueOrDefault(id) ?? []
+                    StateOfOneUntil = reader.IsDBNull(14) ? null : new DateTime(reader.GetInt64(14), DateTimeKind.Utc),
+                    Sources = entrySources.GetValueOrDefault(id) ?? [],
+                    PartCopies = partCopies.GetValueOrDefault(id) ?? []
                 });
             }
         }
@@ -203,7 +232,8 @@ internal static class StubTables
             Labels = ReadNames(connection, transaction, "SELECT server_id, label FROM stub_labels;"),
             ServerNames = ReadNames(connection, transaction, "SELECT server_id, name FROM stub_server_names;"),
             RemovedServers = ReadRemoved(connection, transaction),
-            Renames = ReadRenames(connection, transaction)
+            Renames = ReadRenames(connection, transaction),
+            Splits = ReadSplits(connection, transaction)
         };
     }
 
@@ -226,7 +256,8 @@ internal static class StubTables
             Labels = rewrite || !SameNames(before.Labels, next.Labels),
             ServerNames = rewrite || !SameNames(before.ServerNames, next.ServerNames),
             RemovedServers = rewrite || !before.RemovedServers.SequenceEqual(next.RemovedServers),
-            Renames = rewrite || !before.Renames.SequenceEqual(next.Renames)
+            Renames = rewrite || !before.Renames.SequenceEqual(next.Renames),
+            Splits = rewrite || !before.Splits.SequenceEqual(next.Splits)
         };
 
         PlanRows(before.Stubs, next.Stubs, stub => stub.Id, SameStub, write.StubRows, write.StubOrdinals, write.StubDeletes);
@@ -250,8 +281,8 @@ internal static class StubTables
                 connection,
                 transaction,
                 """
-                DELETE FROM stub_entries; DELETE FROM stub_entry_sources; DELETE FROM stub_series; DELETE FROM stub_series_sources;
-                DELETE FROM stub_series_seasons;
+                DELETE FROM stub_entries; DELETE FROM stub_entry_sources; DELETE FROM stub_entry_part_copies; DELETE FROM stub_series;
+                DELETE FROM stub_series_sources; DELETE FROM stub_series_seasons;
                 """);
         }
 
@@ -301,6 +332,16 @@ internal static class StubTables
                 insert.Run(position, rename.StubId, rename.OldPath, StoreCommands.Text(rename.RemovedItemId), rename.Forgets);
             }
         }
+
+        if (write.Splits)
+        {
+            StoreCommands.Execute(connection, transaction, "DELETE FROM stub_splits;");
+            using var insert = StoreCommands.Prepared(connection, transaction, "INSERT INTO stub_splits (position, stub_id, from_stub_id) VALUES ($position, $stub, $from);", "$position", "$stub", "$from");
+            for (var position = 0; position < state.Splits.Count; position++)
+            {
+                insert.Run(position, state.Splits[position].StubId, state.Splits[position].FromStubId);
+            }
+        }
     }
 
     // A row whose content is the same but whose place in the list moved only gets its new place.
@@ -345,7 +386,9 @@ internal static class StubTables
     }
 
     private static bool SameStub(StubEntry a, StubEntry b)
-        => a with { Sources = _noSources } == b with { Sources = _noSources } && a.Sources.SequenceEqual(b.Sources);
+        => a with { Sources = _noSources, PartCopies = _noCopies } == b with { Sources = _noSources, PartCopies = _noCopies }
+            && a.Sources.SequenceEqual(b.Sources)
+            && a.PartCopies.SequenceEqual(b.PartCopies, StringComparer.Ordinal);
 
     private static bool SameSeries(SeriesStub a, SeriesStub b)
         => a with { Sources = _noSources, Seasons = _noSeasons } == b with { Sources = _noSources, Seasons = _noSeasons }
@@ -362,15 +405,17 @@ internal static class StubTables
             transaction,
             """
             INSERT INTO stub_entries (id, ordinal, server_id, kind, relative_path, identity_key, series_stub_id, season_number,
-                episode_number, episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks)
+                episode_number, episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks,
+                state_of_one_until_ticks)
             VALUES ($id, $ordinal, $server, $kind, $path, $identity, $series, $season, $episode, $end, $content, $image,
-                $technical, $url, $strm)
+                $technical, $url, $strm, $one)
             ON CONFLICT (id) DO UPDATE SET ordinal = excluded.ordinal, server_id = excluded.server_id, kind = excluded.kind,
                 relative_path = excluded.relative_path, identity_key = excluded.identity_key,
                 series_stub_id = excluded.series_stub_id, season_number = excluded.season_number,
                 episode_number = excluded.episode_number, episode_number_end = excluded.episode_number_end,
                 content_hash = excluded.content_hash, image_tag = excluded.image_tag, technical_tag = excluded.technical_tag,
-                url_tag = excluded.url_tag, strm_written_ticks = excluded.strm_written_ticks;
+                url_tag = excluded.url_tag, strm_written_ticks = excluded.strm_written_ticks,
+                state_of_one_until_ticks = excluded.state_of_one_until_ticks;
             """,
             "$id",
             "$ordinal",
@@ -386,15 +431,19 @@ internal static class StubTables
             "$image",
             "$technical",
             "$url",
-            "$strm");
+            "$strm",
+            "$one");
         using var move = StoreCommands.Prepared(connection, transaction, "UPDATE stub_entries SET ordinal = $ordinal WHERE id = $id;", "$ordinal", "$id");
         using var delete = StoreCommands.Prepared(connection, transaction, "DELETE FROM stub_entries WHERE id = $id;", "$id");
+        using var clearCopies = StoreCommands.Prepared(connection, transaction, "DELETE FROM stub_entry_part_copies WHERE stub_id = $id;", "$id");
+        using var insertCopy = StoreCommands.Prepared(connection, transaction, "INSERT INTO stub_entry_part_copies (stub_id, position, item_id) VALUES ($id, $position, $item);", "$id", "$position", "$item");
         using var sources = new SourceWriter(connection, transaction, "stub_entry_sources", "stub_id");
 
         foreach (var stubId in write.StubDeletes)
         {
             delete.Run(stubId);
             sources.Clear(stubId);
+            clearCopies.Run(stubId);
         }
 
         foreach (var (stubId, ordinal) in write.StubOrdinals)
@@ -419,8 +468,14 @@ internal static class StubTables
                 stub.ImageTag,
                 stub.TechnicalTag,
                 stub.UrlTag,
-                stub.StrmWrittenUtc?.Ticks);
+                stub.StrmWrittenUtc?.Ticks,
+                stub.StateOfOneUntil?.Ticks);
             sources.Replace(stub.Id, stub.Sources);
+            clearCopies.Run(stub.Id);
+            for (var position = 0; position < stub.PartCopies.Count; position++)
+            {
+                insertCopy.Run(stub.Id, position, stub.PartCopies[position]);
+            }
         }
     }
 
@@ -528,6 +583,19 @@ internal static class StubTables
         return sources;
     }
 
+    private static Dictionary<string, List<string>> ReadPartCopies(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var copies = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using var command = StoreCommands.Command(connection, transaction, "SELECT stub_id, item_id FROM stub_entry_part_copies ORDER BY stub_id, position;");
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            Add(copies, reader.GetString(0), reader.GetString(1));
+        }
+
+        return copies;
+    }
+
     private static List<VersionGroup> ReadGroups(SqliteConnection connection, SqliteTransaction transaction)
     {
         var members = new Dictionary<long, List<string>>();
@@ -610,6 +678,19 @@ internal static class StubTables
         return renames;
     }
 
+    private static List<StubSplit> ReadSplits(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var splits = new List<StubSplit>();
+        using var command = StoreCommands.Command(connection, transaction, "SELECT stub_id, from_stub_id FROM stub_splits ORDER BY position;");
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            splits.Add(new StubSplit(reader.GetString(0), reader.GetString(1)));
+        }
+
+        return splits;
+    }
+
     private static void Add<TKey, TValue>(Dictionary<TKey, List<TValue>> lists, TKey key, TValue value)
         where TKey : notnull
     {
@@ -661,8 +742,11 @@ internal static class StubTables
         /// <summary>Gets a value indicating whether the renames are written again.</summary>
         public bool Renames { get; init; }
 
+        /// <summary>Gets a value indicating whether the splits are written again.</summary>
+        public bool Splits { get; init; }
+
         /// <summary>Gets a value indicating whether there is nothing to write.</summary>
-        public bool IsEmpty => !Rewrite && !Groups && !Labels && !ServerNames && !RemovedServers && !Renames
+        public bool IsEmpty => !Rewrite && !Groups && !Labels && !ServerNames && !RemovedServers && !Renames && !Splits
             && StubRows.Count == 0 && StubOrdinals.Count == 0 && StubDeletes.Count == 0
             && SeriesRows.Count == 0 && SeriesOrdinals.Count == 0 && SeriesDeletes.Count == 0;
     }
