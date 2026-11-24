@@ -717,24 +717,63 @@ public class PhotoImageFilterTests
             SignedIn(sees: true);
         }
 
-        using var gone = new CancellationTokenSource();
-        _answer = async token =>
-        {
-            await gone.CancelAsync();
-            await Task.Delay(Timeout.Infinite, token);
-            return Image(_jpeg);
-        };
-        var (context, lifetime) = SlowRequest(gone.Token);
         var filter = Filter();
+        for (var turn = 0; turn <= PlaybackLimits.PhotoImagesInMemory; turn++)
+        {
+            using var gone = new CancellationTokenSource();
+            _answer = async token =>
+            {
+                await gone.CancelAsync();
+                await Task.Delay(Timeout.Infinite, token);
+                return Image(_jpeg);
+            };
+            var (context, lifetime) = SlowRequest(gone.Token);
 
-        Assert.False(await RunAsync(filter, context));
+            Assert.False(await RunAsync(filter, context).WaitAsync(TimeSpan.FromSeconds(30)));
 
-        Assert.IsType<EmptyResult>(context.Result);
-        Assert.True(lifetime.Aborted);
+            Assert.IsType<EmptyResult>(context.Result);
+            Assert.True(lifetime.Aborted);
+        }
+
+        Assert.Equal(PlaybackLimits.PhotoImagesInMemory + 1, _asked.Count);
         _answer = _ => Task.FromResult(Image(_jpeg));
         var after = Request();
         await RunAsync(filter, after);
         AssertServed(after);
+    }
+
+    // The clients that leave while they wait for a read of the server give back the place they hold too.
+    [Fact]
+    public async Task Clients_that_go_away_while_they_wait_for_the_server_keep_no_place()
+    {
+        var filter = Filter();
+        for (var turn = 0; turn < 3; turn++)
+        {
+            using var left = new CancellationTokenSource();
+            _asked.Clear();
+            _answer = async token =>
+            {
+                await Task.Delay(Timeout.Infinite, token);
+                return Image(_jpeg);
+            };
+            var waits = Enumerable.Range(0, AnonymousPlaces)
+                .Select(_ => SlowRequest(left.Token))
+                .Select(request => (request.Context, Run: RunAsync(filter, request.Context)))
+                .ToList();
+            Assert.Equal(PlaybackLimits.AnonymousPhotoImagesPerServer, _asked.Count);
+
+            await left.CancelAsync();
+            await Task.WhenAll(waits.Select(wait => wait.Run)).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.All(waits, wait => Assert.IsType<EmptyResult>(wait.Context.Result));
+        }
+
+        _asked.Clear();
+        _answer = _ => Task.FromResult(Image(_jpeg));
+        using var gone = new CancellationTokenSource();
+        var slow = Enumerable.Range(0, AnonymousPlaces).Select(_ => RunAsync(filter, SlowRequest(gone.Token).Context)).ToList();
+        Assert.Equal(AnonymousPlaces, _asked.Count);
+        await gone.CancelAsync();
+        await Task.WhenAll(slow).WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     [Fact]
@@ -748,11 +787,12 @@ public class PhotoImageFilterTests
                 gone.Token.ThrowIfCancellationRequested();
                 return new AuthorizationInfo();
             });
-        var (context, _) = SlowRequest(gone.Token);
+        var (context, lifetime) = SlowRequest(gone.Token);
 
         Assert.False(await RunAsync(Filter(), context));
 
         Assert.IsType<EmptyResult>(context.Result);
+        Assert.True(lifetime.Aborted);
         Assert.Empty(_asked);
     }
 
