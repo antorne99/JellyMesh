@@ -113,7 +113,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             return true;
         }
 
-        var kept = await SaveAsync(root, stubs, series, cancellationToken).ConfigureAwait(false);
+        // State still to clear is not of the episodes of its stub (§10 row 543).
+        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, cancellationToken).ConfigureAwait(false);
         foreach (var serverId in ServersOf(stubs, series))
         {
             if (kept)
