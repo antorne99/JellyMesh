@@ -1,8 +1,27 @@
+# Row 932 (F65), new plugin at ce1d457: three remotes of 100,000 tracks, stopped in the scan, on 2026-11-24
+
+No other agent was running, load 3.6-6.5. MusicBrainz and TheAudioDB blocked, container cap 5500 MiB without swap.
+The run was stopped by its own disk guard (under 6 GiB free on the host) about a minute into the scan: the host went from
+14.3 GiB free to 5.9, with 6.5 of 8 GiB of swap used; removing the container and its volumes gave back 3.8 GiB. So no
+scanned phase was measured and the 30 s of an unchanged sync at 300,000 scanned tracks are NOT MEASURED. The run needs
+about 10 GiB of free host disk (19.5 to 9.7 GiB on 2026-11-23), plus the 6 GiB of the guard.
+
+first        99.3 s (read 26.4, materialization 72.9)
+incremental  13.8 s (read 0.6, materialization 13.2), no item scanned yet: not the sync of row 388
+repeat       78.4 s (read 46.2, materialization 32.1)
+nightly      274.8 s (read 55.1, materialization 219.6, version links 0.0)
+Unchanged syncs and the nightly change only sync_runs and sync_run_servers in the store. VmHWM 4.4 GiB, the cgroup reached
+the cap (page cache included, 3641 reclaims, no OOM), VM available memory never under 2.4 GiB. Kestrel logged a heartbeat
+13.8 s late during repeat, cause not known. These runs are not alternated with the old plugin, whose runs had no cap, so
+they are no before and after.
+versions/run.sh: 76 checks ok, 0 failed, with the plugin of ce1d457, from a copy of the proof that uses the library folders
+and no plugin-made library; the proof in the repository looks for the stubs in the old folders and fails 26 checks.
+
 # Row 932 (F65): three remotes of 100,000 tracks, measured on 2026-11-23
 
 Plugin eb1f949 is "old"; "new" also has the commits that skip the stubs that are no video when linking versions, answer
 that a non-video item has no segments without a library read, and keep detaching a removed stub whatever its kind.
-Jellyfin 12.4, fakes without delay, images on. The 3 x 100,000 scanned run on the new plugin is still owed.
+Jellyfin 12.4, fakes without delay, images on. No phase of the 3 x 100,000 scanned run has been measured on either plugin.
 
 Every number below was taken with other agents' builds on the same 8 GB VM (load 6-31), so compare only the pairs that
 alternate. The unscanned 3 x 100,000 figures were taken from 10:46 local, before the heavy load from about 11:25Z.
