@@ -139,7 +139,25 @@ public partial class PlaybackFiltersTests
         Assert.Null(context.Result);
         Assert.Equal(_localId, context.ActionArguments["itemId"]);
         Assert.Equal(_localId.ToString("N"), context.ActionArguments["mediaSourceId"]);
-        Assert.Equal(_localId.ToString("N"), Assert.Single(SourcesOf(executed)).Id);
+        var source = Assert.Single(SourcesOf(executed));
+        Assert.Equal(_localId.ToString("N"), source.Id);
+        Assert.Null(source.Path);
+        Assert.False(source.SupportsDirectPlay);
+        Assert.False(source.SupportsDirectStream);
+        Assert.StartsWith("/Videos/" + _localId.ToString("N") + "/stream.", source.TranscodingUrl, StringComparison.Ordinal);
+        Assert.Equal(_localId, _fixture.Sessions.LocalItemOf("local-session"));
+    }
+
+    [Fact]
+    public async Task A_local_version_of_an_unknown_stub_that_stock_does_not_answer_is_refused()
+    {
+        var stub = UnknownStub();
+        ItemOf(_localId, "/media/film/A.mkv", null);
+        stub.LinkedAlternateVersions = [new LinkedChild { ItemId = _localId, Type = LinkedChildType.LinkedAlternateVersion }];
+
+        var executed = await StockAsync(InfoOf(_unknownId));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(executed.Result).StatusCode);
     }
 
     [Fact]

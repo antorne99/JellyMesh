@@ -146,10 +146,11 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
         if (targetStub is null && routeStub is null)
         {
-            // Under an unknown stub, stock answers for the local item itself.
+            // A client would read the local copy by the stub it opened, so it goes through the file route.
             if (routeUnknown)
             {
-                context.ActionArguments[ItemArgument] = target;
+                await AnswerLocalCopyAsync(context, next, new PlaybackIdentity(user.Id, authorization.DeviceId ?? string.Empty, route, route.ToString("N")), authorization.Token, target).ConfigureAwait(false);
+                return;
             }
 
             await PlayStockVersionAsync(context, next, target, route).ConfigureAwait(false);
@@ -253,7 +254,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         source.IsRemote = false;
     }
 
-    private static bool CleanLocalCopyResponse(PlaybackInfoResponse response, PlaybackOpenRequest request, Guid localItemId)
+    private static bool CleanLocalCopyResponse(PlaybackInfoResponse response, string localToken, Guid localItemId)
     {
         if (response.ErrorCode is not null || response.MediaSources.Count == 0)
         {
@@ -268,7 +269,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             if (source.SupportsDirectPlay || source.SupportsDirectStream || string.IsNullOrEmpty(source.TranscodingUrl))
             {
                 var container = PlaybackResponseBuilder.ContainerOf(source);
-                source.TranscodingUrl = PlaybackUrls.LocalFile(localItemId, source.Id, container, request.LocalToken);
+                source.TranscodingUrl = PlaybackUrls.LocalFile(localItemId, source.Id, container, localToken);
                 source.TranscodingSubProtocol = MediaStreamProtocol.http;
                 source.TranscodingContainer = container;
             }
@@ -317,22 +318,31 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
 
     private async Task PlayLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, Guid localItemId, Guid route)
     {
+        if (await AnswerLocalCopyAsync(context, next, request.Identity, request.LocalToken, localItemId).ConfigureAwait(false) is { } response)
+        {
+            _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
+        }
+    }
+
+    // Answers with the local copy of a title, or refuses and returns null.
+    private async Task<PlaybackInfoResponse?> AnswerLocalCopyAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackIdentity identity, string localToken, Guid localItemId)
+    {
         // The stock action answers for the local item. The source the client asked for is one of the stub.
         context.ActionArguments[ItemArgument] = localItemId;
         context.ActionArguments[MediaSourceArgument] = localItemId.ToString("N");
         var executed = await next().ConfigureAwait(false);
-        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, request, localItemId))
+        if (executed.Result is not ObjectResult { Value: PlaybackInfoResponse response } || !CleanLocalCopyResponse(response, localToken, localItemId))
         {
-            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure}", localItemId, request.Stub.Id, StockFailureOf(executed));
+            _logger.LogWarning("Stock gave no PlaybackInfo for the local copy {LocalItemId} of title {StubId}: {Failure}", localItemId, identity.StubId, StockFailureOf(executed));
             executed.Exception = null;
             executed.ExceptionHandled = true;
-            executed.Result = _refusal.Refuse(context.HttpContext, request.Identity.DeviceId, PlaybackRefusal.FailedText);
-            return;
+            executed.Result = _refusal.Refuse(context.HttpContext, identity.DeviceId, PlaybackRefusal.FailedText);
+            return null;
         }
 
-        _logger.LogInformation("Title {StubId} plays from its local copy {LocalItemId}, play session {PlaySessionId}", request.Stub.Id, localItemId, response.PlaySessionId);
-        _coordinator.RecordLocalPlaySession(request.Identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, request.Identity.DeviceId));
-        _segments.RecordLocalCopy(request.Identity, response.PlaySessionId, localItemId, route);
+        _logger.LogInformation("Title {StubId} plays from its local copy {LocalItemId}, play session {PlaySessionId}", identity.StubId, localItemId, response.PlaySessionId);
+        _coordinator.RecordLocalPlaySession(identity.UserId, localItemId, response.PlaySessionId, DevicesOf(response, identity.DeviceId));
+        return response;
     }
 
     private async Task RunLocalTranscodeAsync(ActionExecutingContext context, ActionExecutionDelegate next, PlaybackOpenRequest request, PlaybackOutcome outcome, Guid route)
