@@ -55,10 +55,10 @@ public sealed record StubEntry
     public IReadOnlyList<string> PartCopies { get; init; } = [];
 
     /// <summary>
-    /// Gets a value indicating whether the stub covers several episodes but its watch state is still that of the one it
-    /// covered before, to clear (§10 row 543).
+    /// Gets when the stub, of one episode, took more: its watch state from before is of that one and is to clear (§10 row
+    /// 543). Null when there is nothing to clear.
     /// </summary>
-    public bool HoldsStateOfOne { get; init; }
+    public DateTime? StateOfOneUntil { get; init; }
 
     /// <summary>Gets a hash of what was written for the stub, null until it is on disk.</summary>
     public string? ContentHash { get; init; }

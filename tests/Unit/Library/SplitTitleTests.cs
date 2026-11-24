@@ -661,7 +661,7 @@ public sealed class SplitTitleTests : IDisposable
         Widen();
         _fixture.UserData
             .Setup(data => data.GetUserData(_anna, It.IsAny<BaseItem>()))
-            .Throws(new InvalidOperationException("secret"));
+            .Throws(new TimeoutException("secret"));
         await _fixture.SyncAndMaterializeAsync();
         Assert.Equal(stub.Id, StubOf(1, 2).Id);
         Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
@@ -674,6 +674,63 @@ public sealed class SplitTitleTests : IDisposable
         AssertEmpty(Row(_anna, PathOf(stub)));
     }
 
+    [Fact]
+    public async Task AStatePlayedSinceAStubTookTwoEpisodesStays()
+    {
+        var stub = await AddSingleAsync(1);
+        Give(_anna, PathOf(stub), Full());
+        Give(_bruno, PathOf(stub), Full());
+        Widen();
+        _users = [];
+        await _fixture.SyncAndMaterializeAsync();
+        var since = _fixture.Sync.Clock.Now.UtcDateTime.AddHours(1);
+        Give(_anna, PathOf(stub), new UserItemData { Key = "k", PlaybackPositionTicks = 5, LastPlayedDate = since });
+        _fixture.Sync.Clock.Now = _fixture.Sync.Clock.Now.AddDays(1);
+        await _fixture.SyncAndMaterializeAsync();
+        _users = [_anna, _bruno];
+
+        await CleanAsync();
+
+        Assert.Equal((5L, (DateTime?)since), (Row(_anna, PathOf(stub)).PlaybackPositionTicks, Row(_anna, PathOf(stub)).LastPlayedDate));
+        AssertEmpty(Row(_bruno, PathOf(stub)));
+    }
+
+    // Its folder is in no library for a while: the old state may come back with the item.
+    [Fact]
+    public async Task AStubThatTookTwoEpisodesIsClearedWhenItsItemIsBack()
+    {
+        var stub = await AddSingleAsync(1);
+        _items.Remove(PathOf(stub), out var item);
+        Widen();
+        await _fixture.SyncAndMaterializeAsync();
+        await CleanAsync();
+        _items[PathOf(stub)] = item!;
+        Give(_anna, PathOf(stub), Full());
+
+        await CleanAsync();
+        AssertEmpty(Row(_anna, PathOf(stub)));
+
+        Give(_anna, PathOf(stub), Full());
+        await CleanAsync();
+        AssertFull(Row(_anna, PathOf(stub)));
+    }
+
+    [Fact]
+    public async Task AStubWithTheStateOfOneEpisodeTakesOneWithNoItem()
+    {
+        var old = await JoinDoubleAsync(2160, ["b1", "b2"], scan: false);
+        AddItems();
+        var singles = Stubs.Where(stub => stub.Id != old.Id).ToList();
+        await MarkAsync(old, singles[0]);
+        Assert.All(singles, stub => _items.Remove(PathOf(stub)));
+
+        await CleanAsync();
+        Assert.DoesNotContain(Stubs, stub => stub.Id == singles[0].Id);
+
+        await CleanAsync();
+        Assert.Equal(old.Id, Assert.Single(Stubs).Id);
+    }
+
     // The item at the old path of a server rename still holds the state that the move gives to the new one.
     [Fact]
     public async Task AStubThatTookTwoEpisodesIsClearedAtItsOldPathToo()
@@ -683,11 +740,16 @@ public sealed class SplitTitleTests : IDisposable
         _items[old] = new Episode { Id = Guid.NewGuid(), Path = old };
         Give(_anna, old, Full());
         await SaveRenamesAsync(new StubRename(stub.Id, "old.strm"));
+        _items.Remove(PathOf(stub), out var item);
         Widen();
 
         await _fixture.SyncAndMaterializeAsync();
-
         AssertEmpty(Row(_anna, old));
+
+        _items[PathOf(stub)] = item!;
+        Give(_anna, PathOf(stub), Full());
+        await CleanAsync();
+        AssertEmpty(Row(_anna, PathOf(stub)));
     }
 
     // Row 507: the stub that splits from it takes the state of its episode first.
@@ -1156,7 +1218,7 @@ public sealed class SplitTitleTests : IDisposable
     // A stub whose state is still of one episode: the split of another from it waits, and its move to a new server name too.
     private Task MarkAsync(StubEntry from, StubEntry taker) => SaveAsync(state => state with
     {
-        Stubs = state.Stubs.Select(stub => stub.Id == from.Id ? stub with { HoldsStateOfOne = true } : stub).ToList(),
+        Stubs = state.Stubs.Select(stub => stub.Id == from.Id ? stub with { StateOfOneUntil = _day.AddDays(1) } : stub).ToList(),
         Splits = [new StubSplit(taker.Id, from.Id)],
         Renames = [new StubRename(from.Id, "old.strm")]
     });

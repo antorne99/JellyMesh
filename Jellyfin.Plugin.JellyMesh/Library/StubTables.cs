@@ -119,7 +119,7 @@ internal static class StubTables
 
     /// <summary>
     /// Creates the tables of the splits that wait for their watch state and of the copies of some episodes of a stub, and the
-    /// mark of the stubs whose watch state is of one episode, inside the transaction of a schema step.
+    /// mark of the stubs whose older watch state is of one episode, inside the transaction of a schema step.
     /// </summary>
     /// <param name="connection">The connection that writes.</param>
     /// <param name="transaction">The transaction of the schema step.</param>
@@ -132,7 +132,7 @@ internal static class StubTables
             stub_id TEXT NOT NULL,
             from_stub_id TEXT NOT NULL
         );
-        ALTER TABLE stub_entries ADD COLUMN holds_state_of_one INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE stub_entries ADD COLUMN state_of_one_until_ticks INTEGER;
         CREATE TABLE stub_entry_part_copies (
             stub_id TEXT NOT NULL,
             position INTEGER NOT NULL,
@@ -159,7 +159,8 @@ internal static class StubTables
             transaction,
             """
             SELECT id, server_id, kind, relative_path, identity_key, series_stub_id, season_number, episode_number,
-                episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks, holds_state_of_one
+                episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks,
+                state_of_one_until_ticks
             FROM stub_entries ORDER BY ordinal;
             """))
         using (var reader = command.ExecuteReader())
@@ -183,7 +184,7 @@ internal static class StubTables
                     TechnicalTag = reader.GetTextOrNull(11),
                     UrlTag = reader.GetTextOrNull(12),
                     StrmWrittenUtc = reader.IsDBNull(13) ? null : new DateTime(reader.GetInt64(13), DateTimeKind.Utc),
-                    HoldsStateOfOne = reader.GetBoolean(14),
+                    StateOfOneUntil = reader.IsDBNull(14) ? null : new DateTime(reader.GetInt64(14), DateTimeKind.Utc),
                     Sources = entrySources.GetValueOrDefault(id) ?? [],
                     PartCopies = partCopies.GetValueOrDefault(id) ?? []
                 });
@@ -405,7 +406,7 @@ internal static class StubTables
             """
             INSERT INTO stub_entries (id, ordinal, server_id, kind, relative_path, identity_key, series_stub_id, season_number,
                 episode_number, episode_number_end, content_hash, image_tag, technical_tag, url_tag, strm_written_ticks,
-                holds_state_of_one)
+                state_of_one_until_ticks)
             VALUES ($id, $ordinal, $server, $kind, $path, $identity, $series, $season, $episode, $end, $content, $image,
                 $technical, $url, $strm, $one)
             ON CONFLICT (id) DO UPDATE SET ordinal = excluded.ordinal, server_id = excluded.server_id, kind = excluded.kind,
@@ -414,7 +415,7 @@ internal static class StubTables
                 episode_number = excluded.episode_number, episode_number_end = excluded.episode_number_end,
                 content_hash = excluded.content_hash, image_tag = excluded.image_tag, technical_tag = excluded.technical_tag,
                 url_tag = excluded.url_tag, strm_written_ticks = excluded.strm_written_ticks,
-                holds_state_of_one = excluded.holds_state_of_one;
+                state_of_one_until_ticks = excluded.state_of_one_until_ticks;
             """,
             "$id",
             "$ordinal",
@@ -468,7 +469,7 @@ internal static class StubTables
                 stub.TechnicalTag,
                 stub.UrlTag,
                 stub.StrmWrittenUtc?.Ticks,
-                stub.HoldsStateOfOne);
+                stub.StateOfOneUntil?.Ticks);
             sources.Replace(stub.Id, stub.Sources);
             clearCopies.Run(stub.Id);
             for (var position = 0; position < stub.PartCopies.Count; position++)

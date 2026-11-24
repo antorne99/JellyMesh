@@ -38,8 +38,8 @@ public sealed class WatchStateCleaner
     }
 
     /// <summary>
-    /// Clears the state of every user on the marked stubs. One that a split waits for, or that cannot be cleared now, keeps
-    /// its mark for the next call.
+    /// Clears the state from before the mark of every user on the marked stubs. One that a split waits for, that has no item,
+    /// or that cannot be cleared now, keeps its mark for the next call.
     /// </summary>
     /// <param name="root">The federated folder.</param>
     /// <param name="state">The registry.</param>
@@ -48,7 +48,7 @@ public sealed class WatchStateCleaner
     public StubState Clear(string root, StubState state, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(state);
-        var marked = state.Stubs.Where(stub => stub.HoldsStateOfOne).ToList();
+        var marked = state.Stubs.Where(stub => stub.StateOfOneUntil is not null).ToList();
         if (marked.Count == 0)
         {
             return state;
@@ -68,7 +68,7 @@ public sealed class WatchStateCleaner
             .ToHashSet(StringComparer.Ordinal);
         return cleared.Count == 0
             ? state
-            : state with { Stubs = state.Stubs.Select(stub => cleared.Contains(stub.Id) ? stub with { HoldsStateOfOne = false } : stub).ToList() };
+            : state with { Stubs = state.Stubs.Select(stub => cleared.Contains(stub.Id) ? stub with { StateOfOneUntil = null } : stub).ToList() };
     }
 
     private static bool IsEmpty(UserItemData data) =>
@@ -77,6 +77,7 @@ public sealed class WatchStateCleaner
     // Also at the old paths of a pending server rename, which gives their state to the new one.
     private bool TryClear(string root, StubState state, StubEntry stub, List<User> users, CancellationToken cancellationToken)
     {
+        var cleared = false;
         try
         {
             foreach (var entry in state.WithOldPaths([stub]))
@@ -84,24 +85,27 @@ public sealed class WatchStateCleaner
                 if (_library.FindByPath(FederatedPaths.Resolve(root, entry.RelativePath), false) is { } item)
                 {
                     // The instance Jellyfin caches: another would leave it the old rows.
-                    ClearItem(_library.GetItemById(item.Id) ?? item, users, cancellationToken);
+                    ClearItem(_library.GetItemById(item.Id) ?? item, stub.StateOfOneUntil, users, cancellationToken);
+                    cleared |= string.Equals(entry.RelativePath, stub.RelativePath, StringComparison.Ordinal);
                 }
             }
 
-            return true;
+            return cleared;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            // The type only: a message could hold a path.
             _logger.LogError("Cannot clear the watch state of a stub that now covers more episodes: {Error}", exception.GetType().Name);
             return false;
         }
     }
 
-    private void ClearItem(BaseItem item, List<User> users, CancellationToken cancellationToken)
+    // A row played since the mark is of the episodes the stub has now.
+    private void ClearItem(BaseItem item, DateTime? until, List<User> users, CancellationToken cancellationToken)
     {
         foreach (var user in users)
         {
-            if (_userData.GetUserData(user, item) is not { } data || IsEmpty(data))
+            if (_userData.GetUserData(user, item) is not { } data || IsEmpty(data) || data.LastPlayedDate > until)
             {
                 continue;
             }

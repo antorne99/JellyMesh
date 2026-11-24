@@ -295,7 +295,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             var into = merge.Select(entry => entry.Into).ToList();
             try
             {
-                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsToClear(merged, into) && !IsWaitedFor(waits, state, merged, into))
+                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsToClear(root, merged, into) && !IsWaitedFor(waits, state, merged, into))
                 {
                     state = await MergeAsync(root, state, merged, into, users, cancellationToken).ConfigureAwait(false);
                 }
@@ -348,7 +348,9 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         merged.Kind != StubKind.Episode || merged.EpisodeNumberEnd is not null || into.EpisodeNumberEnd is null;
 
     // Whether the state of a stub is still to clear: a merge would give it away, or clear with it what it takes.
-    private static bool IsToClear(StubEntry merged, List<StubEntry> into) => into.Append(merged).Any(stub => stub.HoldsStateOfOne);
+    // One with no item gives nothing.
+    private bool IsToClear(string root, StubEntry merged, List<StubEntry> into) =>
+        into.Append(merged).Any(stub => stub.StateOfOneUntil is not null) && _library.FindByPath(FederatedPaths.Resolve(root, merged.RelativePath), false) is not null;
 
     private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, List<StubEntry> into, List<User> users, CancellationToken cancellationToken)
     {
