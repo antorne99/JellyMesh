@@ -2,6 +2,7 @@ using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
+using Jellyfin.Plugin.JellyMesh.Index;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -40,6 +41,16 @@ public static class PhotoPlaceholders
         [".heif"] = "image/heif",
         [".avif"] = "image/avif"
     }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Tells whether an entry of the index is a photo that gets a placeholder: one in a format with an extension.</summary>
+    /// <param name="item">The entry.</param>
+    /// <returns>Whether it gets one.</returns>
+    public static bool HasPlaceholder(IndexedItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return item.Kind == IndexedItemKind.Photo && item.Extension is not null;
+    }
 
     /// <summary>Gives the media type a photo goes with, from the extension of its placeholder.</summary>
     /// <param name="path">The path of the placeholder.</param>
