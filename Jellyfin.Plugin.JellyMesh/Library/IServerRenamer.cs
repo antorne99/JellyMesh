@@ -34,7 +34,7 @@ public interface IServerRenamer
     /// <summary>
     /// Renames under its current name each server whose saved label is over the byte limit, one after another, with the
     /// steps of a rename (row 564), once the libraries are ready. A server whose rename is refused or keeps its label is left
-    /// for the next start.
+    /// for the next start. It is called only at a start with no title in the older layouts (row 565).
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>How many servers got a label within the limit.</returns>

@@ -20,6 +20,7 @@ public sealed class LongLabelRenameServiceTests
     public LongLabelRenameServiceTests()
     {
         _renamer.Setup(renamer => renamer.RenameLongLabelsAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("rename")).ReturnsAsync(1);
+        _stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(false);
     }
 
     [Fact]
@@ -69,6 +70,45 @@ public sealed class LongLabelRenameServiceTests
         await RunAsync();
 
         Assert.Equal(2, calls);
+    }
+
+    // Row 565: while the older layouts hold titles the migration still carries, nothing is renamed at this start.
+    [Fact]
+    public async Task While_the_older_layouts_hold_titles_nothing_is_renamed()
+    {
+        _stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
+
+        await RunAsync();
+
+        Assert.Empty(_steps);
+        _renamer.Verify(renamer => renamer.RenameLongLabelsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task The_first_start_after_the_migration_renames()
+    {
+        var olderLayout = true;
+        _stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(() => olderLayout);
+
+        await RunAsync();
+        Assert.Empty(_steps);
+
+        olderLayout = false;
+        await RunAsync();
+
+        Assert.Equal(["rename"], _steps);
+    }
+
+    [Fact]
+    public async Task A_registry_that_cannot_tell_its_layout_is_tried_again()
+    {
+        var asks = 0;
+        _stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(() => ++asks == 1 ? (bool?)null : false);
+
+        await RunAsync();
+
+        Assert.Equal(2, asks);
+        Assert.Equal(["rename"], _steps);
     }
 
     [Fact]

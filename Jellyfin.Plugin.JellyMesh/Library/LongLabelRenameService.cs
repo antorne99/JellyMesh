@@ -10,7 +10,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// At the start of the server, renames the stubs of each server whose saved label is over the byte limit with the steps of
-/// a rename, so that a label saved before the limit was in bytes is cut once (row 564).
+/// a rename, so that a label saved before the limit was in bytes is cut once (row 564). It waits for a start with no title
+/// left in the older layouts, so that the migration finds the item of every old stub (row 565).
 /// </summary>
 public sealed class LongLabelRenameService : BackgroundService
 {
@@ -56,7 +57,8 @@ public sealed class LongLabelRenameService : BackgroundService
         }
     }
 
-    // Renames the servers with a long label, false while the settings or the registry cannot be read yet.
+    // Renames the servers with a long label, false while the settings or the registry cannot be read yet. While the older
+    // layouts hold titles it renames nothing and saves nothing, so the next start tries again (row 565).
     private async Task<bool> TryRenameAsync(CancellationToken cancellationToken)
     {
         try
@@ -68,6 +70,17 @@ public sealed class LongLabelRenameService : BackgroundService
                 {
                     return false;
                 }
+            }
+
+            if (_stubs.UsesOlderLayout() is not { } olderLayout)
+            {
+                return false;
+            }
+
+            if (olderLayout)
+            {
+                _logger.LogDebug("The servers with a label over the limit are renamed at a start after the migration to the server folders");
+                return true;
             }
 
             var ran = await _renamer.RenameLongLabelsAsync(cancellationToken).ConfigureAwait(false);
