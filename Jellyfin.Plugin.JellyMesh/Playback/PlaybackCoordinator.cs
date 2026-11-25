@@ -389,7 +389,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Reads the lyrics of a track stub from the first source that answers, the one in use first.
+    /// Reads the lyrics of a track stub from the first source that answers, the one in use first. While the plugin database
+    /// cannot be used, none are read (row 561).
     /// </summary>
     /// <param name="stub">The stub.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -397,6 +398,11 @@ public sealed class PlaybackCoordinator
     public async Task<RemoteResult<RemoteLyrics>> ReadLyricsAsync(StubEntry stub, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stub);
+
+        if (IsSuspended)
+        {
+            return RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Suspended);
+        }
 
         IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
         var failed = RemoteResult.Fail<RemoteLyrics>(RemoteFailure.UnknownServer);
@@ -535,8 +541,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Ends a session reported as stopped, if the report comes from whoever opened it. Stock takes any play session from any
-    /// user, and the session of someone else is left alone.
+    /// Ends the sessions reported as stopped, named by their id or by the one their client chose (row 561), if the report
+    /// comes from whoever opened them. Stock takes any play session from any user, and the session of someone else is left alone.
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <param name="users">The users behind the report.</param>
@@ -545,7 +551,7 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(users);
 
-        if (_sessions.Find(sessionId) is { } session && users.Contains(session.Identity.UserId))
+        foreach (var session in users.Distinct().SelectMany(user => _sessions.FindReported(user, sessionId)).ToList())
         {
             await CloseAsync(session.Id).ConfigureAwait(false);
         }
@@ -894,10 +900,11 @@ public sealed class PlaybackCoordinator
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
     }
 
-    // What names the device of a track to a JellyMesh remote, so that its streams share a slot there (row 511).
+    // What names the device of a track or an audiobook to a JellyMesh remote, so that its streams share a slot there (rows
+    // 511 and 561).
     private string? DeviceFor(StubEntry stub, StubSource source, Guid userId, string? deviceId)
     {
-        return stub.Kind == StubKind.Track && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
+        return stub.Kind is StubKind.Track or StubKind.AudioBook && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
     }
 
     // A session keeps its device, and its server can stop running JellyMesh meanwhile.
@@ -1119,7 +1126,8 @@ public sealed class PlaybackCoordinator
         }
     }
 
-    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once.
+    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once. The slot is not given
+    // back with too little of it left.
     private async Task CloseForRemovalAsync(string sessionId)
     {
         if (_sessions.Remove(sessionId) is not { } session)
@@ -1135,7 +1143,7 @@ public sealed class PlaybackCoordinator
             return;
         }
 
-        if (left > TimeSpan.Zero)
+        if (left >= PlaybackTimeouts.MinimumRelease)
         {
             await ReleaseSlotAsync(session.Source.ServerId, playSessionId, left).ConfigureAwait(false);
         }

@@ -31,6 +31,12 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan RemovalStop = TimeSpan.FromSeconds(3);
 
     /// <summary>
+    /// The least time left of the removal limit for giving a stream slot back: a call with less could not reach the remote
+    /// (Notion 1001).
+    /// </summary>
+    public static readonly TimeSpan MinimumRelease = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
     /// Limit on closing all sessions at shutdown, so that a dead remote cannot hold the server up.
     /// </summary>
     public static readonly TimeSpan Shutdown = TimeSpan.FromSeconds(5);

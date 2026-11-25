@@ -222,6 +222,22 @@ public class TrackDeviceTests
         Assert.All(_fixture.Client.Devices, Assert.Null);
     }
 
+    // Row 561: an audiobook shares the slot of its device as a track does, played or read.
+    [Fact]
+    public async Task An_audiobook_names_its_device_when_played_and_when_its_file_is_read()
+    {
+        var source = JellyMeshSource();
+        var book = Track(source) with { Kind = StubKind.AudioBook };
+
+        Assert.Equal(PlaybackOutcomeKind.Remote, (await _fixture.OpenAsync(book)).Kind);
+        Assert.Equal(HashFor(source), Assert.Single(_fixture.Client.Requests).Device);
+        _fixture.Client.Devices.Clear();
+        Assert.True(await ReadFileAsync(book, Device));
+
+        Assert.Equal([HashFor(source)], _fixture.Client.Devices);
+        Assert.Equal(HashFor(source), Assert.Single(_fixture.Sessions.All).RemoteDevice);
+    }
+
     // The .strm of a track and the file of a book have no device: they count as before.
     [Theory]
     [InlineData(StubKind.Track)]

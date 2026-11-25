@@ -55,6 +55,7 @@ public partial class PlaybackFiltersTests
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly CapturingLogger<PlaybackInfoFilter> _infoLog = new();
     private readonly CapturingLogger<StockRouteGuardFilter> _guardLog = new();
+    private readonly CapturingLogger<AudioStubRoutes> _audioLog = new();
     private readonly Mock<IFederationResolver> _resolver = new();
     private readonly Mock<IMediaSegmentManager> _segmentManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
@@ -127,7 +128,7 @@ public partial class PlaybackFiltersTests
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
-            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, NullLogger<AudioStubRoutes>.Instance),
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, _audioLog),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, TrackIndex(), store),
             listFolder ?? StockRouteGuardFilter.ListFolder,
             _guardLog,
@@ -1805,8 +1806,9 @@ public partial class PlaybackFiltersTests
     [InlineData("video/x-matroska", "x.mkv")]
     [InlineData("video/mp4; charset=binary", "x.mp4")]
     [InlineData("video/mp2t", "x.ts")]
-    [InlineData("text/html", "x")]
-    [InlineData(null, "x")]
+    [InlineData("text/html", "x.bin")]
+    [InlineData("video/unknown", "x.bin")]
+    [InlineData(null, "x.bin")]
     public async Task Download_of_a_stub_is_an_attachment_named_as_the_title_with_the_extension_of_the_remote_file(string? contentType, string name)
     {
         CanSeeItem();
@@ -1821,6 +1823,7 @@ public partial class PlaybackFiltersTests
         var disposition = Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(context.HttpContext.Response.Headers.ContentDisposition.ToString());
         Assert.Equal("attachment", disposition.DispositionType.ToString());
         Assert.Equal(name, disposition.FileName.ToString().Trim('"'));
+        Assert.Equal(name.EndsWith(".bin", StringComparison.Ordinal) ? "application/octet-stream" : contentType, context.HttpContext.Response.ContentType);
         Assert.Equal(_remoteBytes, BodyOf(context));
     }
 
@@ -2019,6 +2022,9 @@ public partial class PlaybackFiltersTests
     [InlineData(StubKind.Track, "AUDIO/FLAC; charset=binary", "01 - Song.flac")]
     [InlineData(StubKind.Track, "audio/ogg", "01 - Song.ogg")]
     [InlineData(StubKind.Track, " audio/mpeg ;q=1", "01 - Song.mp3")]
+    [InlineData(StubKind.Track, "video/x-matroska", "01 - Song.mka")]
+    [InlineData(StubKind.Track, "video/x-ms-asf", "01 - Song.wma")]
+    [InlineData(StubKind.AudioBook, "video/x-matroska", "01 - Café 1.5.mka")]
     [InlineData(StubKind.Track, "video/mp4", "01 - Song.bin")]
     [InlineData(StubKind.Track, "text/html", "01 - Song.bin")]
     [InlineData(StubKind.Track, "text/plain", "01 - Song.bin")]
@@ -2395,6 +2401,22 @@ public partial class PlaybackFiltersTests
         HoldsNoRemoteValue(playlist);
     }
 
+    // Row 561: Finamp names the play session itself, and stops the encoding with that name.
+    [Fact]
+    public async Task Stopping_the_play_session_finamp_chose_closes_its_track_session()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, FinampVariant()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Equal("finamp-play", session.ClientPlaySessionId);
+
+        Assert.True(await RunAsync(guard, Context("HlsSegment", "StopEncodingProcess", ("playSessionId", "finamp-play"))));
+
+        Assert.Null(_fixture.Sessions.Find(session.Id));
+    }
+
     // A rooted variant would leave the folder of the session.
     [Fact]
     public async Task Main_playlist_of_a_master_with_a_rooted_variant_is_a_bad_gateway()
@@ -2406,6 +2428,8 @@ public partial class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Contains(_audioLog.Lines, line => line.Contains("names no variant in its own folder: 502", StringComparison.Ordinal));
+        PlaybackLogAssert.NoRemoteValue(_audioLog.Lines);
     }
 
     [Fact]
@@ -2432,6 +2456,10 @@ public partial class PlaybackFiltersTests
         Assert.Equal(_remoteBytes, BodyOf(get));
         Assert.Equal(PlaybackStreamKind.Progressive, Assert.Single(_fixture.Sessions.All).Kind);
         Assert.Single(_fixture.Client.Requests);
+
+        // Row 561: neither the HEAD nor the GET of universal is sniffed.
+        Assert.Equal("nosniff", head.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Equal("nosniff", get.HttpContext.Response.Headers.XContentTypeOptions.ToString());
     }
 
     // The extension of a transcode comes from the remote, so the HEAD of universal tells an audio type only.
@@ -2531,6 +2559,7 @@ public partial class PlaybackFiltersTests
         Assert.Equal(_remoteBytes, BodyOf(context));
         var direct = Assert.Single(Assert.Single(_fixture.Client.Requests).DeviceProfile!.DirectPlayProfiles);
         Assert.Equal(("mp3", "mp3"), (direct.Container, direct.AudioCodec));
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
     }
 
     // No local audio transcode: a remote that answers but cannot serve leaves a clear error, and stock is never reached.
@@ -2648,6 +2677,7 @@ public partial class PlaybackFiltersTests
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.Equal(status, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
         Assert.Empty(_fixture.Client.LyricsAsked);
+        Assert.Equal(sees, _guardLog.Lines.Any(line => line.Contains("Lyrics." + action + " on a track stub is refused", StringComparison.Ordinal)));
     }
 
     [Fact]

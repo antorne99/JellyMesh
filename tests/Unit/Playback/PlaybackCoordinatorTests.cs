@@ -192,6 +192,23 @@ public class PlaybackCoordinatorTests
         Assert.Single(fixture.Client.Stopped);
     }
 
+    // Row 561: a client that chose its own play session id reports the stop with it.
+    [Fact]
+    public async Task A_stopped_report_with_the_id_its_client_chose_closes_the_session_of_its_user_only()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+        session.NameByClient("finamp-play");
+
+        await fixture.Coordinator.CloseReportedAsync("finamp-play", [Guid.NewGuid()]);
+        Assert.NotNull(fixture.Sessions.Find(session.Id));
+
+        await fixture.Coordinator.CloseReportedAsync("finamp-play", [session.Identity.UserId]);
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Single(fixture.Client.Stopped);
+    }
+
     [Fact]
     public async Task A_stopped_report_of_another_user_leaves_the_session()
     {
@@ -296,6 +313,23 @@ public class PlaybackCoordinatorTests
         fixture.Client.StopsHang = true;
         fixture.Client.StopOverrun = TimeSpan.FromMilliseconds(50);
         fixture.Coordinator.RemovalLimit = TimeSpan.FromMilliseconds(300);
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(fixture.Client.Stopped);
+        Assert.Empty(fixture.Client.Released);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
+    // Notion 1001: under the least time a release needs, the slot is not given back, and the removal keeps its limit.
+    [Fact]
+    public async Task A_server_about_to_go_gives_no_slot_back_with_less_than_the_least_time_left()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        fixture.Coordinator.RemovalLimit = PlaybackTimeouts.MinimumRelease / 2;
 
         await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
 
