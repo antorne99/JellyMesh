@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/antorne99/JellyMesh/main/assets/jellymesh.png",
     "versions": [
       {
+        "version": "0.5.0.5",
+        "changelog": "- The JellyMesh page shows the whole error of a server that can't be reached or used: the call, the status, what the server answered, and the exception with its stack trace. You can copy it from the message, from the server's card and from each part of the page that can't be read.\n- Every JellyMesh error in the server log is whole too, with the address of the remote server. Tokens and passwords are always left out.\n\nNot verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/antorne99/JellyMesh/releases/download/v0.5.0.5/jellymesh_0.5.0.5.zip",
+        "checksum": "07f52b3b0a004273ddee740b293f608d",
+        "timestamp": "2026-11-25T00:15:33Z"
+      },
+      {
         "version": "0.5.0.3",
         "changelog": "- Downloading a film or an episode from another server now saves it under the title's own name with the extension of the video, such as .mkv, instead of a name with no extension.\n\nNot verified: the file name in the Jellyfin apps, checked only in the server's answer and in unit tests.",
         "targetAbi": "12.1.0.0",
