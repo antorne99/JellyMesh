@@ -17,6 +17,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -752,6 +753,50 @@ public class ProviderCatalogTests
         Assert.Null(dto.MediaSources[0].MediaStreams[0].Path);
         Assert.Null(dto.Chapters[0].ImagePath);
         Assert.Equal("Intro", dto.Chapters[0].Name);
+    }
+
+    // Row 566: the catalog clears the same fields as PlaybackInfo for a source that is not a file of this server.
+    [Theory]
+    [InlineData(MediaProtocol.Http, false, false)]
+    [InlineData(MediaProtocol.File, true, false)]
+    [InlineData(MediaProtocol.File, false, true)]
+    public void No_url_of_a_source_that_is_not_a_file_reaches_a_peer(MediaProtocol protocol, bool isRemote, bool isStrm)
+    {
+        const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
+        var strm = Guid.Parse("60000000-0000-0000-0000-00000000000b");
+        _fixture.AddItem(strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Video, Path = Secret }, new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = Secret });
+        var source = dto.MediaSources[0];
+        source.Id = (isStrm ? strm : ProviderFixture.SharedItem).ToString("N");
+        source.Protocol = protocol;
+        source.IsRemote = isRemote;
+        source.Path = Secret;
+        source.EncoderPath = Secret;
+        source.RequiredHttpHeaders = new() { ["Authorization"] = Secret };
+        _fixture.WithDtos(dto);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        var sent = Assert.Single(dto.MediaSources);
+        Assert.Null(sent.Path);
+        Assert.Null(sent.EncoderPath);
+        Assert.Empty(sent.RequiredHttpHeaders);
+        Assert.All(sent.MediaStreams, stream => Assert.Null(stream.Path));
+    }
+
+    [Fact]
+    public void A_file_of_this_server_keeps_its_headers_in_the_catalog()
+    {
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Video, Path = "/media/secret.mkv" });
+        dto.MediaSources[0].RequiredHttpHeaders = new() { ["X-Kept"] = "kept" };
+        _fixture.WithDtos(dto);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        var sent = Assert.Single(dto.MediaSources);
+        Assert.Null(sent.Path);
+        Assert.Null(sent.MediaStreams[0].Path);
+        Assert.Equal("kept", sent.RequiredHttpHeaders["X-Kept"]);
     }
 }
 

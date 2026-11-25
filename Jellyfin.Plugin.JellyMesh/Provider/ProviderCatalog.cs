@@ -17,6 +17,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Querying;
 using Microsoft.Extensions.Logging;
 
@@ -182,6 +183,31 @@ public sealed class ProviderCatalog
     /// <returns>Whether it is one.</returns>
     public static bool IsStrm(string? path)
         => string.Equals(Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Clears every field of a version that can hold the URL it reads, when it is not a file of this server: an admin's
+    /// .strm, another protocol or a remote source. Used by PlaybackInfo and the catalog given to peers (rows 565, 566).
+    /// </summary>
+    /// <param name="caller">The peer.</param>
+    /// <param name="source">The version, cleared in place.</param>
+    public void ClearUrlFields(PeerCaller caller, MediaSourceInfo source)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(source);
+
+        if (!IsUrlSource(caller, source))
+        {
+            return;
+        }
+
+        source.Path = null;
+        source.EncoderPath = null;
+        source.RequiredHttpHeaders = [];
+        foreach (var stream in source.MediaStreams ?? [])
+        {
+            stream.Path = null;
+        }
+    }
 
     /// <summary>
     /// Turns changed items into the changes a peer is told of: those it may reach, each once with the libraries that give
@@ -526,6 +552,14 @@ public sealed class ProviderCatalog
             : new RemoteQuality(video.Height, video.Width, video.BitRate, video.Codec, video.VideoRange.ToString(), video.VideoRangeType.ToString());
     }
 
+    // Tells whether a source reads an admin's .strm, or anything but a file of this server: its path is then a URL.
+    private bool IsUrlSource(PeerCaller caller, MediaSourceInfo source)
+    {
+        return source.Protocol != MediaProtocol.File
+            || source.IsRemote
+            || (Guid.TryParse(source.Id, out var id) && IsStrmFile(caller, id));
+    }
+
     // A file next to the main one of an item, with no library of its own, is seen with that item.
     private bool IsFileOfVisible(PeerCaller caller, Guid itemId)
     {
@@ -554,7 +588,8 @@ public sealed class ProviderCatalog
                 quality[id] = value;
             }
 
-            // The consumer has no use for where files are on this server.
+            // The consumer has no use for where files are on this server, nor for the URL a source reads.
+            ClearUrlFields(caller, source);
             source.Path = null;
             foreach (var stream in source.MediaStreams ?? [])
             {
