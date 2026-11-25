@@ -23,7 +23,7 @@ artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
   - JellyMesh keeps its settings and state in one database file, jellymesh.db, in its data folder; at the first start the data of 0.5 or 0.4 moves into it, saved logins included, and the old files are kept in the folder migrated-0.5 for 30 days.
-  - Each night JellyMesh copies its database and keeps the last 2 copies; a damaged database starts again from the last copy, and the plugin page shows the date of that copy.
+  - Each night JellyMesh checks its database and copies it, keeping the last 2 copies. A database found damaged, at the start or while it runs, starts again from the last copy, and the plugin page shows the date of that copy and asks you to check the servers and the connected servers; after 3 recoveries in 24 hours it stays suspended until Try again.
   - A database written by a newer JellyMesh, or one that cannot be opened, is left as it is: sync and remote playback stop, and the plugin page says why and offers Try again.
   - The settings are saved only through the plugin page, and Jellyfin no longer writes a configuration file for JellyMesh.
   - Each server has one Edit form for its name, URL, login, libraries and library mode, which checks the server and lists what the change does before saving.
