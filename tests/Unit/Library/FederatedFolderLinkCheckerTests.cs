@@ -458,6 +458,34 @@ public sealed class FederatedFolderLinkCheckerTests
         Assert.Equal(FederatedFolderLinkState.Linked, linked.State);
     }
 
+    [Theory]
+    [InlineData(CollectionTypeOptions.mixed)]
+    [InlineData(null)]
+    public void AMixedLibraryWithAMusicaFolderIsReportedAndStaysLinked(CollectionTypeOptions? type)
+    {
+        const string Music = "a4000000000000000000000000000001";
+        var folder = $"/federata/{_a:D}/{Music}/Musica";
+        var server = ServerA((FilmsA, "Film", "movies"), (Music, "Dischi", "music"));
+
+        var report = CheckTypeFolders(server, Library("Tutto", type, true, _aFilms, folder));
+
+        Assert.Equal(["Tutto"], LinkOfA(report).MusicInMixed);
+        Assert.Equal(FederatedPathLink.Linked, LinkOfA(report).Folders.Single(link => link.Path == folder).Link.Link);
+        Assert.Equal(FederatedFolderLinkState.Linked, report.State);
+    }
+
+    [Fact]
+    public void AMusicaFolderInAMusicLibraryOrAFilmFolderInAMixedLibraryIsNotReported()
+    {
+        const string Music = "a4000000000000000000000000000001";
+        var folder = $"/federata/{_a:D}/{Music}/Musica";
+        var server = ServerA((FilmsA, "Film", "movies"), (Music, "Dischi", "music"));
+
+        var report = CheckTypeFolders(server, Library("Tutto", CollectionTypeOptions.mixed, true, _aFilms), Library("Musica", CollectionTypeOptions.music, false, folder));
+
+        Assert.Empty(LinkOfA(report).MusicInMixed);
+    }
+
     [Fact]
     public void OneTypeFolderLeftOutLeavesItsKindNotLinked()
     {

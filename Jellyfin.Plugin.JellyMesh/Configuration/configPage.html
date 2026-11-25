@@ -2131,6 +2131,8 @@
                     "{hours} h {minutes} min": "{hours} h {minutes} min",
                     "{libraries} holds the whole federated folder, so the versions of a title come apart.": "{libraries} contiene tutta la cartella federata, quindi le versioni di un titolo si separano.",
                     "{libraries} shows the titles of a server a second time.": "{libraries} mostra una seconda volta i titoli di un server.",
+                    "Warning: {libraries} is a mixed library with the Musica folder of {server}, and a mixed library ignores music. Add that folder to a Music library instead.": "Attenzione: {libraries} è una libreria mista con la cartella Musica di {server}, e una libreria mista ignora la musica. Aggiungi quella cartella a una libreria di Musica.",
+                    "A mixed library ignores the music of a server in {libraries}.": "Una libreria mista ignora la musica di un server in {libraries}.",
                     "{minutes} min {seconds} s": "{minutes} min {seconds} s",
                     "{problems} Fix this by hand in Dashboard > Libraries, or turn on the automatic libraries of the server.": "{problems} Sistemalo a mano nel Pannello di controllo > Librerie, oppure attiva le librerie automatiche del server.",
                     "{seconds} s": "{seconds} s",
@@ -4076,6 +4078,10 @@
                         warnings.push(t('Warning: "Automatically merge series that are spread across multiple folders" is off in {libraries}, so a series present in two folders stays split. Turn it on in the library options.', { libraries: server.SeriesGroupingOff.join(', ') }));
                     }
 
+                    if (server.MusicInMixed.length > 0) {
+                        warnings.push(t('Warning: {libraries} is a mixed library with the Musica folder of {server}, and a mixed library ignores music. Add that folder to a Music library instead.', { libraries: server.MusicInMixed.join(', '), server: server.Name }));
+                    }
+
                     if (server.Unregistered.length > 0) {
                         warnings.push(t('Warning: {libraries} is also on the folders of {server}, beside its automatic libraries, so its titles show twice. Delete it in Dashboard > Libraries if you do not need it.', { libraries: server.Unregistered.join(', '), server: server.Name }));
                     }
@@ -5665,6 +5671,11 @@
                     var groupingOff = collect('SeriesGroupingOff');
                     if (groupingOff.length > 0) {
                         notes.push({ key: 'grouping', text: t('A series in two folders stays split in {libraries}.', { libraries: groupingOff.join(', ') }), tab: 'settings' });
+                    }
+
+                    var musicInMixed = collect('MusicInMixed');
+                    if (musicInMixed.length > 0) {
+                        notes.push({ key: 'music-mixed', text: t('A mixed library ignores the music of a server in {libraries}.', { libraries: musicInMixed.join(', ') }), tab: 'settings' });
                     }
 
                     var unregistered = collect('Unregistered');
