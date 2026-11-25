@@ -197,7 +197,7 @@ public class ProviderCatalogTests
     }
 
     [Fact]
-    public void A_photo_and_its_album_stay_hidden_until_photos_are_shared()
+    public void A_home_video_library_gives_a_peer_its_photos_and_their_albums()
     {
         _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.homevideos, "/media/casa");
         var photo = Guid.NewGuid();
@@ -207,8 +207,8 @@ public class ProviderCatalogTests
         _fixture.AddItem(album, new PhotoAlbum { Path = "/media/casa/Album" }, ProviderFixture.SharedLibrary);
         _fixture.AddItem(video, new Video { Path = "/media/casa/gita.mkv" }, ProviderFixture.SharedLibrary);
 
-        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, photo));
-        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, album));
+        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, photo));
+        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, album));
         Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, video));
     }
 
@@ -243,7 +243,9 @@ public class ProviderCatalogTests
             new AudioBook { Path = "/media/misti/b.m4b" },
             new Video { Path = "/media/misti/gita.mkv" },
             new MusicVideo { Path = "/media/misti/clip.mkv" },
-            new Folder { Path = "/media/misti/Gita" }
+            new Folder { Path = "/media/misti/Gita" },
+            new Photo { Path = "/media/misti/Album/a.jpg" },
+            new PhotoAlbum { Path = "/media/misti/Album" }
         ];
         foreach (var item in items)
         {
@@ -624,6 +626,66 @@ public class ProviderCatalogTests
         Assert.Equal(sent, book.Path);
     }
 
+    [Theory]
+    [InlineData("/media/casa/Album/IMG_0001.JPG", ".jpg")]
+    [InlineData("/media/casa/Album/Scan.tiff", ".tiff")]
+    [InlineData("/media/casa/Album/Senza estensione", null)]
+    [InlineData(null, null)]
+    public void A_photo_sends_only_the_extension_of_its_file(string? path, string? sent)
+    {
+        var photo = new BaseItemDto { Id = Guid.NewGuid(), Type = BaseItemKind.Photo, Path = path };
+        _fixture.WithDtos(photo);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Equal(sent, photo.Path);
+    }
+
+    [Fact]
+    public void A_peer_gets_the_size_of_each_photo()
+    {
+        MediaBrowser.Controller.Dto.DtoOptions? options = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((_, value, _, _, _) => options = value)
+            .Returns([new BaseItemDto { Id = ProviderFixture.SharedItem }]);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Contains(MediaBrowser.Model.Querying.ItemFields.Width, options!.Fields);
+        Assert.Contains(MediaBrowser.Model.Querying.ItemFields.Height, options.Fields);
+    }
+
+    // Row 560: the rest of the EXIF goes on, as on the consumer (row 470).
+    [Theory]
+    [InlineData(BaseItemKind.Photo)]
+    [InlineData(BaseItemKind.Video)]
+    public void No_place_a_photo_was_taken_reaches_a_peer(BaseItemKind kind)
+    {
+        var dto = new BaseItemDto
+        {
+            Id = Guid.NewGuid(),
+            Type = kind,
+            Latitude = 45.4642,
+            Longitude = 9.19,
+            Altitude = 122,
+            CameraMake = "Make",
+            CameraModel = "Model",
+            Width = 4000,
+            Height = 3000
+        };
+        _fixture.WithDtos(dto);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Null(dto.Latitude);
+        Assert.Null(dto.Longitude);
+        Assert.Null(dto.Altitude);
+        Assert.Equal("Make", dto.CameraMake);
+        Assert.Equal("Model", dto.CameraModel);
+        Assert.Equal(4000, dto.Width);
+        Assert.Equal(3000, dto.Height);
+    }
+
     [Fact]
     public void The_watch_state_of_this_server_never_reaches_a_peer()
     {
@@ -835,6 +897,8 @@ public class ProviderControllerTests
     [InlineData(RemoteItemType.MusicVideo, BaseItemKind.MusicVideo, CollectionTypeOptions.musicvideos)]
     [InlineData(RemoteItemType.Video, BaseItemKind.Video, CollectionTypeOptions.homevideos)]
     [InlineData(RemoteItemType.Folder, BaseItemKind.Folder, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.Photo, BaseItemKind.Photo, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.PhotoAlbum, BaseItemKind.PhotoAlbum, CollectionTypeOptions.homevideos)]
     [InlineData(RemoteItemType.Book, BaseItemKind.Book, CollectionTypeOptions.books)]
     [InlineData(RemoteItemType.AudioBook, BaseItemKind.AudioBook, CollectionTypeOptions.books)]
     public async Task A_page_of_a_new_type_reads_that_type(RemoteItemType type, BaseItemKind kind, CollectionTypeOptions library)
@@ -847,19 +911,6 @@ public class ProviderControllerTests
 
         Assert.NotNull((await _controller.GetItems(type, ProviderFixture.SharedLibrary, null)).Value);
         Assert.Equal([kind], seen!.IncludeItemTypes);
-    }
-
-    // A refusal would fail the whole read of a home video library, so a type no library gives yet reads as empty.
-    [Theory]
-    [InlineData(RemoteItemType.Photo)]
-    [InlineData(RemoteItemType.PhotoAlbum)]
-    public async Task Photos_and_their_albums_read_as_empty_until_they_are_shared(RemoteItemType type)
-    {
-        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.homevideos, "/media/casa");
-
-        Assert.Equal(0, (await _controller.GetItems(type, ProviderFixture.SharedLibrary, null)).Value!.TotalRecordCount);
-        Assert.Equal(0, (await _controller.GetItems(type, null, ProviderFixture.SharedItem.ToString("N"))).Value!.TotalRecordCount);
-        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
     }
 
     [Theory]
@@ -1526,18 +1577,7 @@ public class ChangeFeedRecorderTests
     }
 
     [Fact]
-    public async Task Photos_stay_out_until_they_are_shared()
-    {
-        var cursor = await StartAsync();
-
-        RaiseAdded(new Photo { Id = Guid.NewGuid(), Path = "/media/casa/a.jpg" });
-        RaiseAdded(new PhotoAlbum { Id = Guid.NewGuid(), Path = "/media/casa/Album" });
-
-        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
-    }
-
-    [Fact]
-    public async Task Records_tracks_music_videos_home_videos_and_books()
+    public async Task Records_tracks_music_videos_home_videos_photos_and_books()
     {
         var cursor = await StartAsync();
         BaseItem[] items =
@@ -1546,6 +1586,8 @@ public class ChangeFeedRecorderTests
             new MusicVideo { Id = Guid.NewGuid(), Path = "/media/clip/a.mkv" },
             new Video { Id = Guid.NewGuid(), Path = "/media/casa/gita.mkv" },
             new Folder { Id = Guid.NewGuid(), Path = "/media/casa/Gita" },
+            new Photo { Id = Guid.NewGuid(), Path = "/media/casa/Album/a.jpg" },
+            new PhotoAlbum { Id = Guid.NewGuid(), Path = "/media/casa/Album" },
             new Book { Id = Guid.NewGuid(), Path = "/media/libri/a.epub" },
             new AudioBook { Id = Guid.NewGuid(), Path = "/media/libri/b.m4b" }
         ];
