@@ -10,6 +10,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
+[Collection(TimedTests.Name)]
 public class ServerStubPlannerTests
 {
     private const string Library = TestLibraries.Films;
@@ -168,28 +169,34 @@ public class ServerStubPlannerTests
         Assert.Equal(count * 2, plan.Stubs.Count);
     }
 
-    // The shorter of two runs, so that a pause of the machine in one does not count.
-    private static TimeSpan Fastest(Action run)
+    // The processor time the test process spends on a run, which other processes on the machine do not add to.
+    private static TimeSpan ProcessorTime(Action run)
     {
-        var best = TimeSpan.MaxValue;
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            run();
-            best = watch.Elapsed < best ? watch.Elapsed : best;
-        }
-
-        return best;
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        var before = process.TotalProcessorTime;
+        run();
+        process.Refresh();
+        return process.TotalProcessorTime - before;
     }
 
+    // Planning 8000 series takes under 30 times the least processor time of 1000 (measured 9 to 12, and 44 to 60 when
+    // each series reads every content as before c1934e3).
     [Fact]
     public void PlanningEightTimesTheSeriesTakesAboutEightTimesAsLong()
     {
-        PlanSeries(100);
-        var small = Fastest(() => PlanSeries(1000));
-        var large = Fastest(() => PlanSeries(8000));
+        PlanSeries(1000);
+        PlanSeries(8000);
+        var small = TimeSpan.MaxValue;
+        var large = TimeSpan.MaxValue;
+        for (var round = 0; round < 3; round++)
+        {
+            var time = ProcessorTime(() => PlanSeries(1000));
+            small = time < small ? time : small;
+            time = ProcessorTime(() => PlanSeries(8000));
+            large = time < large ? time : large;
+        }
 
-        Assert.True(large < small * 12, small + " for 1000 series, " + large + " for 8000");
+        Assert.True(large < small * 30, small + " for 1000 series, " + large + " for 8000");
     }
 
     [Fact]
