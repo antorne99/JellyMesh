@@ -35,6 +35,8 @@ internal sealed class ProviderFixture
     public static readonly Guid StubItem = Guid.Parse("50000000-0000-0000-0000-000000000000");
     public static readonly Guid SharedTrack = Guid.Parse("60000000-0000-0000-0000-000000000000");
     public static readonly Guid PrivateTrack = Guid.Parse("70000000-0000-0000-0000-000000000000");
+    public static readonly Guid SharedMusic = Guid.Parse("11000000-0000-0000-0000-000000000000");
+    public static readonly Guid SharedBooks = Guid.Parse("12000000-0000-0000-0000-000000000000");
 
     public ProviderFixture()
     {
@@ -124,6 +126,21 @@ internal sealed class ProviderFixture
         [
             new VirtualFolderInfo { Name = "Library", ItemId = id.ToString(), CollectionType = type, Locations = locations }
         ]);
+    }
+
+    /// <summary>Shares a music and a book library next to the film library, with the shared track in the music one.</summary>
+    public void WithAudioLibraries()
+    {
+        Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            new VirtualFolderInfo { Name = "Library", ItemId = SharedLibrary.ToString(), CollectionType = CollectionTypeOptions.movies, Locations = ["/media/film"] },
+            new VirtualFolderInfo { Name = "Music", ItemId = SharedMusic.ToString(), CollectionType = CollectionTypeOptions.music, Locations = ["/media/music"] },
+            new VirtualFolderInfo { Name = "Books", ItemId = SharedBooks.ToString(), CollectionType = CollectionTypeOptions.books, Locations = ["/media/books"] }
+        ]);
+        var peer = Store.Configuration.Peers.Single(entry => entry.UserId == Peer.Id);
+        peer.SharedLibraryIds.Add(SharedMusic.ToString("N"));
+        peer.SharedLibraryIds.Add(SharedBooks.ToString("N"));
+        AddItem(SharedTrack, new Audio { Path = "/media/music/a.flac" }, SharedMusic);
     }
 
     /// <summary>Makes a path a folder Jellyfin has indexed.</summary>
