@@ -46,7 +46,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private const string DownloadAction = "GetDownload";
 
     private const string GetFileAction = "GetFile";
-    // The extension and the type of a downloaded audio stub whose type is not listed (row 542).
+    // The extension and the type of a downloaded stub whose type is not listed (rows 542 and 561).
     private const string NeutralExtension = ".bin";
     private const string NeutralType = "application/octet-stream";
 
@@ -61,7 +61,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// </summary>
     internal const string MissingFilePrefix = "jellymesh-missing-";
 
-    // The extension a downloaded file gets for the media type of the remote file; any other type gets none.
+    // The extension a downloaded video gets for the media type of the remote file; any other type gets the neutral one.
     private static readonly Dictionary<string, string> _videoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ["video/x-matroska"] = ".mkv",
@@ -516,7 +516,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
         // A book or a photo goes with the type of its format, never the remote's (D62). On Download a book or a photo goes as a
         // file with the name of its stub, audio with that name and the extension of the remote type or a neutral one (rows 532
-        // and 542), any other stub with the name of its title and the extension of the remote type.
+        // and 542), any other stub with the name of its title and the extension of the remote type or a neutral one (row 561).
         var mediaType = stub.Kind switch
         {
             StubKind.Book => BookPlaceholders.MediaTypeOf(stub.RelativePath),
@@ -538,9 +538,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 name = Path.GetFileNameWithoutExtension(stub.RelativePath) + (extension ?? NeutralExtension);
                 mediaType = extension is null ? NeutralType : null;
             }
+            else if (stub.Kind is StubKind.Book or StubKind.Photo)
+            {
+                name = Path.GetFileName(stub.RelativePath);
+            }
             else
             {
-                name = stub.Kind is StubKind.Book or StubKind.Photo ? Path.GetFileName(stub.RelativePath) : DownloadName(stub.RelativePath, opened.Headers.ContentType);
+                name = DownloadName(stub.RelativePath, opened.Headers.ContentType, out var listed);
+                mediaType = listed ? null : NeutralType;
             }
 
             disposition.SetHttpFileName(name);
@@ -560,12 +565,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private static string? AudioExtensionOf(string? contentType)
         => contentType is not null && _audioExtensions.TryGetValue(contentType.Split(';', 2)[0].Trim(), out var extension) ? extension : null;
 
-    // The name a download of a stub gets: the local name of its title with the extension of the remote file's media type.
-    internal static string DownloadName(string relativePath, string? contentType)
+    // The name a download of a video stub gets: the local name of its title with the extension of the remote file's media
+    // type, or the neutral one for a type not listed (rows 542 and 561).
+    internal static string DownloadName(string relativePath, string? contentType, out bool listed)
     {
         var type = contentType?.Split(';', 2)[0].Trim();
-        var extension = type is not null && _videoExtensions.TryGetValue(type, out var known) ? known : string.Empty;
-        return Path.GetFileNameWithoutExtension(relativePath) + extension;
+        var extension = type is not null && _videoExtensions.TryGetValue(type, out var known) ? known : null;
+        listed = extension is not null;
+        return Path.GetFileNameWithoutExtension(relativePath) + (extension ?? NeutralExtension);
     }
 
     // Serves the lyrics of a track stub its user may reach from its remote; they are read, never managed.

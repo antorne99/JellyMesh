@@ -1805,8 +1805,9 @@ public partial class PlaybackFiltersTests
     [InlineData("video/x-matroska", "x.mkv")]
     [InlineData("video/mp4; charset=binary", "x.mp4")]
     [InlineData("video/mp2t", "x.ts")]
-    [InlineData("text/html", "x")]
-    [InlineData(null, "x")]
+    [InlineData("text/html", "x.bin")]
+    [InlineData("video/unknown", "x.bin")]
+    [InlineData(null, "x.bin")]
     public async Task Download_of_a_stub_is_an_attachment_named_as_the_title_with_the_extension_of_the_remote_file(string? contentType, string name)
     {
         CanSeeItem();
@@ -1821,6 +1822,7 @@ public partial class PlaybackFiltersTests
         var disposition = Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(context.HttpContext.Response.Headers.ContentDisposition.ToString());
         Assert.Equal("attachment", disposition.DispositionType.ToString());
         Assert.Equal(name, disposition.FileName.ToString().Trim('"'));
+        Assert.Equal(name.EndsWith(".bin", StringComparison.Ordinal) ? "application/octet-stream" : contentType, context.HttpContext.Response.ContentType);
         Assert.Equal(_remoteBytes, BodyOf(context));
     }
 
