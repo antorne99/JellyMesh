@@ -26,7 +26,7 @@ changelog: |
   - Each night JellyMesh checks its database and copies it, keeping the last 2 copies. A database found damaged, at the start or while it runs, starts again from the last copy, and the plugin page shows the date of that copy and asks you to check the servers and the connected servers; after 3 recoveries in 24 hours it stays suspended until Try again.
   - A database written by a newer JellyMesh, or one that cannot be opened, is left as it is: sync and remote playback stop, and the plugin page says why and offers Try again.
   - The settings are saved only through the plugin page, and Jellyfin no longer writes a configuration file for JellyMesh.
-  - Each server has one Edit form for its name, URL, login, libraries and library mode, which checks the server and lists what the change does before saving.
+  - Each server has one Edit form for its name, URL, login, libraries and library mode, which checks the server and lists what the change does before saving; the name can change only after the folder migration ends.
   - Each library imported from a server gets its own folder; after the upgrade a banner moves your libraries to the new folders, automatically or by hand, and a choice made in 0.5 is kept.
   - Each server has a library mode: one library per type, one library per remote library, or none; servers with automatic libraries in 0.5 keep them, by type.
   - JellyMesh adopts a library you made that has exactly the folders and type it would give one, instead of making a second library.

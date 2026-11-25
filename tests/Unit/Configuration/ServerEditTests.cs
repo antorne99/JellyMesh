@@ -100,7 +100,7 @@ public sealed partial class ServerEditTests : IDisposable
         return value;
     }
 
-    private FederationAdminController Controller(IServerRenamer? renamer = null) => new(
+    private FederationAdminController Controller(IServerRenamer? renamer = null, IStubRegistry? stubs = null) => new(
         _fixture.Registry,
         _fixture.Vault,
         _fixture.Store,
@@ -111,7 +111,8 @@ public sealed partial class ServerEditTests : IDisposable
         new InMemoryMergeStore(),
         _libraries.Object,
         new CapturingLogger<FederationAdminController>(),
-        renamer: renamer);
+        renamer: renamer,
+        stubs: stubs);
 
     private async Task<Guid> AddAsync(params string[] libraries)
     {
