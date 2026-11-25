@@ -88,7 +88,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogWarning("Cannot read the watch state carries done for now: {Error}. Carries are suspended until the database reads", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the watch state carries done for now: {Error}. Carries are suspended until the database reads{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
         finally
@@ -214,7 +214,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
             if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
             {
-                _logger.LogError("Cannot save the watch state carries done: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot save the watch state carries done: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
 
             return false;

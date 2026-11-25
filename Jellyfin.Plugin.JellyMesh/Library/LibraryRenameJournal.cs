@@ -196,7 +196,7 @@ public sealed class LibraryRenameJournal
             }
             catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
             {
-                _logger.LogError("Cannot save the library renames: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot save the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 return false;
             }
         }
@@ -228,7 +228,7 @@ public sealed class LibraryRenameJournal
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogWarning("Cannot read the library renames for now: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot read the library renames for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }

@@ -7,4 +7,10 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// </summary>
 /// <param name="Capabilities">The capabilities. <see cref="RemoteMode.Unknown"/> if detection failed.</param>
 /// <param name="LibraryCount">The number of importable libraries.</param>
-public sealed record ConnectionReport(RemoteCapabilities Capabilities, int LibraryCount);
+public sealed record ConnectionReport(RemoteCapabilities Capabilities, int LibraryCount)
+{
+    /// <summary>
+    /// Gets the whole story of the detection that failed, null when it did not. Only for administrators.
+    /// </summary>
+    public string? Detail { get; init; }
+}

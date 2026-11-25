@@ -18,6 +18,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [Route("JellyMesh/Admin/Merges")]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Produces(MediaTypeNames.Application.Json)]
+[AdminErrors]
 public class FederationMergeController : ControllerBase
 {
     private readonly ManualMergeService _merges;

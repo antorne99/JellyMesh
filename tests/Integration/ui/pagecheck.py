@@ -975,6 +975,51 @@ def outcomes_shown(page, name):
 
     page.locator(u.DISMISS).click()
     check(name + " Dismiss empties the outcome", u.message(page) == "" and not page.locator(u.DISMISS).is_visible(), u.message(page))
+    whole_error(page, name)
+
+
+WHOLE_ERROR = "Step: login\nPOST http://stock:8096/Users/AuthenticateByName\nHTTP 500\n<b>x</b>\n" + "   at Some.Remote.Method()\n" * 80
+
+
+def whole_error(page, name):
+    """A failed action holds the whole error, closed until asked for, as plain text and ready to copy."""
+    page.route("**/JellyMesh/Admin/Servers/*/Test", lambda route: route.fulfill(status=502, json={
+        "Failure": "ServerError", "Message": "The server answered with an error.", "Detail": WHOLE_ERROR}))
+    row = u.server_row(page, "stock")
+    u.button(row, "test").click()
+    outcome(page, name + " a failed test", "Error", "answered with an error")
+    detail = page.locator(u.OUTCOME_DETAIL)
+    check(name + " the whole error starts closed", not detail.locator("pre").is_visible())
+    detail.locator("summary").click()
+    shown = detail.locator("pre").text_content()
+    check(name + " the whole error tells the call and its status", "POST JellyMesh/Admin/Servers/" in shown and ": HTTP 502" in shown, shown[:200])
+    check(name + " the whole error is all there", shown.endswith(WHOLE_ERROR), shown[-200:])
+    check(name + " the whole error is plain text", detail.locator("b").count() == 0)
+    check(name + " the whole error can be copied", detail.get_by_role("button", name="Copy the error").is_visible())
+    check(name + " the open error stays in view", u.in_view(page, u.OUTCOME) and page.locator(u.DISMISS).is_visible())
+    u.shot(page, f"outcome-detail-{page.viewport_size['width']}")
+    healthy(page, name + " a whole error")
+    page.unroute("**/JellyMesh/Admin/Servers/*/Test")
+    page.locator(u.DISMISS).click()
+    check(name + " Dismiss takes the whole error away", detail.locator("details").count() == 0)
+
+    def with_error(route):
+        answer = route.fetch()
+        data = answer.json()
+        for server in data["Servers"]:
+            server["LastError"] = WHOLE_ERROR if server["Name"] == "stock" else None
+        route.fulfill(response=answer, json=data)
+
+    page.route("**/JellyMesh/Admin/Status", with_error)
+    last = row.locator(u.LAST_ERROR)
+    check(name + " a card shows the last error of its server", until(page, lambda: last.locator("pre").count() == 1, 20))
+    last.locator("summary").click()
+    check(name + " a card holds the whole error", last.locator("pre").text_content() == WHOLE_ERROR)
+    page.wait_for_timeout(6000)
+    check(name + " a card keeps the error open while the status is read again", last.locator("pre").is_visible())
+    u.shot(page, f"card-detail-{page.viewport_size['width']}")
+    page.unroute("**/JellyMesh/Admin/Status")
+    check(name + " a card loses the error once the server answers", until(page, lambda: last.locator("pre").count() == 0, 20))
 
 
 def settings_refused(page, name):

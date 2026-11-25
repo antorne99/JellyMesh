@@ -203,7 +203,7 @@ public sealed class SyncScheduleServiceTests : IDisposable
         _store.RaiseSettingsChanged();
 
         var line = Assert.Single(_logger.Lines);
-        Assert.DoesNotContain("/config/secret", line, StringComparison.Ordinal);
+        Assert.Contains("/config/secret", line, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -214,7 +214,7 @@ public sealed class SyncScheduleServiceTests : IDisposable
         await StartAndSettleAsync();
 
         Assert.True(_service.ExecuteTask!.IsCompletedSuccessfully);
-        Assert.DoesNotContain(TestValues.Host, Assert.Single(_logger.Lines), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Host, Assert.Single(_logger.Lines), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -276,6 +276,6 @@ public sealed class SyncScheduleServiceTests : IDisposable
 
         _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Never);
         Assert.True(_service.ExecuteTask!.IsCompletedSuccessfully);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("/config/secret", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("/config/secret", StringComparison.Ordinal));
     }
 }

@@ -36,7 +36,7 @@ public sealed class LibraryRenameResumeService : BackgroundService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // What escapes a hosted service stops the whole server; the next rename tries again.
-            _logger.LogError("Cannot finish the library renames left halfway: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot finish the library renames left halfway: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

@@ -59,8 +59,7 @@ public sealed class LibraryPaths : ILibraryPaths
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                // The type only: a message could hold a path.
-                _logger.LogError("Cannot add a folder of the federated folder to the library {Library}: {Error}", LogText.Clean(library), exception.GetType().Name);
+                _logger.LogError("Cannot add a folder of the federated folder to the library {Library}: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, ErrorText.Of(exception));
                 return LibraryPathOutcome.Failed;
             }
 
@@ -96,7 +95,7 @@ public sealed class LibraryPaths : ILibraryPaths
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot remove a folder of the federated folder from the library {Library}: {Error}", LogText.Clean(library), exception.GetType().Name);
+                _logger.LogError("Cannot remove a folder of the federated folder from the library {Library}: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, ErrorText.Of(exception));
                 return LibraryPathOutcome.Failed;
             }
 
@@ -150,7 +149,7 @@ public sealed class LibraryPaths : ILibraryPaths
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to change a folder of the federated folder: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries to change a folder of the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return (null, LibraryPathOutcome.Failed);
         }
 

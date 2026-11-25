@@ -111,7 +111,7 @@ public static class StreamRelay
                 RemoteStreamBrokenException => RelayEnd.RemoteBroke,
                 RemoteStreamClosedException => RelayEnd.ServerRemoved,
                 _ => RelayEnd.ClientDropped
-            });
+            }) with { Error = exception };
         }
     }
 

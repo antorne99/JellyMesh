@@ -126,6 +126,6 @@ public sealed class StrmSignerTests : IDisposable
         var signer = Signer(Path.Combine(blocked, "below"));
 
         Assert.True(signer.IsValid(Stub, signer.Sign(Stub)));
-        Assert.DoesNotContain(_folder, Assert.Single(_logger.Lines), StringComparison.Ordinal);
+        Assert.Contains(_folder, Assert.Single(_logger.Lines), StringComparison.Ordinal);
     }
 }

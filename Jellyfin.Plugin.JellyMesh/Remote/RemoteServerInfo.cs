@@ -28,4 +28,9 @@ public sealed record RemoteServerInfo(
     /// Gets a value indicating whether the stored password no longer decrypts and must be entered again.
     /// </summary>
     public bool NeedsPassword { get; init; }
+
+    /// <summary>
+    /// Gets the whole story of the last failure, null when the last call succeeded. Only for administrators.
+    /// </summary>
+    public RemoteError? LastError { get; init; }
 }

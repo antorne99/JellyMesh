@@ -136,8 +136,7 @@ public sealed class VersionLinker : IVersionLinker
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    // The type only: a message could hold a remote address.
-                    _logger.LogError("Cannot link the versions of a title: {Error}", exception.GetType().Name);
+                    _logger.LogError("Cannot link the versions of a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                     failed = true;
                 }
 
@@ -410,8 +409,7 @@ public sealed class VersionLinker : IVersionLinker
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                // The type only: a message could hold a remote address.
-                _logger.LogError("Cannot detach a version from its group: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot detach a version from its group: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 failed.Add(stub);
             }
         }
@@ -491,7 +489,7 @@ public sealed class VersionLinker : IVersionLinker
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 collection.LinkedChildren = before;
-                _logger.LogError("Cannot move the entries of a collection to the primary version: {Error}", exception.GetType().Name);
+                _logger.LogError("Cannot move the entries of a collection to the primary version: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             }
         }
     }

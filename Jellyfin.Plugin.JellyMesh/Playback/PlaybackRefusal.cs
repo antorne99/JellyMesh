@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Http;
@@ -38,14 +39,17 @@ public sealed class PlaybackRefusal
 
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<PlaybackRefusal> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackRefusal"/> class.
     /// </summary>
     /// <param name="sessionManager">The session manager.</param>
     /// <param name="logger">The logger.</param>
-    public PlaybackRefusal(ISessionManager sessionManager, ILogger<PlaybackRefusal> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public PlaybackRefusal(ISessionManager sessionManager, ILogger<PlaybackRefusal> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _sessionManager = sessionManager;
         _logger = logger;
     }
@@ -95,7 +99,7 @@ public sealed class PlaybackRefusal
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            _logger.LogWarning("Could not send the refusal message: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Could not send the refusal message: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
     }
 }

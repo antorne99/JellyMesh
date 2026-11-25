@@ -419,7 +419,7 @@ public sealed partial class ServerEditTests
     }
 
     [Fact]
-    public async Task A_logout_of_the_old_user_that_fails_is_logged_without_token_or_address_and_the_save_stands()
+    public async Task A_logout_of_the_old_user_that_fails_is_logged_without_token_and_the_save_stands()
     {
         var id = await AddAsync("1");
         await KeepLoginAsync(id);
@@ -431,7 +431,7 @@ public sealed partial class ServerEditTests
         Assert.IsType<ServerStatus>(result.Value);
         Assert.Equal("someone", _fixture.Vault.Unprotect(id, _fixture.Store.Configuration.Servers.Single().EncryptedCredentials)!.Username);
         var warning = Assert.Single(_fixture.Logger.Lines, line => line.Contains("old user", StringComparison.Ordinal));
-        foreach (var secret in new[] { TestValues.Token, "new-user-token", "other.invalid", TestValues.Host })
+        foreach (var secret in new[] { TestValues.Token, "new-user-token", TestValues.Password, "new-pass" })
         {
             Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(secret, StringComparison.Ordinal));
         }

@@ -80,8 +80,7 @@ public sealed class LocalRefreshWatcher : IHostedService, IDisposable
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Could not link a new local title yet, the next sync does: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not link a new local title yet, the next sync does: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

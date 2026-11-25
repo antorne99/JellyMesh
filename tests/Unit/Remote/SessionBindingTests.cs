@@ -83,7 +83,7 @@ public sealed class SessionBindingTests : IDisposable
 
     private void AssertLogClean()
     {
-        foreach (var secret in new[] { "token-", TestValues.Host, OtherHost, TestValues.Password, OtherCredentials.Password })
+        foreach (var secret in new[] { "token-", TestValues.Password, OtherCredentials.Password })
         {
             Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(secret, StringComparison.OrdinalIgnoreCase));
         }

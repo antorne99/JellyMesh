@@ -128,7 +128,7 @@ public sealed class NewStubSegments : BackgroundService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Could not compute the media segments of a new stub: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Could not compute the media segments of a new stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

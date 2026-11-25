@@ -26,6 +26,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [Route("JellyMesh/Admin")]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Produces(MediaTypeNames.Application.Json)]
+[AdminErrors]
 public class FederationAdminController : ControllerBase
 {
     /// <summary>The refusal of a hide whose libraries are no longer listed.</summary>
@@ -197,7 +198,7 @@ public class FederationAdminController : ControllerBase
 
         if (!result.IsSuccess)
         {
-            return Failed(result.Failure);
+            return Failed(result.Failure, result.Error?.ToString());
         }
 
         _sync.PrepareServerFolders();
@@ -260,7 +261,9 @@ public class FederationAdminController : ControllerBase
                 _playback.ReopenServer(serverId);
             }
 
-            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed);
+            var detail = ErrorText.Of(exception);
+            _logger.LogError("Could not remove a server: {Error}{Detail:l}", exception.GetType().Name, detail);
+            return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed, detail.TrimStart());
         }
 
         if (!removed)
@@ -295,7 +298,9 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            return Failed(RemoteFailure.ForgetFailed);
+            var detail = ErrorText.Of(exception);
+            _logger.LogError("Could not forget the missing servers: {Error}{Detail:l}", exception.GetType().Name, detail);
+            return Failed(RemoteFailure.ForgetFailed, detail.TrimStart());
         }
 
         if (forgotten > 0)
@@ -382,7 +387,7 @@ public class FederationAdminController : ControllerBase
     public async Task<ActionResult<ConnectionReport>> TestServer([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
         var result = await _registry.TestAsync(serverId, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? result.Value! : Failed(result.Failure);
+        return result.IsSuccess ? result.Value! : Failed(result.Failure, result.Error?.ToString());
     }
 
     /// <summary>
@@ -643,6 +648,7 @@ public class FederationAdminController : ControllerBase
             server.LastCheckedUtc)
         {
             NeedsPassword = server.NeedsPassword,
+            LastError = server.LastError?.ToString(),
             AutomaticLibraries = _libraries.GetState(server.Id),
             Rename = _renamer?.GetState(server.Id)
         };
@@ -661,9 +667,9 @@ public class FederationAdminController : ControllerBase
         };
     }
 
-    private ObjectResult Failed(RemoteFailure failure)
+    private ObjectResult Failed(RemoteFailure failure, string? detail = null)
     {
-        return StatusCode(StatusOf(failure), new FailureResponse(failure, FailureMessage(failure)));
+        return StatusCode(StatusOf(failure), new FailureResponse(failure, FailureMessage(failure)) { Detail = detail });
     }
 
     // A refused edit, with the field it is about so that the page shows it there (row 432).
@@ -676,7 +682,8 @@ public class FederationAdminController : ControllerBase
             new FailureResponse(result.Failure, EditFailureMessage(result.Failure, field, name))
             {
                 ServerName = string.IsNullOrEmpty(name) ? null : name,
-                Field = field == RemoteEditField.None ? null : field
+                Field = field == RemoteEditField.None ? null : field,
+                Detail = result.Error?.ToString()
             });
     }
 
@@ -883,8 +890,7 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a path or an address.
-            _logger.LogError("The {Step} step after an edit of a server failed: {Error}", step, exception.GetType().Name);
+            _logger.LogError("The {Step} step after an edit of a server failed: {Error}{Detail:l}", step, exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -944,8 +950,7 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path or an address.
-            _logger.LogError("Could not take the removed server out of the manual merges: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not take the removed server out of the manual merges: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

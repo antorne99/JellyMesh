@@ -82,7 +82,7 @@ public sealed class LocalRefreshWatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task AFailedLinkIsLoggedByItsTypeOnly()
+    public async Task AFailedLinkIsLoggedWhole()
     {
         var film = new Movie { Id = Guid.NewGuid(), DateLastRefreshed = _stamped };
         _refreshes.Setup(refreshes => refreshes.TryTakeArrival(film.Id)).Returns(true);
@@ -94,7 +94,7 @@ public sealed class LocalRefreshWatcherTests : IDisposable
 
         var line = Assert.Single(_logger.Lines);
         Assert.Contains("IOException", line, StringComparison.Ordinal);
-        Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
+        Assert.Contains(TestValues.Host, line, StringComparison.Ordinal);
     }
 
     [Fact]

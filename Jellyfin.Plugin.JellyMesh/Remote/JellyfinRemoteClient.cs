@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,7 +20,7 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// <see cref="IJellyfinRemoteClient"/> over HTTP.
 /// </summary>
 /// <remarks>
-/// Logs nothing and lets no transport exception out: their messages can hold the remote address.
+/// Logs nothing and lets no transport exception out: the whole failure goes in <see cref="RemoteResult{T}.Error"/>.
 /// </remarks>
 public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 {
@@ -98,23 +99,23 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         ArgumentNullException.ThrowIfNull(credentials);
 
         var body = JsonSerializer.SerializeToUtf8Bytes(new AuthenticateRequest(credentials.Username, credentials.Password));
-        var response = await SendAsync(endpoint, HttpMethod.Post, "/Users/AuthenticateByName", null, body, cancellationToken).ConfigureAwait(false);
+        var response = await SendAsync(endpoint, HttpMethod.Post, "/Users/AuthenticateByName", null, body, cancellationToken, password: credentials.Password).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteSession>(response.Failure);
+            return response.FailAs<RemoteSession>();
         }
 
-        var result = Parse<AuthenticateResponse>(response.Body);
+        var result = Parse<AuthenticateResponse>(response, out var error);
         if (!RemoteAnswers.CanGoInAHeader(result?.AccessToken))
         {
-            return RemoteResult.Fail<RemoteSession>(RemoteFailure.InvalidResponse);
+            return response.Refuse<RemoteSession>(error, result?.AccessToken);
         }
 
         // A refused login is handed back with its failure: the remote opened it, so it must be ended (419).
         var opened = new RemoteSession(result!.AccessToken!, result.User?.Id ?? string.Empty) { ServerId = ServerIdOf(result.ServerId) };
         if (string.IsNullOrEmpty(result.User?.Id) || result.User.Policy is null)
         {
-            return RemoteResult.Fail(RemoteFailure.InvalidResponse, opened);
+            return new RemoteResult<RemoteSession>(opened, RemoteFailure.InvalidResponse, null, response.Call.Unusable(response.Status!.Value, response.Body, response.ContentType, null, opened.AccessToken));
         }
 
         return result.User.Policy.IsAdministrator ? RemoteResult.Fail(RemoteFailure.AdministratorAccount, opened) : RemoteResult.Success(opened);
@@ -126,7 +127,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         ArgumentNullException.ThrowIfNull(session);
 
         var response = await SendAsync(endpoint, HttpMethod.Post, "/Sessions/Logout", session, null, cancellationToken).ConfigureAwait(false);
-        return response.IsSuccess ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(response.Failure);
+        return response.IsSuccess ? RemoteResult.Success(true) : response.FailAs<bool>();
     }
 
     /// <inheritdoc />
@@ -142,13 +143,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteCapabilities>(response.Failure);
+            return response.FailAs<RemoteCapabilities>();
         }
 
-        var capabilities = Parse<CapabilitiesResponse>(response.Body);
+        var capabilities = Parse<CapabilitiesResponse>(response, out var error);
         return capabilities is { ProtocolVersion: > 0 }
             ? RemoteResult.Success<RemoteCapabilities>(new RemoteCapabilities(RemoteMode.JellyMesh, capabilities.ProtocolVersion))
-            : RemoteResult.Fail<RemoteCapabilities>(RemoteFailure.InvalidResponse);
+            : response.Refuse<RemoteCapabilities>(error);
     }
 
     /// <inheritdoc />
@@ -177,13 +178,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteChangePage>(response.Failure);
+            return response.FailAs<RemoteChangePage>();
         }
 
-        var page = Parse<ChangesResponse>(response.Body);
+        var page = Parse<ChangesResponse>(response, out var error);
         return page is { Cursor: { Length: > 0 } next, Changes: not null } && page.Changes.All(RemoteAnswers.IsWellFormed)
             ? RemoteResult.Success(new RemoteChangePage(page.Reset, next, page.HasMore, page.Changes) { ByteCount = response.Body.Length })
-            : RemoteResult.Fail<RemoteChangePage>(RemoteFailure.InvalidResponse);
+            : response.Refuse<RemoteChangePage>(error);
     }
 
     // The views of a user can group libraries in one that is no library of its own; the shared ones of a provider never do.
@@ -192,13 +193,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(response.Failure);
+            return response.FailAs<IReadOnlyList<RemoteLibrary>>();
         }
 
-        var views = Parse<UserViewsResponse>(response.Body);
+        var views = Parse<UserViewsResponse>(response, out var error);
         if (views?.Items is null)
         {
-            return RemoteResult.Fail<IReadOnlyList<RemoteLibrary>>(RemoteFailure.InvalidResponse);
+            return response.Refuse<IReadOnlyList<RemoteLibrary>>(error);
         }
 
         var libraries = views.Items
@@ -220,13 +221,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, ItemsPath(session, query), session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteItemPage>(response.Failure);
+            return response.FailAs<RemoteItemPage>();
         }
 
-        var page = Parse<ItemsResponse>(response.Body);
+        var page = Parse<ItemsResponse>(response, out var error);
         return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(RemoteAnswers.IsWellFormed)
             ? RemoteResult.Success(new RemoteItemPage(WithQuality(page.Items, page.Quality), page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
-            : RemoteResult.Fail<RemoteItemPage>(RemoteFailure.InvalidResponse);
+            : response.Refuse<RemoteItemPage>(error);
     }
 
     /// <inheritdoc />
@@ -253,13 +254,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteCollectionPage>(response.Failure);
+            return response.FailAs<RemoteCollectionPage>();
         }
 
-        var page = Parse<CollectionsResponse>(response.Body);
+        var page = Parse<CollectionsResponse>(response, out var error);
         return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(entry => entry is not null)
             ? RemoteResult.Success(new RemoteCollectionPage(page.Items, page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
-            : RemoteResult.Fail<RemoteCollectionPage>(RemoteFailure.InvalidResponse);
+            : response.Refuse<RemoteCollectionPage>(error);
     }
 
     /// <inheritdoc />
@@ -270,7 +271,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, "/System/Info/Public", session, cancellationToken).ConfigureAwait(false);
         return response.IsSuccess
             ? RemoteResult.Success(response.Date)
-            : RemoteResult.Fail<DateTimeOffset?>(response.Failure);
+            : response.FailAs<DateTimeOffset?>();
     }
 
     /// <inheritdoc />
@@ -279,12 +280,12 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, "/System/Info/Public", session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemotePublicInfo>(response.Failure);
+            return response.FailAs<RemotePublicInfo>();
         }
 
-        var info = Parse<PublicInfoResponse>(response.Body);
+        var info = Parse<PublicInfoResponse>(response, out var error);
         return info is null
-            ? RemoteResult.Fail<RemotePublicInfo>(RemoteFailure.InvalidResponse)
+            ? response.Refuse<RemotePublicInfo>(error)
             : RemoteResult.Success(new RemotePublicInfo(LogText.Clean(info.ServerName) ?? string.Empty, ServerIdOf(info.Id)));
     }
 
@@ -297,12 +298,12 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, MaxImageBytes).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteImage>(response.Failure);
+            return response.FailAs<RemoteImage>();
         }
 
         return response.ContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true && response.Body.Length > 0
             ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType))
-            : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+            : response.Refuse<RemoteImage>(null);
     }
 
     // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
@@ -316,13 +317,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
-            return RemoteResult.Fail<RemoteItemPage>(response.Failure);
+            return response.FailAs<RemoteItemPage>();
         }
 
-        var page = Parse<ItemsResponse>(response.Body);
+        var page = Parse<ItemsResponse>(response, out var error);
         return page is { Items: not null, TotalRecordCount: not null } && page.Items.All(RemoteAnswers.IsWellFormed)
             ? RemoteResult.Success(new RemoteItemPage(page.Items, page.TotalRecordCount.Value) { ByteCount = response.Body.Length })
-            : RemoteResult.Fail<RemoteItemPage>(RemoteFailure.InvalidResponse);
+            : response.Refuse<RemoteItemPage>(error);
     }
 
     private static IReadOnlyList<RemoteItem> WithQuality(IReadOnlyList<RemoteItem> items, IReadOnlyDictionary<string, RemoteQuality>? quality)
@@ -379,15 +380,17 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         return (query.ViaProvider ? ProviderPath + "/Items?" : "/Items?") + string.Join('&', parameters);
     }
 
-    private static T? Parse<T>(byte[] body)
+    private static T? Parse<T>(RawResponse response, out JsonException? error)
         where T : class
     {
+        error = null;
         try
         {
-            return JsonSerializer.Deserialize<T>(body, _jsonOptions);
+            return JsonSerializer.Deserialize<T>(response.Body, _jsonOptions);
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
+            error = exception;
             return null;
         }
     }
@@ -484,9 +487,10 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     // Sends a GET of the sync, and tries it again after a transient failure (decision 47).
-    private async Task<RawResponse> ReadAsync(RemoteEndpoint endpoint, string path, RemoteSession? session, CancellationToken cancellationToken)
+    private async Task<RawResponse> ReadAsync(RemoteEndpoint endpoint, string path, RemoteSession? session, CancellationToken cancellationToken, [CallerMemberName] string step = "")
     {
-        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken).ConfigureAwait(false);
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, step: step).ConfigureAwait(false);
+        var tries = 1;
         foreach (var wait in _retryWaits)
         {
             if (!IsTransient(response))
@@ -495,23 +499,35 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             }
 
             await Delay(WaitBefore(wait, response.RetryAfter), cancellationToken).ConfigureAwait(false);
-            response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken).ConfigureAwait(false);
+            response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, step: step).ConfigureAwait(false);
+            tries++;
         }
 
-        return response;
+        return response.Error is { } error ? response with { Error = error with { Tries = tries } } : response;
     }
 
-    private async Task<RawResponse> SendAsync(RemoteEndpoint endpoint, HttpMethod method, string path, RemoteSession? session, byte[]? body, CancellationToken cancellationToken, int maxBytes = MaxResponseBytes)
+    private async Task<RawResponse> SendAsync(
+        RemoteEndpoint endpoint,
+        HttpMethod method,
+        string path,
+        RemoteSession? session,
+        byte[]? body,
+        CancellationToken cancellationToken,
+        int maxBytes = MaxResponseBytes,
+        string? password = null,
+        [CallerMemberName] string step = "")
     {
         if (!RemoteUrl.TryCombine(endpoint.BaseUrl, path, out var uri))
         {
-            return RawResponse.Failed(RemoteFailure.InvalidResponse, null);
+            var refused = new RemoteCall(step, method, path, session?.AccessToken, password);
+            return RawResponse.Failed(refused, RemoteFailure.InvalidResponse, null, refused.Error(null, "The path cannot be joined to the address of the server; nothing was sent"));
         }
+
+        var call = new RemoteCall(step, method, uri.AbsoluteUri, session?.AccessToken, password);
 
         using var client = _httpClientFactory.CreateClient(HttpClientName);
 
-        // Headers are read first, so that no body is read for an error or a redirect, and the client's own timeout stops
-        // there: this one also covers a body that stops arriving.
+        // Headers are read first, and the client's own timeout stops there: this one also covers a body that stops arriving.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(RequestLimit);
 
@@ -526,7 +542,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
                 {
                     if (FollowableTarget(response, method, uri) is not { } target)
                     {
-                        return RawResponse.Failed(RemoteFailure.RedirectRefused, response.StatusCode);
+                        var refused = await call.ErrorAsync(response, "The redirect is not followed", deadline.Token).ConfigureAwait(false);
+                        return RawResponse.Failed(call, RemoteFailure.RedirectRefused, response.StatusCode, refused);
                     }
 
                     uri = target;
@@ -535,42 +552,58 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    return RawResponse.Failed(FailureOf(response.StatusCode, session), response.StatusCode, RetryAfterOf(response));
+                    var refused = await call.ErrorAsync(response, null, deadline.Token).ConfigureAwait(false);
+                    return RawResponse.Failed(call, FailureOf(response.StatusCode, session), response.StatusCode, refused, RetryAfterOf(response));
                 }
 
                 var content = await RemoteBody.ReadLimitedAsync(response.Content, maxBytes, deadline.Token).ConfigureAwait(false);
                 return content is null
-                    ? RawResponse.Failed(RemoteFailure.ResponseTooLarge, response.StatusCode)
-                    : new RawResponse(response.StatusCode, content, RemoteFailure.None, response.Headers.Date, response.Content.Headers.ContentType?.MediaType);
+                    ? RawResponse.Failed(call, RemoteFailure.ResponseTooLarge, response.StatusCode, call.TooLarge(response.StatusCode, maxBytes))
+                    : new RawResponse(call, response.StatusCode, content, RemoteFailure.None)
+                    {
+                        Date = response.Headers.Date,
+                        ContentType = response.Content.Headers.ContentType?.MediaType
+                    };
             }
 
-            return RawResponse.Failed(RemoteFailure.RedirectRefused, null);
+            return RawResponse.Failed(call, RemoteFailure.RedirectRefused, null, call.Error(null, string.Create(CultureInfo.InvariantCulture, $"More than {MaxRedirects} redirects")));
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return RawResponse.Failed(RemoteFailure.Timeout, null);
+            return RawResponse.Failed(call, RemoteFailure.Timeout, null, call.Error(exception, "The server did not answer in time"));
         }
         catch (HttpRequestException exception) when (exception.HttpRequestError == HttpRequestError.ConfigurationLimitExceeded)
         {
-            return RawResponse.Failed(RemoteFailure.ResponseTooLarge, null);
+            return RawResponse.Failed(call, RemoteFailure.ResponseTooLarge, null, call.Error(exception));
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
         {
-            return RawResponse.Failed(RemoteFailure.Unreachable, null);
-        }
-        catch (IOException)
-        {
-            return RawResponse.Failed(RemoteFailure.Unreachable, null);
+            return RawResponse.Failed(call, RemoteFailure.Unreachable, null, call.Error(exception));
         }
     }
 
-    private sealed record RawResponse(HttpStatusCode? Status, byte[] Body, RemoteFailure Failure, DateTimeOffset? Date = null, string? ContentType = null)
+    private sealed record RawResponse(RemoteCall Call, HttpStatusCode? Status, byte[] Body, RemoteFailure Failure)
     {
         public bool IsSuccess => Failure == RemoteFailure.None;
 
+        public DateTimeOffset? Date { get; init; }
+
+        public string? ContentType { get; init; }
+
         public TimeSpan? RetryAfter { get; init; }
 
-        public static RawResponse Failed(RemoteFailure failure, HttpStatusCode? status, TimeSpan? retryAfter = null) => new(status, [], failure) { RetryAfter = retryAfter };
+        public RemoteError? Error { get; init; }
+
+        public static RawResponse Failed(RemoteCall call, RemoteFailure failure, HttpStatusCode? status, RemoteError error, TimeSpan? retryAfter = null)
+            => new(call, status, [], failure) { RetryAfter = retryAfter, Error = error };
+
+        public RemoteResult<T> FailAs<T>() => RemoteResult.FailWithError<T>(Failure, Failure == RemoteFailure.ResponseTooLarge ? null : (int?)Status, Error);
+
+        // Refuses an answer that was read, with the exception of its parsing and a token it holds.
+        public RemoteResult<T> Refuse<T>(JsonException? exception, string? token = null) => RemoteResult.FailWithError<T>(
+            RemoteFailure.InvalidResponse,
+            null,
+            Call.Unusable(Status!.Value, Body, ContentType, exception, token));
     }
 
     private sealed record AuthenticateRequest(string Username, string Pw);

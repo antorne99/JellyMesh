@@ -333,7 +333,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogDebug("Cannot read the sync history for now: {Error}", exception.GetType().Name);
+            _logger.LogDebug("Cannot read the sync history for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

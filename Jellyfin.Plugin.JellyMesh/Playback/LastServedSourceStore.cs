@@ -135,7 +135,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
 
                 if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
                 {
-                    _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
+                    _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 }
             }
         }
@@ -255,7 +255,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
             {
                 if (Interlocked.Exchange(ref _reported, 1) == 0)
                 {
-                    _logger.LogWarning("Cannot read the last servers that served each title for now: {Error}", exception.GetType().Name);
+                    _logger.LogWarning("Cannot read the last servers that served each title for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
                 }
 
                 return false;

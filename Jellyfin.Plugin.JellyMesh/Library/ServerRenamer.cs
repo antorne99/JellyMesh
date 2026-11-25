@@ -160,8 +160,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot cancel the pending rename of a server: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot cancel the pending rename of a server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return ServerRenameOutcome.CancelFailed;
         }
         finally
@@ -190,8 +189,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot rename a server: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot rename a server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
         finally
         {
