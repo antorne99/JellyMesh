@@ -23,4 +23,4 @@ changelog: |
   - The whole errors of the libraries, the index and the sync have a limit in the server log too: past 20 in a minute or 50 MB in a day, an error is one short line. A server that keeps failing, its logins included, takes no room in the log from the others.
   - Films and series with a very long title in an alphabet such as Cyrillic or Chinese are added to the library: their file name could be too long to be written. Titles that are already there keep their files.
 
-  Not verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only.
+  Not verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only; and the long titles on a running Jellyfin and on Windows or network disks.
