@@ -20,7 +20,7 @@ public static partial class FederatedPaths
 
     private const int MaxNameBytes = 120;
     private const int MaxFileNameBytes = 255;
-    private const int MaxLabelLength = 40;
+    private const int MaxLabelBytes = 40;
     private const int GuidDigits = 8;
     private const string FallbackName = "Untitled";
     private const string MoviesFolder = "Film";
@@ -356,10 +356,7 @@ public static partial class FederatedPaths
                 && !_threeDWords.Contains(word, StringComparer.OrdinalIgnoreCase));
 
         var label = string.Join(' ', words);
-        if (label.Length > MaxLabelLength)
-        {
-            label = label[..MaxLabelLength].TrimEnd();
-        }
+        label = label[..LengthWithin(label, MaxLabelBytes)].TrimEnd();
 
         return label.Length == 0 ? GuidStart(serverId) : label;
     }
