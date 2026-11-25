@@ -9,5 +9,8 @@ public enum StubKind
     Movie,
 
     /// <summary>An episode.</summary>
-    Episode
+    Episode,
+
+    /// <summary>A music track.</summary>
+    Track
 }

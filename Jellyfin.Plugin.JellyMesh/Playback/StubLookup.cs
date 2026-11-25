@@ -7,6 +7,7 @@ using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -193,7 +194,7 @@ public sealed class StubLookup
         }
 
         return user.HasPermission(PermissionKind.IsAdministrator)
-            || (Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
+            || (Resolve(itemId, out var isUnknown) is null && !isUnknown && FindFile(itemId) is null && !HasVersions(itemId))
             || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 
@@ -205,13 +206,20 @@ public sealed class StubLookup
     /// <returns>True for a stub.</returns>
     public bool IsStub(Guid itemId)
     {
-        if (_libraryManager.GetItemById(itemId) is not Video video)
+        return _libraryManager.GetItemById(itemId) switch
         {
-            return false;
-        }
-
-        return PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path);
+            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
+            Audio audio => IsStrmInFolder(audio.Path),
+            _ => false
+        };
     }
+
+    /// <summary>
+    /// Tells whether an item is an audio stub: an audio <c>.strm</c> in the federated folder, which has no plugin URL.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for an audio stub.</returns>
+    public bool IsAudioStub(Guid itemId) => _libraryManager.GetItemById(itemId) is Audio audio && IsStrmInFolder(audio.Path);
 
     /// <summary>
     /// Finds the stub of an item.
@@ -246,6 +254,22 @@ public sealed class StubLookup
         var stub = (isOurs ? _stubs.Find(stubId) : null) ?? (IsStrm(video.Path) ? _stubs.FindByPath(video.Path) : null);
         isUnknown = stub is null && IsStrm(video.Path) && IsFederated(video, isOurs, isUnread);
         return stub;
+    }
+
+    /// <summary>
+    /// Finds the stub of an item for its file and its visibility: a video stub, or an audio stub by its path, which
+    /// playback does not reach until the audio routes exist (F56).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? FindFile(Guid itemId)
+    {
+        return _libraryManager.GetItemById(itemId) switch
+        {
+            Video video when PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) => _stubs.Find(stubId),
+            Audio audio when PathInFolder(audio.Path) is { } path => _stubs.FindByPath(path),
+            _ => null
+        };
     }
 
     /// <summary>
@@ -317,8 +341,23 @@ public sealed class StubLookup
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
 
     // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
-    private bool IsStrmInFolder(string? path)
-        => IsStrm(path) && (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path));
+    private bool IsStrmInFolder(string? path) => PathInFolder(path) is not null;
+
+    // The path of a .strm in the federated folder, also through an alias of it, spelled under the folder; else null.
+    private string? PathInFolder(string? path)
+    {
+        if (!IsStrm(path))
+        {
+            return null;
+        }
+
+        if (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path))
+        {
+            return path;
+        }
+
+        return RealPath.Rebase(root, path!);
+    }
 
     // A .strm in the federated folder, or with our URL while the folder is not known or the registry is not read; while the
     // folder is not known, also one Jellyfin has not read. Any other .strm is the administrator's.

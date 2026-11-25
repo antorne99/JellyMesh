@@ -6,6 +6,7 @@ using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Controller.Chapters;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Model.Entities;
@@ -170,6 +171,20 @@ public sealed class StubTechnicalData
 
         SaveStreams(item, stub, version, cancellationToken);
         return changed;
+    }
+
+    /// <summary>
+    /// Writes the fields of a track from the index, with its lock (D60). Nothing is saved on the item itself.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="stub">The stub.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <returns>Whether a field of the item changed.</returns>
+    public bool WriteTrack(BaseItem item, StubEntry stub, bool isProtected)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        return item is Audio audio && SourceOf(stub) is { } source && StubItemUpdater.WriteTrack(audio, StubMetadata.Track(source.Item, isProtected));
     }
 
     /// <summary>

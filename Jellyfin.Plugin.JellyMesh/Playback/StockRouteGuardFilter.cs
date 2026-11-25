@@ -82,13 +82,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "MediaSegments"
     };
 
-    private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal)
-    {
-        "Videos",
-        "DynamicHls",
-        "Audio",
-        "UniversalAudio"
-    };
+    // The stock routes that would stream the file of an item, the .strm text of an audio stub included.
+    private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal) { "Videos", "DynamicHls", "Audio", "UniversalAudio" };
 
     private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
@@ -243,6 +238,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             context.Result = await FileResultAsync(context, action, fileId).ConfigureAwait(false);
             return;
         }
+        else if (_streamControllers.Contains(controller) && StubLookup.NamedItemIdsOf(context).Where(_stubs.IsAudioStub).ToList() is { Count: > 0 } tracks)
+        {
+            // Stock cannot play an audio .strm and would send its text, with the signed loopback URL, so it is never reached.
+            context.Result = await AudioStubRefusalAsync(context, tracks).ConfigureAwait(false);
+            return;
+        }
         else if (IsMedia(controller, action)
             && StubsOf(context, named, out var recorded) is var stubs
             && (stubs.Count > 0 || recorded))
@@ -366,7 +367,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return new StatusCodeResult(StatusCodes.Status403Forbidden);
         }
 
-        if (_stubs.Find(itemId) is not { } stub)
+        if (_stubs.FindFile(itemId) is not { } stub)
         {
             _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
@@ -420,6 +421,19 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var type = contentType?.Split(';', 2)[0].Trim();
         var extension = type is not null && _videoExtensions.TryGetValue(type, out var known) ? known : string.Empty;
         return Path.GetFileNameWithoutExtension(relativePath) + extension;
+    }
+
+    // Refuses a stock media route on audio stubs: 401 without a user, 404 for one who cannot see them, else a bare 503.
+    private async Task<IActionResult> AudioStubRefusalAsync(ActionExecutingContext context, List<Guid> tracks)
+    {
+        if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is not { } user)
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        return tracks.TrueForAll(id => _stubs.Sees(user, id))
+            ? new StatusCodeResult(StatusCodes.Status503ServiceUnavailable)
+            : new StatusCodeResult(StatusCodes.Status404NotFound);
     }
 
     // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.

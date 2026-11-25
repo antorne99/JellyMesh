@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -17,6 +18,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public abstract class StubMetadataProvider :
     ICustomMetadataProvider<Movie>,
     ICustomMetadataProvider<Episode>,
+    ICustomMetadataProvider<Audio>,
     IHasOrder,
     IForcedProvider,
     IPreRefreshProvider
@@ -55,6 +57,10 @@ public abstract class StubMetadataProvider :
 
     /// <inheritdoc />
     public Task<ItemUpdateType> FetchAsync(Episode item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Audio item, MetadataRefreshOptions options, CancellationToken cancellationToken)
         => Task.FromResult(Run(item, options, cancellationToken));
 
     /// <summary>

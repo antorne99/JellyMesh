@@ -30,9 +30,9 @@ public class FederatedLayoutTests
     }
 
     [Fact]
-    public void OnlyFilmsAndSeriesAreWrittenUntilTheNewTypesArrive()
+    public void FilmsSeriesAndMusicAreWritten()
     {
-        Assert.Equal([TypeFolder.Movies, TypeFolder.Series], TypeFolder.Written);
+        Assert.Equal([TypeFolder.Movies, TypeFolder.Series, TypeFolder.Music], TypeFolder.Written);
     }
 
     [Fact]
@@ -53,6 +53,7 @@ public class FederatedLayoutTests
     {
         Assert.Equal(TypeFolder.Movies, TypeFolder.Of(StubKind.Movie));
         Assert.Equal(TypeFolder.Series, TypeFolder.Of(StubKind.Episode));
+        Assert.Equal(TypeFolder.Music, TypeFolder.Of(StubKind.Track));
         Assert.Equal(TypeFolder.Movies, TypeFolder.Of(ContentKind.Movie));
         Assert.Equal(TypeFolder.Series, TypeFolder.Of(ContentKind.Episode));
     }

@@ -105,7 +105,8 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             }
 
             var stubs = state.Stubs.ToList();
-            var paths = stubs.Select(stub => stub.ServerId == serverId ? NewPath(stub.RelativePath, old, label) : null).ToList();
+            // A track has no versions, so its name carries no label.
+            var paths = stubs.Select(stub => stub.ServerId == serverId && stub.Kind != StubKind.Track ? NewPath(stub.RelativePath, old, label) : null).ToList();
             var live = LivePaths(state, paths.OfType<string>());
 
             // The old files of a stub that left go now, so that a file written at their path is not deleted later; their item

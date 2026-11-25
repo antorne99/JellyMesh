@@ -1946,6 +1946,109 @@ public partial class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
     }
 
+    // A track stub is an Audio item with no plugin URL; the registry knows it by its path (F54).
+    private InMemoryConfigurationStore TrackStub(bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        var path = "/federata/server/library/Musica/Artist/Album/01 - Song.strm";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = path });
+        _stubs.Setup(stubs => stubs.FindByPath(path)).Returns(known ? _stub : null);
+        return store;
+    }
+
+    [Fact]
+    public async Task File_of_a_visible_track_stub_comes_from_the_remote_and_never_from_stock()
+    {
+        CanSeeItem();
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.StartsWith("/Videos/remote-item/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
+    }
+
+    // Until the audio routes of F56, PlaybackInfo and segments of a track stub stay stock: no remote is reached.
+    [Fact]
+    public async Task PlaybackInfo_of_a_track_stub_stays_with_stock_and_reaches_no_remote()
+    {
+        CanSeeItem();
+        TrackStub();
+
+        Assert.True(await RunAsync(InfoFilter(), Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId))));
+        Assert.True(await RunAsync(InfoFilter(), Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", LocalItem()), ("mediaSourceId", _itemId.ToString("N")))));
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_visible_track_stub_stay_with_stock()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(store: TrackStub()), Context("MediaSegments", "GetItemSegments", ("itemId", _itemId))));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task File_of_a_track_stub_wants_a_user(string action)
+    {
+        Anonymous();
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("Audio", "GetAudioStream")]
+    [InlineData("Audio", "GetAudioStreamByContainer")]
+    [InlineData("UniversalAudio", "GetUniversalAudioStream")]
+    [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist")]
+    public async Task A_stock_audio_route_refuses_a_track_stub_without_a_user(string controller, string action)
+    {
+        Anonymous();
+        var context = Context(controller, action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stock_audio_route_does_not_find_a_track_stub_the_user_cannot_see()
+    {
+        var context = Context("Audio", "GetAudioStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    // Stock cannot play an audio .strm and would send its text, so even a user who sees the track never reaches it.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_stock_audio_route_never_reaches_stock_for_a_visible_track_stub(bool known)
+    {
+        CanSeeItem();
+        var context = Context("Audio", "GetAudioStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub(known)), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task An_audio_file_outside_the_federated_folder_stays_with_stock()
+    {
+        Anonymous();
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/music/01 - Song.flac" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), Context("Audio", "GetAudioStream", ("itemId", _itemId))));
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
     [Fact]
     public async Task File_of_an_item_that_is_not_a_stub_stays_with_stock()
     {

@@ -130,6 +130,7 @@ public static class StubPlanner
         var claimed = new HashSet<string>(StringComparer.Ordinal);
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
+        var tracks = new List<StubWork>();
 
         // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
         var legacy = input.KeepsOlderLayout;
@@ -137,7 +138,7 @@ public static class StubPlanner
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Track && (legacy || IsCurrent(stub.RelativePath))).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
             var parts = legacy
@@ -179,8 +180,17 @@ public static class StubPlanner
                 claimed.UnionWith(part.Stubs.Where(matcher.IsClaimed).Select(stub => stub.Id));
                 merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
             }
+
+            // Tracks come only in the new layout (Q49), from the index: the dedup has no track identity yet.
+            if (!legacy)
+            {
+                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList());
+                tracks.AddRange(serverTracks);
+                claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
+            }
         }
 
+        works.AddRange(tracks);
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)) && !claimed.Contains(stub.Id)).ToList();
 

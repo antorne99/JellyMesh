@@ -531,7 +531,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
             config.Servers.Where(server => servers.Contains(server.Id)).DistinctBy(server => server.Id).ToDictionary(server => server.Id, LibraryPlan.TypeFolders),
             config.Servers.Where(server => server.AutomaticLibraries && server.LibraryMode != LibraryMode.None).Select(server => server.Id).ToHashSet(),
             OwnLibraries(config)));
-        var needed = TypeFolder.Written.Where(type => HasOldTitlesOf(state, type)).ToList();
+        var needed = TypeFolder.Older.Where(type => HasOldTitlesOf(state, type)).ToList();
         List<string> NewOf(Guid? server, TypeFolder type) =>
             servers.Where(id => server is null || id == server).SelectMany(id => NewFoldersOf(root, state, imported, id, type)).ToList();
         bool Linked(string path) => folders.Any(folder => Holds(folder, path));
@@ -572,7 +572,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     private static OldFolder? OldFolderOf(string root, string location)
     {
         var relative = FederatedPaths.RelativeTo(root, Path.TrimEndingDirectorySeparator(location));
-        if (TypeFolder.Written.FirstOrDefault(type => string.Equals(relative, type.Name, StringComparison.Ordinal)) is { } flat)
+        if (TypeFolder.Older.FirstOrDefault(type => string.Equals(relative, type.Name, StringComparison.Ordinal)) is { } flat)
         {
             return new OldFolder(null, flat, Path.Combine(root, flat.Name));
         }

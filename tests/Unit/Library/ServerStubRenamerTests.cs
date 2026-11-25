@@ -132,6 +132,20 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    [Fact]
+    public async Task ATrackCarriesNoLabelAndKeepsItsPathWhateverItsTitle()
+    {
+        var track = Path.Combine(_server.ToString("D"), "0123456789abcdef0123456789abcdef", "Musica", "Artist", "Album", "01 - Casa.strm");
+        await SeedAsync(Film("f", FilmPath("Casa")), Film("t", track) with { Kind = StubKind.Track });
+        Write(FilmPath("Casa"), "url-f");
+        Write(track, "url-t");
+
+        Assert.Equal(1, await _renamer.RelabelAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal([FilmPath("Mare"), track], _registry.State.Stubs.Select(stub => stub.RelativePath));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+    }
+
     // Q316: with the server folder in no library there is no item, so the files are renamed at once and nothing waits.
     [Fact]
     public async Task InNoLibrary_TheStubFilesAreRenamedInPlace_AndNothingWaits()
