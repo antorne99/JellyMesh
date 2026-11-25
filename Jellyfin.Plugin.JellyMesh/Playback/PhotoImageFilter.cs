@@ -117,7 +117,7 @@ public sealed class PhotoImageFilter : IAsyncActionFilter, IDisposable
     // Reads the image from the server of the stub; a 404 for anything else, as Jellyfin answers for a missing image.
     internal async Task<IActionResult> ServeAsync(ActionExecutingContext context, Guid itemId, bool anonymous)
     {
-        if (!IsPrimary(context) || _stubs.FindFile(itemId) is not { Kind: StubKind.Photo } stub)
+        if (!IsPrimary(context) || _stubs.FindWithThumbnail(itemId) is not { Kind: StubKind.Photo } stub)
         {
             return new NotFoundResult();
         }

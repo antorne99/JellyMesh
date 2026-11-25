@@ -16,6 +16,8 @@ public static class PhotoThumbnails
     /// </summary>
     public const string FolderName = ".jellymesh-thumbs";
 
+    private const string Extension = ".jpg";
+
     private const byte Marker = 0xFF;
     private const byte StartOfImage = 0xD8;
     private const byte EndOfImage = 0xD9;
@@ -32,7 +34,7 @@ public static class PhotoThumbnails
 
         return stubId.Length == 0 || stubId.StartsWith('.') || stubId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || stubId.Contains('\\', StringComparison.Ordinal)
             ? null
-            : Path.Combine(root, FolderName, stubId + ".jpg");
+            : Path.Combine(root, FolderName, stubId + Extension);
     }
 
     /// <summary>Tells whether a path is a file of a thumbnail folder, whatever the federated folder is.</summary>
@@ -40,6 +42,22 @@ public static class PhotoThumbnails
     /// <returns>True for a thumbnail.</returns>
     public static bool IsThumbnail(string? path)
         => string.Equals(Path.GetFileName(Path.GetDirectoryName(path)), FolderName, StringComparison.Ordinal);
+
+    /// <summary>Reads the stub of a thumbnail back from its name, whatever the federated folder is (row 553).</summary>
+    /// <param name="path">The path of the thumbnail.</param>
+    /// <returns>The stub id, null for a path that is not a thumbnail as <see cref="PathOf"/> names one.</returns>
+    public static string? StubIdOf(string? path)
+    {
+        if (path is null || !Path.IsPathFullyQualified(path) || !IsThumbnail(path) || !path.EndsWith(Extension, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var stubId = Path.GetFileName(path)[..^Extension.Length];
+        return Path.GetDirectoryName(Path.GetDirectoryName(path)) is { } root && string.Equals(PathOf(root, stubId), path, StringComparison.Ordinal)
+            ? stubId
+            : null;
+    }
 
     /// <summary>
     /// Points the Primary of a photo at its thumbnail, as a new image so that Jellyfin measures it again. Nothing is saved.

@@ -357,6 +357,118 @@ public class PhotoImageFilterTests
         Assert.Empty(_asked);
     }
 
+    private const string OldPhotoPath = "/federata/server/Video domestici/Trips/IMG_0001.jpg";
+
+    // Row 553: the root moved to /federata2 and the photo still sits under /federata with the thumbnail it had there.
+    private Photo MovedPhoto(string thumbnail = "/federata/.jellymesh-thumbs/stub.jpg", string root = "/federata2")
+    {
+        _store.Configuration.FederatedFolderPath = root;
+        var photo = new Photo { Path = OldPhotoPath };
+        photo.AddImage(new ItemImageInfo { Path = thumbnail, Type = ImageType.Primary });
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(photo);
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns(Stub());
+        return photo;
+    }
+
+    [Fact]
+    public async Task A_photo_left_under_the_old_folder_comes_from_the_remote_by_the_id_of_its_thumbnail()
+    {
+        MovedPhoto();
+        var context = Request();
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        AssertServed(context);
+        Assert.Equal("remote-item", Assert.Single(_asked).ItemId);
+    }
+
+    [Fact]
+    public async Task A_user_who_sees_a_photo_left_under_the_old_folder_gets_the_image()
+    {
+        MovedPhoto();
+        SignedIn(sees: true);
+        var context = Request();
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        AssertServed(context);
+    }
+
+    [Fact]
+    public async Task A_user_who_does_not_see_a_photo_left_under_the_old_folder_gets_a_404()
+    {
+        MovedPhoto();
+        SignedIn(sees: false);
+        var context = Request();
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        AssertMissing(context);
+        Assert.Empty(_asked);
+    }
+
+    // D17: Jellyfin shows an item of no library to everyone, so the stub found by its thumbnail must sit in one.
+    [Fact]
+    public async Task A_photo_left_under_the_old_folder_in_no_library_is_missing_for_a_user()
+    {
+        MovedPhoto();
+        SignedIn(sees: true);
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = Request();
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        AssertMissing(context);
+        Assert.Empty(_asked);
+    }
+
+    [Fact]
+    public async Task A_thumbnail_the_registry_does_not_know_or_of_another_kind_is_missing()
+    {
+        MovedPhoto();
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns((StubEntry?)null);
+        var unknown = Request();
+        Assert.False(await RunAsync(Filter(), unknown));
+        AssertMissing(unknown);
+
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns(Stub(StubKind.Book));
+        var book = Request();
+        Assert.False(await RunAsync(Filter(), book));
+        AssertMissing(book);
+
+        Assert.Empty(_asked);
+    }
+
+    [Theory]
+    [InlineData("/federata/.jellymesh-thumbs/.jpg")]
+    [InlineData("/federata/.jellymesh-thumbs/.stub.jpg")]
+    [InlineData("/federata/.jellymesh-thumbs/stub.png")]
+    [InlineData("/federata/.jellymesh-thumbs/stub.jpg.png")]
+    public async Task A_thumbnail_name_that_is_not_one_of_the_plugin_reaches_no_stub(string thumbnail)
+    {
+        MovedPhoto(thumbnail);
+        _stubs.Setup(stubs => stubs.Find(It.IsAny<string>())).Returns(Stub());
+        var context = Request();
+
+        await RunAsync(Filter(), context);
+
+        Assert.Empty(_asked);
+        _stubs.Verify(stubs => stubs.Find(It.IsAny<string>()), Times.Never);
+    }
+
+    // With no federated folder known there is no old one either: the thumbnail keeps the photo from stock only.
+    [Fact]
+    public async Task While_the_folder_is_unknown_a_thumbnail_reaches_no_stub()
+    {
+        MovedPhoto(root: string.Empty);
+        var context = Request();
+
+        Assert.False(await RunAsync(Filter(), context));
+
+        AssertMissing(context);
+        Assert.Empty(_asked);
+    }
+
     [Fact]
     public async Task Local_photos_books_albums_and_unknown_items_stay_stock()
     {

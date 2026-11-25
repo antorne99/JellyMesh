@@ -195,7 +195,7 @@ public sealed class StubLookup
         }
 
         return user.HasPermission(PermissionKind.IsAdministrator)
-            || (!IsStub(itemId) && Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
+            || (!IsStub(itemId) && FindWithThumbnail(itemId) is null && Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
             || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 
@@ -297,6 +297,14 @@ public sealed class StubLookup
     }
 
     /// <summary>
+    /// Finds the stub of an item as <see cref="FindFile"/> does, and that of a photo left under another federated folder
+    /// by the name of its thumbnail, while a folder is set (row 553).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? FindWithThumbnail(Guid itemId) => FindFile(itemId) ?? MovedPhotoStub(_libraryManager.GetItemById(itemId));
+
+    /// <summary>
     /// Finds the items Jellyfin links with an item as versions: it climbs through primaries and owners, as the linker does,
     /// and takes each one and their alternates.
     /// </summary>
@@ -364,6 +372,16 @@ public sealed class StubLookup
     }
 
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
+
+    // A photo outside the federated folder whose Primary is a thumbnail of a photo stub the registry knows.
+    private StubEntry? MovedPhotoStub(BaseItem? item)
+        => item is Photo photo
+            && PlaceholderPath(photo) is null
+            && _store.ReadOr(config => config.FederatedFolderPath, null) is { Length: > 0 }
+            && PhotoThumbnails.StubIdOf(photo.GetImageInfo(ImageType.Primary, 0)?.Path) is { } stubId
+            && _stubs.Find(stubId) is { Kind: StubKind.Photo } stub
+                ? stub
+                : null;
 
     // The path of a book or a photo in the federated folder, also through an alias of it, spelled under the folder; else null.
     private string? PlaceholderPath(BaseItem? item)

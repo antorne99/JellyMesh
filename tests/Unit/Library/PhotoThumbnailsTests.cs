@@ -178,6 +178,31 @@ public sealed class PhotoThumbnailsTests
         Assert.Null(PhotoThumbnails.PathOf("/federata", id));
     }
 
+    // Row 553: the stub of a photo left under an old federated folder is found by the name of its thumbnail.
+    [Fact]
+    public void TheIdOfAStubIsReadBackFromItsThumbnailUnderAnyRoot()
+    {
+        Assert.Equal("0123abcd", PhotoThumbnails.StubIdOf("/federata/.jellymesh-thumbs/0123abcd.jpg"));
+        Assert.Equal("0123abcd", PhotoThumbnails.StubIdOf(PhotoThumbnails.PathOf("/old/root", "0123abcd")));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("/federata/.jellymesh-thumbs/.jpg")]
+    [InlineData("/federata/.jellymesh-thumbs/.x.jpg")]
+    [InlineData("/federata/.jellymesh-thumbs/x.png")]
+    [InlineData("/federata/.jellymesh-thumbs/x.JPG")]
+    [InlineData("/federata/.jellymesh-thumbs/x")]
+    [InlineData("/federata/thumbs/x.jpg")]
+    [InlineData("/federata/.jellymesh-thumbs/sub/x.jpg")]
+    [InlineData(".jellymesh-thumbs/x.jpg")]
+    [InlineData("/federata/.jellymesh-thumbs/x\\y.jpg")]
+    public void APathThatIsNotAThumbnailNamesNoStub(string? path)
+    {
+        Assert.Null(PhotoThumbnails.StubIdOf(path));
+    }
+
     [Fact]
     public void ASegmentLongerThanTheFileIsRefused()
     {
