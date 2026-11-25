@@ -20,7 +20,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <summary>
 /// Runs after every library scan. When two copies of one server, shown apart until now, became one title, it hands the
 /// watch state of each user over to the stub that stays and only then removes the other: Jellyfin would not do it, and
-/// the rows of a deleted item stay behind a placeholder. A local copy no longer removes a stub (Q18 b). It is also where
+/// the rows of a deleted item stay behind a placeholder. A stub that split from another, in another local library, takes its
+/// watch state here once it has an item (§10 row 507). A local copy no longer removes a stub (Q18 b). It is also where
 /// a new stub series gets its refresh, since the item exists only after the scan, and where a new stub is first linked to
 /// its versions (Q145).
 /// </summary>
@@ -45,6 +46,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly ILayoutMigration? _migration;
     private readonly IServerStubRenamer? _renames;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly WatchStateCleaner? _cleaner;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StubCleanupTask"/> class.
@@ -65,6 +67,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="migration">The manual migration from the flat layout, if any.</param>
     /// <param name="renames">The stub moves of renamed servers, if any.</param>
     /// <param name="keeper">What puts back the watch state of removed servers (row 412).</param>
+    /// <param name="cleaner">What clears the watch state of the stubs that took more episodes (row 543).</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -81,7 +84,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         IVersionLinker? linker = null,
         ILayoutMigration? migration = null,
         IServerStubRenamer? renames = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        WatchStateCleaner? cleaner = null)
     {
         _registry = registry;
         _resolver = resolver;
@@ -99,6 +103,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         _migration = migration;
         _renames = renames;
         _keeper = keeper;
+        _cleaner = cleaner;
     }
 
     /// <inheritdoc />
@@ -115,7 +120,9 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var state = await MergeStubsAsync(root, _registry.State, cancellationToken).ConfigureAwait(false);
+            var state = HandOverSplits(root, _registry.State, cancellationToken);
+            state = _cleaner?.Clear(root, state, cancellationToken) ?? state;
+            state = await MergeStubsAsync(root, state, cancellationToken).ConfigureAwait(false);
             state = RefreshNewSeries(root, state);
             if (!ReferenceEquals(state, _registry.State))
             {
@@ -194,30 +201,101 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
     }
 
+    // A stub or series that split takes the state of the one it split from, once: later each keeps its own (row 63). It waits
+    // until a scan has made both items, and until the state of a renamed server is at its new path.
+    private StubState HandOverSplits(string root, StubState state, CancellationToken cancellationToken)
+    {
+        if (state.Splits.Count == 0)
+        {
+            return state;
+        }
+
+        // No users may mean they cannot be read for now.
+        var users = _users.GetUsers().ToList();
+        var stubs = state.Stubs.ToDictionary(stub => stub.Id, stub => stub.RelativePath, StringComparer.Ordinal);
+        var series = state.Series.ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
+        var moving = state.Renames.Where(rename => rename.RemovedItemId is null).Select(rename => rename.StubId).ToHashSet(StringComparer.Ordinal);
+        var left = state.Splits.Where(split => IsKnown(split.StubId) && IsKnown(split.FromStubId)
+            && (users.Count == 0
+                || moving.Contains(split.FromStubId)
+                || !(HandOverSplit(root, split, stubs, false, WatchStateMerge.Merge, users, cancellationToken)
+                    || HandOverSplit(root, split, series, true, MergeSeries, users, cancellationToken)))).ToList();
+        return left.Count == state.Splits.Count ? state : state with { Splits = left };
+
+        bool IsKnown(string id) => stubs.ContainsKey(id) || series.ContainsKey(id);
+    }
+
+    private bool HandOverSplit(string root, StubSplit split, Dictionary<string, string> paths, bool isFolder, Func<UserItemData, UserItemData, bool> merge, List<User> users, CancellationToken cancellationToken)
+    {
+        if (!paths.TryGetValue(split.FromStubId, out var from) || !paths.TryGetValue(split.StubId, out var to))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (_library.FindByPath(FederatedPaths.Resolve(root, from), isFolder) is not { } source)
+            {
+                return IsGone(root, from, isFolder);
+            }
+
+            if (_library.FindByPath(FederatedPaths.Resolve(root, to), isFolder) is not { } target)
+            {
+                return false;
+            }
+
+            HandOver(users, source, target, merge, cancellationToken);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            // It still waits, and the next scan tries again.
+            _logger.LogError("Cannot hand over the watch state of a split title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            return false;
+        }
+    }
+
+    // Whether the file of a stub or the folder of a series is gone. A type folder without its marker, as on a disk that is not
+    // mounted, proves nothing.
+    private static bool IsGone(string root, string relativePath, bool isFolder)
+    {
+        var path = FederatedPaths.Resolve(root, relativePath);
+        return FederatedPaths.TypeFolderPathOf(relativePath) is { } folder
+            && File.Exists(Path.Combine(FederatedPaths.Resolve(root, folder), FederatedPaths.HiddenFileName))
+            && !(isFolder ? Directory.Exists(path) : File.Exists(path));
+    }
+
     private async Task<StubState> MergeStubsAsync(string root, StubState state, CancellationToken cancellationToken)
     {
         // One snapshot and one server list, so that the claims are those the materializer made.
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
-        if (view.Health == IndexHealth.Corrupt)
+        if (view.Health == IndexHealth.Corrupt || ReadPlacement() is not { } placement)
         {
             return state;
         }
 
+        // No users may mean they cannot be read for now.
         var users = _users.GetUsers().ToList();
-        foreach (var claim in StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs))
+        if (users.Count == 0)
         {
-            if (claim.Stub is not { } stub)
-            {
-                continue;
-            }
+            return state;
+        }
 
+        var merges = StubPlanner.ClaimByServer(view, snapshot, servers, state.Stubs, placement.KeyOf)
+            .SelectMany(claim => claim.Merged.Select(merged => (Merged: merged, Into: claim.Stub!)))
+            .GroupBy(merge => merge.Merged.Id, StringComparer.Ordinal);
+        var waits = state.Splits.SelectMany(split => new[] { (Id: split.FromStubId, Split: split), (Id: split.StubId, Split: split) }).ToLookup(end => end.Id, end => end.Split, StringComparer.Ordinal);
+        foreach (var merge in merges)
+        {
+            var merged = merge.First().Merged;
+            var into = merge.Select(entry => entry.Into).ToList();
             try
             {
-                foreach (var merged in claim.Merged)
+                if (into.TrueForAll(stub => IsTakenOver(merged, stub)) && !IsToClear(root, merged, into) && !IsWaitedFor(waits, state, merged, into))
                 {
-                    state = await MergeAsync(root, state, merged, stub, users, cancellationToken).ConfigureAwait(false);
+                    state = await MergeAsync(root, state, merged, into, users, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -230,12 +308,60 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         return state;
     }
 
-    private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
+    // Whether a split still waits for the state of these stubs: a merge would remove it, or mix it with that of other episodes.
+    // One between these stubs waits for nothing more, since the merge hands the state over.
+    private static bool IsWaitedFor(ILookup<string, StubSplit> waits, StubState state, StubEntry merged, List<StubEntry> into)
     {
-        // Without its item, which only a scan makes, the survivor cannot receive anything yet.
-        if (_library.FindByPath(FederatedPaths.Resolve(root, into.RelativePath), false) is not { } survivor)
+        var ids = into.Append(merged).SelectMany(stub => new[] { stub.Id, stub.SeriesStubId }).ToHashSet(StringComparer.Ordinal);
+        return waits[merged.Id]
+            .Concat(into.SelectMany(stub => waits[stub.Id].Where(split => split.FromStubId == stub.Id)))
+            .Concat(merged.SeriesStubId is { } series && waits.Contains(series) && IsLastOfSeries(state, merged) ? waits[series] : [])
+            .Any(split => !ids.Contains(split.StubId) || !ids.Contains(split.FromStubId));
+    }
+
+    private static bool IsLastOfSeries(StubState state, StubEntry stub) =>
+        !state.Stubs.Any(other => other.Id != stub.Id && other.SeriesStubId == stub.SeriesStubId);
+
+    // Null when the libraries cannot be read: no stub is merged until the next scan.
+    private LibraryPlacement? ReadPlacement()
+    {
+        try
         {
-            return state;
+            return LibraryPlacement.Read(_library, _store);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot read the libraries to merge the stubs: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            return null;
+        }
+    }
+
+    // Whether a sync already gave a copy of a merged stub to the one that stays: a library that changed since merges nothing.
+    private static bool IsTakenOver(StubEntry merged, StubEntry into) => merged.Sources.Any(source =>
+        into.Sources.Any(other => other.ServerId == source.ServerId && string.Equals(other.ItemId, source.ItemId, StringComparison.Ordinal))
+        || (into.ServerId == source.ServerId && into.PartCopies.Contains(source.ItemId, StringComparer.Ordinal)));
+
+    // The state of one episode is not given to a stub of several (§10 row 543).
+    private static bool TakesState(StubEntry merged, StubEntry into) =>
+        merged.Kind != StubKind.Episode || merged.EpisodeNumberEnd is not null || into.EpisodeNumberEnd is null;
+
+    // Whether the state of a stub is still to clear: a merge would give it away, or clear with it what it takes.
+    // One with no item gives nothing.
+    private bool IsToClear(string root, StubEntry merged, List<StubEntry> into) =>
+        into.Append(merged).Any(stub => stub.StateOfOneUntil is not null) && _library.FindByPath(FederatedPaths.Resolve(root, merged.RelativePath), false) is not null;
+
+    private async Task<StubState> MergeAsync(string root, StubState state, StubEntry stub, List<StubEntry> into, List<User> users, CancellationToken cancellationToken)
+    {
+        // Without its item, which only a scan makes, a survivor cannot receive anything yet.
+        var survivors = new List<BaseItem>();
+        foreach (var entry in into)
+        {
+            if (_library.FindByPath(FederatedPaths.Resolve(root, entry.RelativePath), false) is not { } survivor)
+            {
+                return state;
+            }
+
+            survivors.Add(survivor);
         }
 
         // A stub that cannot leave its version group, also at the old path of a pending server rename, stays for the next
@@ -247,24 +373,48 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
 
         if (_library.FindByPath(FederatedPaths.Resolve(root, stub.RelativePath), false) is { } stubItem)
         {
-            foreach (var user in users)
+            foreach (var (_, survivor) in into.Zip(survivors).Where(entry => TakesState(stub, entry.First)))
             {
-                if (_userData.GetUserData(user, stubItem) is { } data)
-                {
-                    HandOver(user, data, survivor, WatchStateMerge.Merge, cancellationToken);
-                }
+                HandOver(users, stubItem, survivor, WatchStateMerge.Merge, cancellationToken);
             }
+        }
+
+        foreach (var entry in into.DistinctBy(entry => entry.SeriesStubId))
+        {
+            HandOverSeries(root, state, stub, entry, users, cancellationToken);
         }
 
         return _remover.Remove(root, state, stub);
     }
 
-    private void HandOver(User user, UserItemData from, BaseItem target, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
+    // The series of the last merged episode goes with it, so the series that stays takes its favorite and rating.
+    private void HandOverSeries(string root, StubState state, StubEntry stub, StubEntry into, List<User> users, CancellationToken cancellationToken)
     {
-        var data = _userData.GetUserData(user, target);
-        if (data is not null && merge(from, data))
+        if (stub.SeriesStubId is { } leaving
+            && !string.Equals(leaving, into.SeriesStubId, StringComparison.Ordinal)
+            && IsLastOfSeries(state, stub)
+            && FindSeries(root, state, leaving) is { } source
+            && FindSeries(root, state, into.SeriesStubId) is { } target)
         {
-            _userData.SaveUserData(user, target, data, UserDataSaveReason.Import, cancellationToken);
+            HandOver(users, source, target, MergeSeries, cancellationToken);
+        }
+    }
+
+    private BaseItem? FindSeries(string root, StubState state, string? id) =>
+        state.Series.FirstOrDefault(entry => entry.Id == id) is { } series ? _library.FindByPath(FederatedPaths.Resolve(root, series.RelativePath), true) : null;
+
+    private static bool MergeSeries(UserItemData from, UserItemData to) => WatchStateTransfer.CarrySeries(from, [to]).Count > 0;
+
+    private void HandOver(List<User> users, BaseItem source, BaseItem target, Func<UserItemData, UserItemData, bool> merge, CancellationToken cancellationToken)
+    {
+        // FindByPath gives an instance of its own: saved there, the one Jellyfin caches would keep the old rows.
+        var item = _library.GetItemById(target.Id) ?? target;
+        foreach (var user in users)
+        {
+            if (_userData.GetUserData(user, source) is { } from && _userData.GetUserData(user, item) is { } data && merge(from, data))
+            {
+                _userData.SaveUserData(user, item, data, UserDataSaveReason.Import, cancellationToken);
+            }
         }
     }
 

@@ -431,7 +431,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cannot read the stub registry again: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the stub registry again: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

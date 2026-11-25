@@ -171,13 +171,18 @@ add_remote() {
 # dashed <server id>: the ID as the plugin names the folder of that server.
 dashed() { local id=${1//-/}; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
 
-# link_server <consumer> <server id>: adds the Film and Serie folders of that server to the libraries, as an admin does.
+# link_server <consumer> <server id>: adds the type folders a sync made for that server to the libraries Film and Serie, as
+# an admin does. Fails if there is none of a kind.
 link_server() {
-  local s=$1 dir kind
+  local s=$1 dir kind path paths
   dir=/federata/$(dashed "$2")
   for kind in Film Serie; do
-    post "$s" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$dir/$kind" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
-    [ "$(status)" = 204 ] || { echo "linking $dir/$kind failed: $(status)" >&2; return 1; }
+    paths=$(docker exec "$(container_of "$s")" find "$dir" -mindepth 2 -maxdepth 2 -type d -name "$kind" | sort)
+    [ -n "$paths" ] || { echo "no $kind folder in $dir" >&2; return 1; }
+    while IFS= read -r path; do
+      post "$s" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$kind" --arg p "$path" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+      [ "$(status)" = 204 ] || { echo "linking $path failed: $(status)" >&2; return 1; }
+    done <<<"$paths"
   done
 }
 

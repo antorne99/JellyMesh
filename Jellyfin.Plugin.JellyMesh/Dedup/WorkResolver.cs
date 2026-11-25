@@ -109,6 +109,15 @@ internal sealed class WorkResolver
     internal static string? CopyItemOf(CatalogItem item) => item.Kind == ContentKind.Movie ? item.ItemId : item.SeriesId;
 
     /// <summary>
+    /// Gets the key of a copy that has no work. All the episodes of a series share its key, and a merged copy that lost its
+    /// title or year on the remote stays in the merge by it.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <returns>The key.</returns>
+    internal static string KeyOfAlone(CatalogItem item) =>
+        string.Join('|', Prefix(item.Kind), "item:" + item.ServerId + ":" + (CopyItemOf(item) ?? item.ItemId));
+
+    /// <summary>
     /// Puts an ID in the form used for comparing.
     /// </summary>
     /// <param name="id">The ID.</param>
@@ -245,11 +254,6 @@ internal sealed class WorkResolver
         var workPairs = copies.SelectMany(copy => works.Select(work => (copy, work)));
         return copyPairs.Concat(workPairs).All(confirmed.Contains);
     }
-
-    // A merged copy that lost its title or year on the remote has no work, and it must not fall out of the merge for that. All
-    // the episodes of a series share its key.
-    private static string KeyOfAlone(CatalogItem item) =>
-        string.Join('|', Prefix(item.Kind), "item:" + item.ServerId + ":" + (CopyItemOf(item) ?? item.ItemId));
 
     private static bool IsCopy(CatalogItem item, MergedCopy copy)
     {

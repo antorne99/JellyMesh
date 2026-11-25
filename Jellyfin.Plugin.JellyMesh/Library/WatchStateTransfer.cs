@@ -13,7 +13,8 @@ public static class WatchStateTransfer
     /// <summary>
     /// Puts the resume position on the visible version of the last server that served the old item, else of its best
     /// server, else on the primary; favorite, rating, play count and date on the primary if visible, else on the best
-    /// visible version; played on every version, by the rule of decision 2 (decisions 149, 153, 154).
+    /// visible version; played on every version, by the rule of decision 2 (decisions 149, 153, 154). When the server of the
+    /// position has a visible version in several local libraries, each of them takes it all (§10 row 445).
     /// </summary>
     /// <param name="from">The user's data on the old item.</param>
     /// <param name="lastServer">The server that last served the old item to the user, null if none is known.</param>
@@ -46,13 +47,17 @@ public static class WatchStateTransfer
         }
 
         var primary = visible.Where(version => version.IsPrimary).Concat(ByServer(servers, visible)).Concat(visible).First().Data;
-        var target = ByServer(lastServer is { } last ? servers.Prepend(last) : servers, visible)
+        var chosen = ByServer(lastServer is { } last ? servers.Prepend(last) : servers, visible)
             .Concat(visible.Where(version => version.Data == primary))
-            .First().Data;
+            .First();
+        var target = chosen.Data;
+        var sameServer = visible.Where(version => version.ServerId is { } server && server == chosen.ServerId).Select(version => version.Data).ToList();
 
         // All decided before any change: the target can be the primary.
         var toTarget = withPosition && WatchStateMerge.IsNewer(from, target);
         var toPrimary = WatchStateMerge.IsNewer(from, primary);
+        var apart = withPosition && sameServer.Count > 1 ? sameServer : [];
+        var toApart = apart.Where(data => WatchStateMerge.IsNewer(from, data)).ToList();
         var played = HasWatchState(from)
             ? PlayedAlignment.Decide(versions.Select(version => version.Data).Prepend(from))
             : null;
@@ -72,9 +77,17 @@ public static class WatchStateTransfer
             changed.Add(primary);
         }
 
-        if (mode == WatchStateCarryMode.First && FillFavoriteAndRating(from, primary))
+        foreach (var data in toApart)
         {
-            changed.Add(primary);
+            data.PlaybackPositionTicks = from.PlaybackPositionTicks;
+            data.PlayCount = from.PlayCount;
+            data.LastPlayedDate = from.LastPlayedDate;
+            changed.Add(data);
+        }
+
+        if (mode == WatchStateCarryMode.First)
+        {
+            changed.UnionWith(apart.Append(primary).Where(data => FillFavoriteAndRating(from, data)));
         }
 
         // Jellyfin spreads played only on a playback or mark event, not on an import: the flag goes on every version (D4).

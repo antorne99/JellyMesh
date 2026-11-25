@@ -291,9 +291,10 @@ public sealed class StubLookup
         return members;
     }
 
-    // A link only between local films stays stock.
+    // A link only between local films stays stock; while the registry is unread, any of our URLs counts as a stub (row 552).
     private bool IsLinkedToStub(Guid itemId)
     {
+        var isUnread = _stubs.IsUnread;
         var members = LinkedVersionsOf(itemId);
         if (members.Count < 2)
         {
@@ -304,7 +305,7 @@ public sealed class StubLookup
         foreach (var member in members.Values)
         {
             if ((root is null ? IsStrm(member.Path) : FederatedPaths.IsInside(root, member.Path))
-                || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && _stubs.Find(stubId) is not null))
+                || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && (isUnread || _stubs.Find(stubId) is not null)))
             {
                 return true;
             }

@@ -181,6 +181,38 @@ public partial class PlaybackFiltersTests
         Assert.Empty(SourcesOf(await StockAsync(InfoOf(_localId), Signed(_unknownId))));
     }
 
+    // Row 552: a local item linked to a stub of a former folder follows row 548 until the registry is read.
+    [Theory]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    public async Task A_local_item_linked_to_a_stub_of_a_former_folder_keeps_only_its_source_while_the_registry_is_unread(bool unread, int sources)
+    {
+        _settings.Configuration.FederatedFolderPath = "/federata";
+        _stubs.Setup(stubs => stubs.IsUnread).Returns(unread);
+        ItemOf(_unknownId, "/vecchia/S/Film/A/A.strm", OurUrl("gone"));
+        var local = ItemOf(_localId, "/media/film/A.mkv", null);
+        local.LinkedAlternateVersions = [new LinkedChild { ItemId = _unknownId, Type = LinkedChildType.LinkedAlternateVersion }];
+
+        var kept = SourcesOf(await StockAsync(InfoOf(_localId), LocalFile(directPlay: true), Signed(_unknownId)));
+
+        Assert.Equal(sources, kept.Length);
+        Assert.Equal(_localId.ToString("N"), kept[0].Id);
+    }
+
+    [Fact]
+    public async Task Two_local_items_linked_together_stay_stock_while_the_registry_is_unread()
+    {
+        _settings.Configuration.FederatedFolderPath = "/federata";
+        _stubs.Setup(stubs => stubs.IsUnread).Returns(true);
+        var other = ItemOf(Guid.NewGuid(), "/media/film/A 4K.mkv", null);
+        var local = ItemOf(_localId, "/media/film/A.mkv", null);
+        local.LinkedAlternateVersions = [new LinkedChild { ItemId = other.Id, Type = LinkedChildType.LinkedAlternateVersion }];
+        var context = InfoOf(_localId);
+
+        Assert.Equal(2, SourcesOf(await StockAsync(context, LocalFile(directPlay: true), new MediaSourceInfo { Id = other.Id.ToString("N") })).Length);
+        Assert.False(context.ActionArguments.ContainsKey("mediaSourceId"));
+    }
+
     private static MediaSourceInfo Signed(Guid item) => new() { Id = item.ToString("N"), Path = OurUrl("gone") };
 
     private static MediaSourceInfo[] SourcesOf(ActionExecutedContext executed)

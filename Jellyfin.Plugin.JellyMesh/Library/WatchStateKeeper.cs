@@ -113,7 +113,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             return true;
         }
 
-        var kept = await SaveAsync(root, stubs, series, cancellationToken).ConfigureAwait(false);
+        // State still to clear is not of the episodes of its stub (§10 row 543).
+        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, cancellationToken).ConfigureAwait(false);
         foreach (var serverId in ServersOf(stubs, series))
         {
             if (kept)
@@ -439,7 +440,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             .ToDictionary(group => group.Key, group => group.First().Item);
 
         var state = _registry.State;
-        var seriesPaths = state.Series.ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
+        var seriesPaths = state.Series.DistinctBy(entry => entry.Id).ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
         var items = new Dictionary<(bool IsSeries, string ServerId, string ItemId), CatalogItem>();
         var paths = new Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>>();
         void Add(CatalogItem item, bool isSeries, string path)

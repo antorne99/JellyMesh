@@ -47,7 +47,7 @@ applied() { settle "$1"; scan "$1"; settle "$1"; }
 # film_of <server> <title>: the id of the stub of a title in the folder of a remote server, hidden alternates included.
 film_of() { stub_of "$(cat "$WORK/id-$1")" "$2"; }
 # strm_count <title>: the .strm files of a title in every server folder.
-strm_count() { docker exec "$PREFIX-local" sh -c "find /federata/*/Film -name '*.strm' | grep -cF \"$1\"" || true; }
+strm_count() { docker exec "$PREFIX-local" sh -c "find /federata/*/*/Film -name '*.strm' | grep -cF \"$1\"" || true; }
 # rows <title>: the film rows a client sees for a title.
 rows() { get local "/Items?userId=$uid&Recursive=true&IncludeItemTypes=Movie&searchTerm=$(jq -rn --arg t "$1" '$t | @uri')" | jq --arg t "$1" '[.Items[] | select(.Name | startswith($t))] | length'; }
 # state <item>: what a client sees of the watch state of the admin.

@@ -216,6 +216,20 @@ public class PluginConfigurationTests
         }
     }
 
+    // The server writes "None" when the remote had no problem, so the page never reads the warning as a flag (D28).
+    [Fact]
+    public void TheWarningOfAnEditIsShownOnlyForAProblem()
+    {
+        var page = ConfigPage();
+        var warning = Slice(page, "function remoteWarning(answer)", "function modeLabel(value)");
+
+        Assert.Contains("answer.RemoteWarning && answer.RemoteWarning !== 'None' ? connectionLabel(answer.RemoteWarning) : ''", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (check.RemoteWarning)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("saved.RemoteWarning", page, StringComparison.Ordinal);
+        Assert.Contains("remoteWarning(check)", page, StringComparison.Ordinal);
+        Assert.Contains("remoteWarning(saved)", page, StringComparison.Ordinal);
+    }
+
     // Decision 211: the intro of the history names the totals line under the server lines.
     [Fact]
     public void TheSyncHistoryIntroMentionsTheTotals()

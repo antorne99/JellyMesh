@@ -56,16 +56,18 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
 import_all local "$id"
 sync_now local
-folder=$(server_folder "$id")
-library local Film movies "$folder/Film"
-library local Serie tvshows "$folder/Serie"
+film_folder=$(type_folder "$id" Film)
+serie_folder=$(type_folder "$id" Serie)
+library local Film movies "$film_folder"
+library local Serie tvshows "$serie_folder"
 full_scan local
 
-docker exec "$PREFIX-local" sh -c "cat '$folder/Serie/$SERIES/Season 01/season.nfo'; ls '$folder/Serie/$SERIES' '$folder/Serie/$SERIES/Season 01' '$folder/Film/$FILM'"
+docker exec "$PREFIX-local" sh -c "cat '$serie_folder/$SERIES/Season 01/season.nfo'; ls '$serie_folder/$SERIES' '$serie_folder/$SERIES/Season 01' '$film_folder/$FILM'"
 series=$(local_series)
 check "the series is a stub" true "$([ -n "$series" ] && echo true || echo false)"
 check "a new season reads its season.nfo and poster" '{"Name":"Prima Stagione","Overview":"Trama della stagione","Poster":true}' "$(local_season "$series")"

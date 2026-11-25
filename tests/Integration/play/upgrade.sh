@@ -54,10 +54,10 @@ check "every .strm is signed" 0 "$(docker exec "$PREFIX-local" sh -c "find /fede
 check "the flat stubs stay where they were" "$(cat "$WORK/flat-before.txt")" "$(flat_stubs)"
 
 # The sync wrote the folder of the server beside them, with a stub of its own for each film, labelled with its name.
-folder=$(server_folder "$(cat "$WORK/id-remote")")
+film_folder=$(type_folder "$(cat "$WORK/id-remote")" Film)
 check "the folder of the server has a stub for each flat film" "$(wc -l <"$WORK/flat-before.txt" | tr -d ' ')" \
-  "$(docker exec "$PREFIX-local" sh -c "find '$folder/Film' -name '*.strm' | wc -l" | tr -d ' ')"
-check "its stub carries the label of the server" "$folder/Film/Tears of Steel (2012)/Tears of Steel (2012) - remote.strm" "$(strm_file local "Tears of Steel")"
+  "$(docker exec "$PREFIX-local" sh -c "find '$film_folder' -name '*.strm' | wc -l" | tr -d ' ')"
+check "its stub carries the label of the server" "$film_folder/Tears of Steel (2012)/Tears of Steel (2012) - remote.strm" "$(strm_file local "Tears of Steel")"
 check "and is a stub of its own" 1 "$([ "$(strm_text local "Tears of Steel" | sed 's/?.*//')" != "${new_strm%%\?*}" ] && echo 1 || echo 0)"
 
 list >"$WORK/after.json"
@@ -72,10 +72,10 @@ check "the item keeps the signed URL after the scan" "$new_strm" "$(stub_url loc
 echo "key: $(docker exec "$PREFIX-local" sh -c 'find /config -name strm-signing.key -exec ls -l {} \;')"
 
 # What follows runs on the folder of the server: the admin links it and takes the flat path off the library.
-check "the folder of the server joins the library" 204 "$(link_folder local Film "$folder/Film")"
+check "the folder of the server joins the library" 204 "$(link_folder local Film "$film_folder")"
 check "the flat path leaves it" 204 "$(unlink_folder local Film "$FLAT")"
 scan local
-check "the library holds the stub of the server" "$folder/Film/Tears of Steel (2012)/Tears of Steel (2012) - remote.strm" \
+check "the library holds the stub of the server" "$film_folder/Tears of Steel (2012)/Tears of Steel (2012) - remote.strm" \
   "$(get local "/Items?Ids=$(stub_item local "Tears of Steel")&Fields=Path" | jq -r '.Items[0].Path')"
 check "and no flat stub" 0 "$(get local '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq --arg f "$FLAT/" '[.Items[] | select((.Path // "") | startswith($f))] | length')"
 exit $FAILED

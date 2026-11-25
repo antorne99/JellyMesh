@@ -1,5 +1,5 @@
 # Helpers for the play proof. Source it.
-NAME=jm-play PORT=18320 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
+NAME=${NAME:-jm-play} PORT=${PORT:-18320} IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 PW=mcr.microsoft.com/playwright/python:v1.48.0-noble
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 MEDIA=${MEDIA:-$S/../media}  # gitignored: in a worktree, point it at the main checkout

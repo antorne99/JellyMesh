@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Looks for remote values in what clients, files and logs hold. The secrets come from where they really are: the tokens
-from the database of the remote, the item and server IDs from the stub registry of the consumer.
+from the database of the remote, the item and server IDs from the plugin database of the consumer.
 
-Usage: [REMOTE_PORT=<host port of the remote>] leak.py <folder with remote-db/ and federated-stubs.json> <file or folder>...
+Usage: [REMOTE_PORT=<host port of the remote>] leak.py <folder with remote-db/ and plugin-db/> <file or folder>...
 """
-import json
 import os
 import shutil
 import sqlite3
@@ -20,13 +19,15 @@ db = sqlite3.connect(folder + "/jellyfin.db")
 tokens = {row[0] for row in db.execute("select AccessToken from Devices") if row[0]}
 db.close()
 
-stubs = json.load(open(work + "/federated-stubs.json"))
+for name in os.listdir(work + "/plugin-db"):
+    shutil.copy(os.path.join(work, "plugin-db", name), folder)
+db = sqlite3.connect(folder + "/jellymesh.db")
 items, servers = set(), set()
-for stub in stubs["Stubs"]:
-    for source in stub["Sources"]:
-        items.add(source["ItemId"])
-        servers.add(source["ServerId"].replace("-", ""))
-        servers.add(source["ServerId"])
+for item, server in db.execute("select item_id, server_id from stub_entry_sources"):
+    items.add(item)
+    servers.add(server.replace("-", ""))
+    servers.add(server)
+db.close()
 
 port = os.environ.get("REMOTE_PORT", "18431")
 fixed = [port, "host.docker.internal:" + port, "/media/film/Tears"]

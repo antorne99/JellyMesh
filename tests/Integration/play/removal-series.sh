@@ -35,12 +35,13 @@ wait_ready local
 login local
 login alice alice
 login bob bob
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
-library local Serie tvshows "$(server_folder "$id")/Serie"
-library local Film movies "$(server_folder "$id")/Film"
 import_all local "$id"
 sync_now local
+library local Serie tvshows "$(type_folder "$id" Serie)"
+library local Film movies "$(type_folder "$id" Film)"
 scan local
 
 # episodes: the federated episodes as "<series> SxxEyy<TAB>id<TAB>path", sorted.
@@ -97,10 +98,14 @@ named_episodes
 echo "--- before removal"
 episodes | tee "$WORK/episodes-before"
 series_rows | tee "$WORK/series-before"
-check "both series are federated" 2 "$(wc -l <"$WORK/series-before" | tr -d ' ')"
-check "all five episodes are federated" 5 "$(wc -l <"$WORK/episodes-before" | tr -d ' ')"
+# remote_count <type>: how many items of a type the remote has, nothing for none.
+remote_count() { get remote "/Items?Recursive=true&IncludeItemTypes=$1&Limit=0" | jq '.TotalRecordCount | select(. > 0)'; }
+series_count=$(remote_count Series)
+episode_count=$(remote_count Episode)
+check_some "every series is federated" "$series_count" "$(wc -l <"$WORK/series-before" | tr -d ' ')"
+check_some "every episode is federated" "$episode_count" "$(wc -l <"$WORK/episodes-before" | tr -d ' ')"
 echo "runtime of the episodes in seconds: $(get local '/Items?Recursive=true&IncludeItemTypes=Episode' | jq -c '[.Items[].RunTimeTicks / 10000000 | floor]')"
-docker exec "$PREFIX-local" find "$(server_folder "$id")/Serie" -name '*.nfo' -exec sh -c 'echo "$1: $(grep -o "<uniqueid[^<]*</uniqueid>" "$1" | tr "\n" " ")"' _ {} \;
+docker exec "$PREFIX-local" find "$(type_folder "$id" Serie)" -name '*.nfo' -exec sh -c 'echo "$1: $(grep -o "<uniqueid[^<]*</uniqueid>" "$1" | tr "\n" " ")"' _ {} \;
 
 d3=$(ep_id "JM Serie Divisa S1E3")
 d4=$(ep_id "JM Serie Divisa S1E4")
@@ -142,10 +147,10 @@ echo "--- removal"
 req local DELETE "/JellyMesh/Admin/Servers/$id" >/dev/null
 check "the server is removed" 204 "$(status)"
 for _ in $(seq 1 120); do
-  [ "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')" = 0 ] && break
+  [ "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/*/Serie -name "*.strm" | wc -l')" = 0 ] && break
   sleep 1
 done
-check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')"
+check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/*/Serie -name "*.strm" | wc -l')"
 # F19: the folder of the server goes once its stubs are gone, while the library keeps its path.
 for _ in $(seq 1 60); do
   docker exec "$PREFIX-local" test -e "$(server_folder "$id")" || break
@@ -189,15 +194,15 @@ id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jel
 # A server added back is a new server, so in a folder of its own: the admin adds it to the library (decision 408).
 check "the server comes back as a new server" 1 "$([ -n "$id" ] && [ "$id" != null ] && [ "$id" != "$old_id" ] && echo 1 || echo 0)"
 check "the add recognizes no removed server" null "$(jq -r .RecognizedAs "$WORK/body")"
-check "the new folder joins the library" 204 "$(link_folder local Serie "$(server_folder "$id")/Serie")"
-check "the new film folder joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
 # A remote already configured is refused under any name (decision 120).
 post local /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$(port_of remote)" '{Name:"twice",Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" >/dev/null
 check "adding it a second time is refused" 409 "$(status)"
 check "the refusal names the server" "AlreadyConfigured remote" "$(jq -r '"\(.Failure) \(.ServerName)"' "$WORK/body")"
 import_all local "$id"
 sync_now local
-check "its folder is written again" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$id")/Serie/.jellymesh"; echo $?)"
+check "its folder is written again" 0 "$(docker exec "$PREFIX-local" test -f "$(type_folder "$id" Serie)/.jellymesh"; echo $?)"
+check "the new folder joins the library" 204 "$(link_folder local Serie "$(type_folder "$id" Serie)")"
+check "the new film folder joins the library" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
 scan local
 named_episodes
 episodes | tee "$WORK/episodes-after"
@@ -206,8 +211,8 @@ series_rows | tee "$WORK/series-after"
 in_folder() { sed -E 's#/federata/[0-9a-f-]{36}/#/federata/<server>/#'; }
 check "the same episodes come back at the same paths in the folder" "$(cut -f1,3 "$WORK/episodes-before" | in_folder)" "$(cut -f1,3 "$WORK/episodes-after" | in_folder)"
 check "the same series come back at the same paths in the folder" "$(cut -f1,3 "$WORK/series-before" | in_folder)" "$(cut -f1,3 "$WORK/series-after" | in_folder)"
-check "the episodes come back in the new folder" 5 "$(grep -cF "$(server_folder "$id")/" "$WORK/episodes-after" || true)"
-echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of 5, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of 2"
+check_some "the episodes come back in the new folder" "$episode_count" "$(grep -cF "$(server_folder "$id")/" "$WORK/episodes-after" || true)"
+echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of $episode_count, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of $series_count"
 
 # Every title gets its state back, the series without IDs too: the plugin puts it back after the scan (row 412).
 for _ in $(seq 1 30); do

@@ -21,10 +21,14 @@ vid() {
   sql "select lower(replace(Id, '-', '')) from BaseItems where Path like '%' || '$1' || '%'
     and (Type like '%.Movie' or Type like '%.Episode' or Type like '%.Video') order by Path limit 1;"
 }
-# primary_of <id>: the PrimaryVersionId of an item, empty if none.
-primary_of() { sql "select coalesce(lower(replace(PrimaryVersionId, '-', '')), '') from BaseItems where lower(replace(Id, '-', '')) = '$1';"; }
+# primary_of <id>: the PrimaryVersionId of an item, empty if none. An empty id answers "no id", so it equals no result.
+primary_of() {
+  [ -n "$1" ] || { echo "no id"; return 0; }
+  sql "select coalesce(lower(replace(PrimaryVersionId, '-', '')), '') from BaseItems where lower(replace(Id, '-', '')) = '$1';"
+}
 # alternates_of <id>: its linked alternates, sorted, comma separated.
 alternates_of() {
+  [ -n "$1" ] || { echo "no id"; return 0; }
   sql "select lower(replace(ChildId, '-', '')) from LinkedChildren where lower(replace(ParentId, '-', '')) = '$1' and ChildType = 3
     order by 1;" | paste -sd, -
 }
@@ -37,8 +41,15 @@ children_of() {
 }
 # nfo_sums: a checksum of every .nfo in the media and federated folders.
 nfo_sums() { docker exec "$PREFIX-local" sh -c "find /media /federata -name '*.nfo' -exec md5sum {} + | sort -k2"; }
-# stub_of <server id> <title>: the id of the stub of a title in the folder of a server.
-stub_of() { vid "$(server_folder "$1")/Film/$2"; }
+# stub_of <server id> <title>: the id of the stub of a title in the folder of a server, under any remote library.
+stub_of() { vid "$(server_folder "$1")/%/Film/$2"; }
+# found <what> <id>...: fails if an id is empty.
+found() {
+  local what=$1 i missing=0
+  shift
+  for i in "$@"; do [ -n "$i" ] || missing=$((missing + 1)); done
+  check "$what" "$# of $#" "$(($# - missing)) of $#"
+}
 dashed() { local id=$1; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
 
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'

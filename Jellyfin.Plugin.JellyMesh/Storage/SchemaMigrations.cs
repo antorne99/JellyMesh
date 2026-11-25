@@ -32,7 +32,10 @@ public static class SchemaMigrations
         new(6, ConfigurationTables.AddLibraryModes),
 
         // The warnings of the sync history (F38).
-        new(7, SmallStateSchema.AddWarnings)
+        new(7, SmallStateSchema.AddWarnings),
+
+        // The stubs that split and wait for their watch state (F44b).
+        new(8, Library.StubTables.AddSplits)
     ];
 
     /// <summary>

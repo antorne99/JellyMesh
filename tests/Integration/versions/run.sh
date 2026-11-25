@@ -28,10 +28,22 @@ settled() {
   done
   return 1
 }
+# in_group <id>: 1 if an item is in a version group, 0 if not or if the id is empty.
+in_group() { [ -n "$1" ] && [ -n "$(primary_of "$1")$(alternates_of "$1")" ] && echo 1 || echo 0; }
+# same_nfo <what> <path>: every .nfo is as it was before, and one of those under that path was there.
+same_nfo() {
+  check "$1: there is one to compare" 1 "$(grep -cF "$2" "$WORK/nfo-before" | awk '{print ($1 > 0)}')"
+  check "$1" "" "$(diff "$WORK/nfo-before" "$WORK/nfo-after" || true)"
+}
 settled '[ -n "$(stub_of "$A" "$RES")" ] && [ -n "$(stub_of "$B" "$RES")" ] && [ -n "$(stub_of "$A" "$COD")" ] && [ -n "$(stub_of "$A" "$LONE")" ]' || true
 res_a=$(stub_of "$A" "$RES"); res_b=$(stub_of "$B" "$RES")
-cod_a=$(stub_of "$A" "$COD"); lone=$(stub_of "$A" "$LONE")
-check "the stubs are in the library" 1 "$([ -n "$res_a" ] && [ -n "$res_b" ] && [ -n "$cod_a" ] && [ -n "$lone" ] && echo 1 || echo 0)"
+bit_a=$(stub_of "$A" "$BIT"); bit_b=$(stub_of "$B" "$BIT")
+cod_a=$(stub_of "$A" "$COD"); cod_b=$(stub_of "$B" "$COD")
+lone=$(stub_of "$A" "$LONE"); solo=$(stub_of "$B" "JM Solo JellyMesh")
+sin_b=$(stub_of "$B" "Sintel"); multi_a=$(stub_of "$A" "JM Versioni Multiple")
+e5a=$(vid "$(server_folder "$A")/%/Serie/JM Serie Divisa (2026)/Season 01/JM Serie Divisa S01E05")
+e5b=$(vid "$(server_folder "$B")/%/Serie/JM Serie Divisa (2026)/Season 01/JM Serie Divisa S01E05")
+found "the stubs are in the library" "$res_a" "$res_b" "$bit_a" "$bit_b" "$cod_a" "$cod_b" "$lone" "$solo" "$sin_b" "$multi_a" "$e5a" "$e5b"
 
 echo "--- before the link: a collection and a playlist on the copies of remote"
 raccolta=$(post local "/Collections?name=JM%20Raccolta" | jq -r .Id)
@@ -48,9 +60,9 @@ for i in $(seq 1 30); do
   post local "/Collections/$raccolta/Items?ids=$(dashed "$res_a")" >/dev/null
   sleep 1
 done
-check "the collection holds the 720p stub" "$res_a" "$(children_of 'JM Raccolta')"
+check_some "the collection holds the 720p stub" "$res_a" "$(children_of 'JM Raccolta')"
 check "and that stub is not linked yet" "" "$(primary_of "$res_a")"
-check "the playlist holds the H.264 stub" "$cod_a" "$(children_of 'JM Scaletta')"
+check_some "the playlist holds the H.264 stub" "$cod_a" "$(children_of 'JM Scaletta')"
 nfo_sums >"$WORK/nfo-before"
 
 echo "--- test 2: one group per title, the best copy as primary"
@@ -61,13 +73,11 @@ for t in "$RES" "$BIT" "$COD"; do
   check "$t: the primary lists the stub of remote" "$a" "$(alternates_of "$b")"
 done
 check "a title on one server stays alone" "" "$(primary_of "$lone")$(alternates_of "$lone")"
-e5a=$(vid "$(server_folder "$A")/Serie/JM Serie Divisa (2026)/Season 01/JM Serie Divisa S01E05")
-e5b=$(vid "$(server_folder "$B")/Serie/JM Serie Divisa (2026)/Season 01/JM Serie Divisa S01E05")
 check "episodes on both servers are linked" "$e5b" "$(primary_of "$e5a")"
 check "one film row for the title" 1 "$(get local "/Items?userId=$uid&Recursive=true&IncludeItemTypes=Movie&searchTerm=Risoluzione" | jq '[.Items[] | select(.Name == "JM Confronto Risoluzione")] | length')"
 check "it offers both versions" 2 "$(get local "/Items/$(dashed "$res_b")?userId=$uid" | jq '.MediaSources | length')"
-check "the collection moved to the primary" "$res_b" "$(children_of 'JM Raccolta')"
-check "the playlist kept the stub that was added" "$cod_a" "$(children_of 'JM Scaletta')"
+check_some "the collection moved to the primary" "$res_b" "$(children_of 'JM Raccolta')"
+check_some "the playlist kept the stub that was added" "$cod_a" "$(children_of 'JM Scaletta')"
 info=$(post local "/Items/$(dashed "$cod_a")/PlaybackInfo?userId=$uid" "$DIRECT")
 check "the playlist entry answers PlaybackInfo" 200 "$(status)"
 check "with a source and no error" "true null" "$(echo "$info" | jq -r '"\(.MediaSources | length > 0) \(.ErrorCode)"')"
@@ -75,13 +85,13 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: $AUTH, Token=\
   "http://127.0.0.1:$PORT/Videos/$(dashed "$cod_a")/stream?static=true&mediaSourceId=$(echo "$info" | jq -r '.MediaSources[0].Id')")
 check "the playlist entry streams" 206 "$code"
 nfo_sums >"$WORK/nfo-after"
-check "no .nfo was written or changed" "" "$(diff "$WORK/nfo-before" "$WORK/nfo-after" || true)"
+same_nfo "no .nfo was written or changed" /federata/
 
 echo "--- test 15: relinking saves nothing that is already linked"
-members="$res_a $res_b $(stub_of "$A" "$BIT") $(stub_of "$B" "$BIT") $e5a $e5b"
+members="$res_a $res_b $bit_a $bit_b $e5a $e5b"
 before=$(saved $members)
 sync_now local
-check "a second sync saves no member" "$before" "$(saved $members)"
+check_some "a second sync saves no member" "$before" "$(saved $members)"
 scan local
 sync_now local
 check "a scan keeps the links" "$res_b" "$(primary_of "$res_a")"
@@ -91,10 +101,9 @@ sleep 3
 wait_ready local
 login local
 sync_now local
-check "after a restart a sync saves no member" "$before" "$(saved $members)"
+check_some "after a restart a sync saves no member" "$before" "$(saved $members)"
 
 echo "--- test 15: the registry wins over the admin"
-bit_a=$(stub_of "$A" "$BIT"); bit_b=$(stub_of "$B" "$BIT")
 req local DELETE "/Videos/$(dashed "$bit_b")/AlternateSources" >/dev/null
 check "Split versions answers" 204 "$(status)"
 check "the split took the link away" "" "$(primary_of "$bit_a")"
@@ -103,7 +112,7 @@ check "the next sync links it again" "$bit_b" "$(primary_of "$bit_a")"
 check "with the same primary" "$bit_a" "$(alternates_of "$bit_b")"
 post local "/Videos/MergeVersions?ids=$(dashed "$bit_b"),$(dashed "$lone")" >/dev/null
 check "MergeVersions answers" 204 "$(status)"
-check "the merge linked another film" 1 "$( [ -n "$(primary_of "$lone")$(alternates_of "$lone")" ] && echo 1 || echo 0)"
+check "the merge linked another film" 1 "$(in_group "$lone")"
 sync_now local
 check "the next sync takes the other film out" "" "$(primary_of "$lone")$(alternates_of "$lone")"
 check "and the group is as the registry has it" "$bit_b" "$(primary_of "$bit_a")"
@@ -111,7 +120,6 @@ check "the primary lists only the stub of remote" "$bit_a" "$(alternates_of "$bi
 
 echo "--- D4 and Q43: a played local copy joins as the primary"
 SIN="Sintel (2010)"
-sin_b=$(stub_of "$B" "Sintel")
 docker exec "$PREFIX-local" mkdir -p "/media/film/$SIN"
 docker cp "$MEDIA/locale/film/$SIN/." "$PREFIX-local:/media/film/$SIN/"
 docker exec "$PREFIX-local" sh -c 'chmod -R a+rwX /media/film'
@@ -128,29 +136,28 @@ check "the stub is now played" true "$(get local "/Users/$uid/Items/$(dashed "$s
 check "in every row of its own" 1 "$(sql "select min(Played) from UserData where lower(replace(ItemId, '-', '')) = '$sin_b' and lower(replace(UserId, '-', '')) = '$uid';")"
 check "its position stayed" 300000000 "$(get local "/Users/$uid/Items/$(dashed "$sin_b")" | jq .UserData.PlaybackPositionTicks)"
 nfo_sums >"$WORK/nfo-after"
-check "the movie.nfo of the local copy is untouched" "" "$(diff "$WORK/nfo-before" "$WORK/nfo-after" || true)"
+same_nfo "the movie.nfo of the local copy is untouched" "/media/film/$SIN/"
 
 echo "--- Q144 and Q146: what only the nightly run does"
-solo=$(stub_of "$B" "JM Solo JellyMesh")
 post local "/Videos/MergeVersions?ids=$(dashed "$lone"),$(dashed "$solo")" >/dev/null
 check "MergeVersions of two stubs in no group answers" 204 "$(status)"
-check "it linked them" 1 "$( [ -n "$(primary_of "$lone")$(primary_of "$solo")" ] && echo 1 || echo 0)"
+check "it linked them" "1 1" "$(in_group "$lone") $(in_group "$solo")"
 post local "/Collections/$(dashed "$raccolta")/Items?ids=$(dashed "$bit_a")" >/dev/null
-check "an alternate can be added to a collection" 204 "$(status)"
+check "an alternate can be added to a collection" 204 "$([ -n "$bit_a" ] && status)"
 check "the collection holds it" "$res_b,$bit_a" "$(children_of 'JM Raccolta')"
 sync_now local
-check "a sync leaves the two stubs linked" 1 "$( [ -n "$(primary_of "$lone")$(primary_of "$solo")" ] && echo 1 || echo 0)"
+check "a sync leaves the two stubs linked" "1 1" "$(in_group "$lone") $(in_group "$solo")"
 check "a sync leaves the collection entry on the alternate" "$res_b,$bit_a" "$(children_of 'JM Raccolta')"
 reconcile
 check "the nightly run detached the stub of remote" "" "$(primary_of "$lone")$(alternates_of "$lone")"
 check "and the stub of peer" "" "$(primary_of "$solo")$(alternates_of "$solo")"
 check "the nightly run moved the entry to the primary" "$res_b,$bit_b" "$(children_of 'JM Raccolta')"
-check "the playlist still holds the alternate" "$cod_a" "$(children_of 'JM Scaletta')"
+check_some "the playlist still holds the alternate" "$cod_a" "$(children_of 'JM Scaletta')"
 check "the group is still linked" "$bit_b" "$(primary_of "$bit_a")"
 members="$lone $solo $res_b $bit_a $bit_b $cod_a"
 before=$(saved $members)
 reconcile
-check "a second nightly run saves nothing" "$before" "$(saved $members)"
+check_some "a second nightly run saves nothing" "$before" "$(saved $members)"
 
 echo "--- Q148, decision 20 and NFO: local copies"
 ED="Elephants Dream (2006)"
@@ -188,11 +195,11 @@ done
 film_links "/media/film/JM Versioni Multiple" >"$WORK/multi-after"
 echo "after the link:"
 sed 's/^/    /' "$WORK/multi-after"
-multi_a=$(stub_of "$A" "JM Versioni Multiple")
-check "the local copy of JM Versioni Multiple is linked to its stub" 1 "$(grep -c "$(sql "select Path from BaseItems where lower(replace(Id, '-', '')) = '$multi_a';")" "$WORK/multi-after" | awk '{print ($1 > 0)}')"
-check "the links among its own files did not change" "$(grep -v /federata "$WORK/multi-before")" "$(grep -v /federata "$WORK/multi-after")"
+multi_path=$(sql "select Path from BaseItems where lower(replace(Id, '-', '')) = '$multi_a';")
+check "the local copy of JM Versioni Multiple is linked to its stub" 1 "$([ -n "$multi_path" ] && grep -cF "$multi_path" "$WORK/multi-after" | awk '{print ($1 > 0)}')"
+check_some "the links among its own files did not change" "$(grep -v /federata "$WORK/multi-before")" "$(grep -v /federata "$WORK/multi-after")"
 nfo_sums >"$WORK/nfo-after"
-check "with SaveImagePathsInNfo on, no .nfo was written or changed" "" "$(diff "$WORK/nfo-before" "$WORK/nfo-after" || true)"
+same_nfo "with SaveImagePathsInNfo on, no .nfo was written or changed" "/media/film/JM Versioni Multiple (2026)/movie.nfo"
 multi=$(vid "/media/film/JM Versioni Multiple (2026)/JM Versioni Multiple (2026) - 1080p")
 dto=$(get local "/Items/$(dashed "$multi")?userId=$uid")
 post local "/Items/$(dashed "$multi")" "$(echo "$dto" | jq -c '.Overview = "Edited by hand."')" >/dev/null

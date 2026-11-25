@@ -181,6 +181,21 @@ public static partial class FederatedPaths
             : null;
     }
 
+    /// <summary>Gives the relative type folder that holds a path of the remote library layout, or null for the older layouts.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The relative path of the type folder, or null.</returns>
+    internal static string? TypeFolderPathOf(string relativePath) => RemoteLibraryOf(relativePath) is null
+        ? null
+        : Path.Combine(relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4)[..3]);
+
+    /// <summary>Gives the server and type of the relative path of a type folder of a remote library, or null for any other path.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The server and the type folder, or null.</returns>
+    internal static (Guid ServerId, TypeFolder Type)? TypeFolderAt(string relativePath)
+        => relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) is [var server, _, var name] && RemoteLibraryOf(relativePath) is not null
+            ? (Guid.ParseExact(server, "D"), TypeFolder.All.First(type => string.Equals(type.Name, name, StringComparison.Ordinal)))
+            : null;
+
     /// <summary>Builds the relative path of a film stub in a type folder, named <c>{folder} - {label}</c>.</summary>
     /// <param name="typeFolder">The relative type folder.</param>
     /// <param name="folderName">The folder name of the film.</param>
@@ -196,13 +211,15 @@ public static partial class FederatedPaths
     /// <param name="episode">The episode.</param>
     /// <param name="lastEpisode">The last episode of a stub that covers several.</param>
     /// <param name="label">The label of the server, null in the flat layout.</param>
+    /// <param name="id">The ID of the stub when its first 8 characters are in the name, null otherwise.</param>
     /// <returns>The relative path of the <c>.strm</c>.</returns>
-    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null, string? label = null)
+    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null, string? label = null, string? id = null)
     {
         var folder = SeasonFolder(season);
         var range = lastEpisode is { } last ? string.Create(CultureInfo.InvariantCulture, $"-E{last:00}") : string.Empty;
+        var mark = id is null ? string.Empty : $" [{id[..8]}]";
         var suffix = label is null ? string.Empty : " - " + label;
-        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}{suffix}.strm");
+        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}{mark}{suffix}.strm");
         return Path.Combine(seriesFolder, folder, file);
     }
 

@@ -200,7 +200,8 @@ casa_libraries() {
 
 # to_06: the upgrade to this build, with a sync and a scan.
 to_06() {
-  SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # The log lines before this build, counted rather than timed, since the Docker clock can differ from the host.
+  SKIP=$(docker logs "$PREFIX-local" 2>&1 | wc -l)
   install current
   sync_now local
   scan local
@@ -211,7 +212,7 @@ to_06() {
 by_itself() {
   local logs i
   for i in $(seq 1 60); do
-    logs=$(docker logs --since "$SINCE" "$PREFIX-local" 2>&1)
+    logs=$(docker logs "$PREFIX-local" 2>&1 | tail -n +$((SKIP + 1)))
     grep -q 'the automatic migration is done' <<<"$logs" && break
     sleep 2
   done

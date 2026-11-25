@@ -48,6 +48,21 @@ public sealed class StubRemoverTests : IDisposable
     }
 
     [Fact]
+    public void ASeriesWithTwoRowsOfOneIdGoesWithItsEpisodes()
+    {
+        var series = Series("show", "Show (2020)");
+        var episode = Episode("e1", series, 1, 1);
+        var state = new StubState { Stubs = [episode], Series = [series, series with { WorkKey = "other" }] };
+
+        var removal = _remover.RemoveAll(_root, state, [episode]);
+
+        Assert.Empty(removal.State.Stubs);
+        Assert.Empty(removal.State.Series);
+        Assert.Empty(removal.Failures);
+        Assert.False(Directory.Exists(Path.Combine(_root, series.RelativePath)));
+    }
+
+    [Fact]
     public void ASeasonWithAnEpisodeLeftKeepsItsFolderAndTheSeries()
     {
         var series = Series("show", "Show (2020)");

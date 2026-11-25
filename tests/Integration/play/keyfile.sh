@@ -27,10 +27,11 @@ wait_ready local
 login local
 old_settings local '.FederatedFolderPath = "/federata"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
-import_all local "$id"
+import_all_old local "$id"
 sync_now local
 scan local
-stubs_before=$(docker exec "$PREFIX-local" sh -c 'find /federata/Film -name "*.strm" | sort')
+old_stubs() { docker exec "$PREFIX-local" sh -c 'find /federata/Film -name "*.strm" | sort'; }
+stubs_before=$(old_stubs)
 check "0.3.0.0 made stubs" true "$([ -n "$stubs_before" ] && echo true || echo false)"
 # The saved password as the old XML holds it, and as the database holds it after the upgrade. The API never shows it.
 xml_blob() { docker exec "$PREFIX-local" sh -c "grep -o '<EncryptedCredentials>[^<]*' '$1' | sed 's/<EncryptedCredentials>//'"; }
@@ -57,10 +58,10 @@ wait_ready local
 login local
 check "after the upgrade the key works and the old variable is reported" "Ok suspended=false legacy=true needs=false" "$(status_line)"
 check "the old XML left the configurations folder" gone "$(docker exec "$PREFIX-local" sh -c "test -e '$OLD_XML' && echo there || echo gone")"
-check "it is kept in migrated-0.5 as it was" "$blob_before" "$(xml_blob "$DATA/migrated-0.5/Jellyfin.Plugin.JellyMesh.xml")"
+check_some "it is kept in migrated-0.5 as it was" "$blob_before" "$(xml_blob "$DATA/migrated-0.5/Jellyfin.Plugin.JellyMesh.xml")"
 check "migrated-0.5 is its owner's only" "drwx------" "$(docker exec "$PREFIX-local" sh -c "ls -ld '$DATA/migrated-0.5' | cut -c1-10")"
 check "the database holds one server" 1 "$(blob | grep -c . || true)"
-check "the saved password was encrypted again, in the database" true "$([ -n "$(blob)" ] && [ "$(blob)" != "$blob_before" ] && echo true || echo false)"
+check "the saved password was encrypted again, in the database" true "$([ -n "$blob_before" ] && [ -n "$(blob)" ] && [ "$(blob)" != "$blob_before" ] && echo true || echo false)"
 check "the key file exists, readable by its owner only" "-rw-------" "$(docker exec "$PREFIX-local" sh -c "ls -l \"$(key_file)\" | cut -c1-10")"
 check "the key is in no log" 0 "$(docker exec "$PREFIX-local" sh -c "grep -rlF \"\$(cat \"$(key_file)\")\" /config/log | wc -l" | tr -d ' ')"
 check "a sync runs" 202 "$(post local /JellyMesh/Admin/Sync >/dev/null; status)"
@@ -71,7 +72,7 @@ relaunch
 check "without the variable the key still works" "Ok suspended=false legacy=false needs=false" "$(status_line)"
 check "a sync runs without the variable" 202 "$(post local /JellyMesh/Admin/Sync >/dev/null; status)"
 sync_now local
-check "the stubs are the same" "$stubs_before" "$(docker exec "$PREFIX-local" sh -c 'find /federata/Film -name "*.strm" | sort')"
+check_some "the stubs are the same" "$stubs_before" "$(old_stubs)"
 
 # The key file is lost: the server asks for its password, and gets it.
 docker exec "$PREFIX-local" sh -c "rm -f \"$(key_file)\""
@@ -84,7 +85,7 @@ cp "$WORK/body" "$WORK/credentials-answer"
 check "and the federation works again" "Ok suspended=false legacy=true needs=false" "$(status_line)"
 check "the answer holds no password" 0 "$(grep -c jellymesh-test "$WORK/credentials-answer" || true)"
 sync_now local
-check "the stubs are still the same" "$stubs_before" "$(docker exec "$PREFIX-local" sh -c 'find /federata/Film -name "*.strm" | sort')"
+check_some "the stubs are still the same" "$stubs_before" "$(old_stubs)"
 
 echo "=== failed: $FAILED"
 exit $FAILED

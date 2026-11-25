@@ -49,6 +49,17 @@ public sealed record StubEntry
     /// <summary>Gets the last episode of a stub that covers several, null otherwise.</summary>
     public int? EpisodeNumberEnd { get; init; }
 
+    /// <summary>
+    /// Gets the items of its server that hold only some episodes of a stub that covers several, so are no source of it.
+    /// </summary>
+    public IReadOnlyList<string> PartCopies { get; init; } = [];
+
+    /// <summary>
+    /// Gets when the stub, of one episode, took more: its watch state from before is of that one and is to clear (§10 row
+    /// 543). Null when there is nothing to clear.
+    /// </summary>
+    public DateTime? StateOfOneUntil { get; init; }
+
     /// <summary>Gets a hash of what was written for the stub, null until it is on disk.</summary>
     public string? ContentHash { get; init; }
 

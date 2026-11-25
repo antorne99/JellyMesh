@@ -1664,7 +1664,7 @@
                                 </label>
                                 <div class="fieldDescription checkboxFieldDescription">JellyMesh makes or adopts one library per type that holds the folders of every server, in any library mode. Saved when chosen; turning it off asks first.</div>
                             </div>
-                            <p class="fieldDescription">In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder.</p>
+                            <p class="fieldDescription">In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder. With By remote library, a title in two libraries of one server shows in the library of each; in the library of all servers they are versions of one title, which share only whether it was watched.</p>
                             <div id="jmSharedNotes" class="jmOwnNotes"></div>
                         </div>
                     </div>
@@ -1748,7 +1748,7 @@
                     "Chosen in the form when a server is added. A server already linked keeps its own mode, which Edit changes.": "Scelta nel modulo quando si aggiunge un server. Un server già collegato tiene la sua modalità, che si cambia con Modifica.",
                     "One library per type with all servers": "Una sola libreria per tipo con tutti i server",
                     "JellyMesh makes or adopts one library per type that holds the folders of every server, in any library mode. Saved when chosen; turning it off asks first.": "JellyMesh crea o adotta una libreria per tipo che contiene le cartelle di ogni server, in qualsiasi modalità delle librerie. Si salva quando la scegli; per spegnerla chiede prima conferma.",
-                    "In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder.": "Nella modalità delle librerie Per tipo o Per libreria remota, una cartella di un server sta anche nella libreria di quel server, quindi i suoi titoli compaiono in entrambe le librerie. Ognuno è un solo titolo, con un solo stato di visione, come in Jellyfin quando due librerie condividono una cartella.",
+                    "In library mode By type or By remote library, a folder of a server is also in the library of that server, so its titles show in both libraries. Each is one title, with one watch state, as in Jellyfin when two libraries share a folder. With By remote library, a title in two libraries of one server shows in the library of each; in the library of all servers they are versions of one title, which share only whether it was watched.": "Nella modalità delle librerie Per tipo o Per libreria remota, una cartella di un server sta anche nella libreria di quel server, quindi i suoi titoli compaiono in entrambe le librerie. Ognuno è un solo titolo, con un solo stato di visione, come in Jellyfin quando due librerie condividono una cartella. Con Per libreria remota, un titolo che sta in due librerie di un server compare nella libreria di ognuna; nella libreria di tutti i server sono versioni di un solo titolo, che condividono solo se è stato visto.",
                     "In the last change of library mode these users lost titles in {library}, because they could see only some of the libraries it joins: {names}. Give them access in Dashboard > Users if they should see them.": "Nell'ultimo cambio di modalità delle librerie questi utenti hanno perso dei titoli in {library}, perché vedevano solo alcune delle librerie che unisce: {names}. Dai loro l'accesso nel Pannello di controllo > Utenti se devono vederli.",
                     "These remote libraries are no longer on this server, so JellyMesh stopped importing them: {names}.": "Queste librerie remote non sono più su questo server, quindi JellyMesh ha smesso di importarle: {names}.",
                     "JellyMesh makes no library for this server. Add each of these folders in Dashboard > Libraries to a library of the type given:": "JellyMesh non crea librerie per questo server. Aggiungi ognuna di queste cartelle nel Pannello di controllo > Librerie a una libreria del tipo indicato:",
@@ -2961,6 +2961,11 @@
                     return connectionLabels[value] || unknownProblem;
                 }
 
+                // Names the problem the remote had during an edit, or gives nothing when it had none.
+                function remoteWarning(answer) {
+                    return answer.RemoteWarning && answer.RemoteWarning !== 'None' ? connectionLabel(answer.RemoteWarning) : '';
+                }
+
                 function modeLabel(value) {
                     return modeLabels[value] || modeLabels.Unknown;
                 }
@@ -3516,8 +3521,9 @@
                             }
 
                             showLibraries(check);
-                            if (check.RemoteWarning) {
-                                addFormNote(accessNotes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: current.Name, problem: connectionLabel(check.RemoteWarning) }), true);
+                            var problem = remoteWarning(check);
+                            if (problem) {
+                                addFormNote(accessNotes, t('{server} answered with a problem ({problem}). The edit can still be saved.', { server: current.Name, problem: problem }), true);
                             }
 
                             return null;
@@ -3670,8 +3676,9 @@
                     row.jmEdit = function (toLibraries, quiet) {
                         row.open = true;
                         var opened = serverForm(edit, server, function (saved) {
-                            showMessage(saved.RemoteWarning
-                                ? t('Saved {server}. It does not answer now ({problem}).', { server: saved.Name, problem: connectionLabel(saved.RemoteWarning) })
+                            var problem = remoteWarning(saved);
+                            showMessage(problem
+                                ? t('Saved {server}. It does not answer now ({problem}).', { server: saved.Name, problem: problem })
                                 : t('Saved {server}.', { server: saved.Name }));
                             return loadStatus();
                         });

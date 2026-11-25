@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Emby.Naming.Common;
+using Emby.Naming.TV;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Xunit;
 
@@ -109,6 +111,32 @@ public class FederatedPathsTests
         Assert.Equal(
             Path.Combine("1a2b3c4d-0000-0000-0000-000000000001", "Serie", "Show (2020)", "Season 01", "Show S01E02-E03 - Casa.strm"),
             FederatedPaths.EpisodeStub(series, "Show", 1, 2, 3, "Casa"));
+    }
+
+    [Fact]
+    public void AnEpisodeStubWithAnIdKeepsTheLabelLast()
+    {
+        var series = FederatedPaths.SeriesFolderOf("Show (2020)");
+
+        Assert.EndsWith("Show S01E02 [1a2b3c4d].strm", FederatedPaths.EpisodeStub(series, "Show", 1, 2, id: "1a2b3c4d5e6f"), StringComparison.Ordinal);
+        Assert.EndsWith("Show S01E02-E03 [1a2b3c4d] - Casa.strm", FederatedPaths.EpisodeStub(series, "Show", 1, 2, 3, "Casa", "1a2b3c4d5e6f"), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(null, 3)]
+    [InlineData("Casa", null)]
+    [InlineData("Casa", 3)]
+    public void AnEpisodeStubWithAnIdIsReadWithItsNumbers(string? label, int? last)
+    {
+        foreach (var id in new[] { "12345678", "00000000", "e01e0200", "00e01e09", "0e123456", "20240102", "ep1e0505", "-e04abcd" })
+        {
+            var path = "/" + FederatedPaths.EpisodeStub(FederatedPaths.SeriesFolderOf("Show (2020)"), "Show", 1, 2, last, label, id);
+
+            var read = new EpisodeResolver(new NamingOptions()).Resolve(path, false);
+
+            Assert.Equal((1, 2, last), (read?.SeasonNumber, read?.EpisodeNumber, read?.EndingEpisodeNumber));
+        }
     }
 
     [Fact]
