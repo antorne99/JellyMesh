@@ -8,8 +8,8 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// </summary>
 /// <remarks>
 /// This is a whitelist: only what is listed here is read from the answer. File paths and stream URLs, which can hold a
-/// remote address or a token, are left out on purpose. <see cref="RemoteMediaSource.Path"/> is the one exception, and it
-/// goes no further than the mapper.
+/// remote address or a token, are left out on purpose. <see cref="Path"/> and <see cref="RemoteMediaSource.Path"/> are the
+/// exceptions, and they go no further than the mapper. The place where a photo was taken is never read.
 /// </remarks>
 public sealed record RemoteItem
 {
@@ -108,4 +108,64 @@ public sealed record RemoteItem
 
     /// <summary>Gets the playable versions.</summary>
     public IReadOnlyList<RemoteMediaSource>? MediaSources { get; init; }
+
+    /// <summary>Gets the folder, album or item that holds this one.</summary>
+    public string? ParentId { get; init; }
+
+    /// <summary>Gets the file path on the remote, asked for books and photos only. The mapper keeps only its extension.</summary>
+    public string? Path { get; init; }
+
+    /// <summary>Gets the album of a track or a music video, the album of a photo, or the folder of an audiobook part.</summary>
+    public string? Album { get; init; }
+
+    /// <summary>Gets the album of a track.</summary>
+    public string? AlbumId { get; init; }
+
+    /// <summary>Gets the tag of the album image of a track.</summary>
+    public string? AlbumPrimaryImageTag { get; init; }
+
+    /// <summary>Gets the artists of a track or a music video.</summary>
+    public IReadOnlyList<string>? Artists { get; init; }
+
+    /// <summary>Gets the first album artist of a track.</summary>
+    public string? AlbumArtist { get; init; }
+
+    /// <summary>Gets the album artists of a track.</summary>
+    public IReadOnlyList<RemoteNamedItem>? AlbumArtists { get; init; }
+
+    /// <summary>Gets whether a track has lyrics.</summary>
+    public bool? HasLyrics { get; init; }
+
+    /// <summary>Gets the width of a photo.</summary>
+    public int? Width { get; init; }
+
+    /// <summary>Gets the height of a photo.</summary>
+    public int? Height { get; init; }
+
+    /// <summary>Gets the camera maker of a photo.</summary>
+    public string? CameraMake { get; init; }
+
+    /// <summary>Gets the camera model of a photo.</summary>
+    public string? CameraModel { get; init; }
+
+    /// <summary>Gets the software that wrote a photo.</summary>
+    public string? Software { get; init; }
+
+    /// <summary>Gets the exposure time of a photo, in seconds.</summary>
+    public double? ExposureTime { get; init; }
+
+    /// <summary>Gets the focal length of a photo.</summary>
+    public double? FocalLength { get; init; }
+
+    /// <summary>Gets the aperture of a photo.</summary>
+    public double? Aperture { get; init; }
+
+    /// <summary>Gets the shutter speed of a photo.</summary>
+    public double? ShutterSpeed { get; init; }
+
+    /// <summary>Gets the orientation of a photo.</summary>
+    public string? ImageOrientation { get; init; }
+
+    /// <summary>Gets the ISO speed of a photo.</summary>
+    public int? IsoSpeedRating { get; init; }
 }

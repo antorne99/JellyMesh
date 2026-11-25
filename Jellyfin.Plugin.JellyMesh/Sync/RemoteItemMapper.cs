@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -14,6 +15,14 @@ public static class RemoteItemMapper
 {
     private const string VideoStream = "Video";
 
+    // The book formats Jellyfin reads, and the image formats of a photo; nothing that means more to Jellyfin as a file.
+    private static readonly FrozenSet<string> _bookExtensions = FrozenSet.Create(StringComparer.Ordinal, "azw", "azw3", "cb7", "cbr", "cbt", "cbz", "epub", "mobi", "pdf");
+
+    private static readonly FrozenSet<string> _photoExtensions = new[]
+    {
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "dng", "cr2", "nef", "arw", "orf", "rw2", "raf", "pef", "srw"
+    }.ToFrozenSet(StringComparer.Ordinal);
+
     /// <summary>
     /// Maps an item.
     /// </summary>
@@ -26,10 +35,11 @@ public static class RemoteItemMapper
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return new IndexedItem
+        var kind = KindOf(type);
+        var entry = new IndexedItem
         {
             ItemId = item.Id,
-            Kind = KindOf(type),
+            Kind = kind,
             LibraryId = libraryId,
             LastSeenUtc = seenUtc,
             Name = item.Name,
@@ -67,6 +77,65 @@ public static class RemoteItemMapper
             // is skipped by the dedup, and an incremental read replaces the entry, so one that changed leaves at once.
             Versions = item.MediaSources?.Where(source => !IsFederatedStub(source)).Select(ToVersion).ToList() ?? []
         };
+
+        // Films and series keep their stored form, so that their entries are not written again.
+        return kind is IndexedItemKind.Movie or IndexedItemKind.Series or IndexedItemKind.Season or IndexedItemKind.Episode
+            ? entry
+            : WithNewTypeFields(entry, item);
+    }
+
+    // Adds the fields of music, home videos, photos and books.
+    private static IndexedItem WithNewTypeFields(IndexedItem entry, RemoteItem item) => entry with
+    {
+        ParentId = item.ParentId,
+        Album = item.Album,
+        AlbumId = item.AlbumId,
+        AlbumPrimaryImageTag = item.AlbumPrimaryImageTag,
+        Artists = NullIfEmpty(item.Artists?.OfType<string>().ToList()),
+        AlbumArtists = NullIfEmpty(item.AlbumArtists?.Select(artist => artist.Name).OfType<string>().ToList())
+            ?? (string.IsNullOrEmpty(item.AlbumArtist) ? null : [item.AlbumArtist]),
+        HasLyrics = item.HasLyrics,
+        Extension = entry.Kind switch
+        {
+            IndexedItemKind.Book => ExtensionOf(item.Path, _bookExtensions),
+            IndexedItemKind.Photo => ExtensionOf(item.Path, _photoExtensions),
+            _ => null
+        },
+        Photo = entry.Kind is IndexedItemKind.Photo ? PhotoOf(item) : null
+    };
+
+    private static List<string>? NullIfEmpty(List<string>? values) => values is { Count: > 0 } ? values : null;
+
+    // Latitude, longitude and altitude are not read at all.
+    private static IndexedPhoto PhotoOf(RemoteItem item) => new()
+    {
+        Width = item.Width,
+        Height = item.Height,
+        CameraMake = item.CameraMake,
+        CameraModel = item.CameraModel,
+        Software = item.Software,
+        ExposureTime = item.ExposureTime,
+        FocalLength = item.FocalLength,
+        Aperture = item.Aperture,
+        ShutterSpeed = item.ShutterSpeed,
+        ImageOrientation = item.ImageOrientation,
+        IsoSpeedRating = item.IsoSpeedRating
+    };
+
+    // Gets the lowercase extension of the last path segment when it is one of the allowed ones, else null.
+    private static string? ExtensionOf(string? path, FrozenSet<string> allowed)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
+        var dot = name.LastIndexOf('.');
+        var extension = dot < 0 ? string.Empty : name[(dot + 1)..];
+        return extension.Length is >= 1 and <= 5 && extension.All(char.IsAsciiLetterOrDigit) && allowed.Contains(extension.ToLowerInvariant())
+            ? extension.ToLowerInvariant()
+            : null;
     }
 
     private static IndexedItemKind KindOf(RemoteItemType type) => type switch
@@ -75,6 +144,14 @@ public static class RemoteItemMapper
         RemoteItemType.Series => IndexedItemKind.Series,
         RemoteItemType.Season => IndexedItemKind.Season,
         RemoteItemType.Episode => IndexedItemKind.Episode,
+        RemoteItemType.Audio => IndexedItemKind.Audio,
+        RemoteItemType.MusicVideo => IndexedItemKind.MusicVideo,
+        RemoteItemType.Video => IndexedItemKind.Video,
+        RemoteItemType.Photo => IndexedItemKind.Photo,
+        RemoteItemType.PhotoAlbum => IndexedItemKind.PhotoAlbum,
+        RemoteItemType.Folder => IndexedItemKind.Folder,
+        RemoteItemType.Book => IndexedItemKind.Book,
+        RemoteItemType.AudioBook => IndexedItemKind.AudioBook,
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

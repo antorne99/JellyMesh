@@ -324,7 +324,7 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
-    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyFilmsAndSeries()
+    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyLibraries()
     {
         var handler = StubHandler.StockServer();
 
@@ -344,10 +344,52 @@ public class JellyfinRemoteClientTests
         Assert.Equal([("g1", true), ("s1", false)], result.Value!.Select(library => (library.Id, library.MayCombine)));
     }
 
+    [Theory]
+    [InlineData("\"CollectionType\":\"movies\",\"Type\":\"CollectionFolder\"", "movies")]
+    [InlineData("\"CollectionType\":\"tvshows\",\"Type\":\"CollectionFolder\"", "tvshows")]
+    [InlineData("\"CollectionType\":\"music\",\"Type\":\"CollectionFolder\"", "music")]
+    [InlineData("\"CollectionType\":\"musicvideos\",\"Type\":\"CollectionFolder\"", "musicvideos")]
+    [InlineData("\"CollectionType\":\"homevideos\",\"Type\":\"CollectionFolder\"", "homevideos")]
+    [InlineData("\"CollectionType\":\"books\",\"Type\":\"CollectionFolder\"", "books")]
+    [InlineData("\"CollectionType\":\"Music\",\"Type\":\"CollectionFolder\"", "music")]
+    [InlineData("\"CollectionType\":\"photos\",\"Type\":\"CollectionFolder\"", "homevideos")]
+    [InlineData("\"Type\":\"CollectionFolder\"", "mixed")]
+    [InlineData("\"CollectionType\":null,\"Type\":\"CollectionFolder\"", "mixed")]
+    [InlineData("\"CollectionType\":\"\",\"Type\":\"CollectionFolder\"", "mixed")]
+    [InlineData("\"Type\":\"Channel\"", null)]
+    [InlineData("\"Type\":\"UserView\"", null)]
+    [InlineData("\"Type\":\"collectionfolder\"", null)]
+    [InlineData("", null)]
+    [InlineData("\"CollectionType\":\"boxsets\",\"Type\":\"CollectionFolder\"", null)]
+    [InlineData("\"CollectionType\":\"playlists\",\"Type\":\"ManualPlaylistsFolder\"", null)]
+    [InlineData("\"CollectionType\":\"livetv\",\"Type\":\"UserView\"", null)]
+    [InlineData("\"CollectionType\":\"folders\",\"Type\":\"UserView\"", null)]
+    [InlineData("\"CollectionType\":\"trailers\",\"Type\":\"UserView\"", null)]
+    [InlineData("\"CollectionType\":\"mixed\",\"Type\":\"CollectionFolder\"", "mixed")]
+    public async Task EachRemoteViewIsImportedAsItsTypeOrNotAtAll(string fields, string? expected)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"v1\",\"Name\":\"View\"" + (fields.Length == 0 ? string.Empty : "," + fields) + "}]}"));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Equal(expected is null ? [] : [expected], result.Value!.Select(library => library.CollectionType));
+        Assert.Equal(1, RemoteLibraryList.ViewCountOf(result.Value!));
+    }
+
+    [Fact]
+    public async Task AProviderLibraryWithoutATypeIsNoLibrary()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"v1","Name":"View"},{"Id":"v2","Name":"Film","CollectionType":"movies"}]}"""));
+
+        var result = await ClientFor(handler).GetSharedLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Equal(["v2"], result.Value!.Select(library => library.Id));
+    }
+
     [Fact]
     public async Task AnAnswerWithOnlyOtherLibraryTypesGivesNoLibrariesButCountsItsViews()
     {
-        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"m1","Name":"Musica","CollectionType":"music"}]}"""));
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"p1","Name":"Playlist","CollectionType":"playlists"}]}"""));
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
 
@@ -401,6 +443,28 @@ public class JellyfinRemoteClientTests
         }
 
         Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(RemoteItemType.Photo, true)]
+    [InlineData(RemoteItemType.Book, true)]
+    [InlineData(RemoteItemType.Movie, false)]
+    [InlineData(RemoteItemType.Episode, false)]
+    [InlineData(RemoteItemType.Audio, false)]
+    [InlineData(RemoteItemType.Video, false)]
+    public async Task ItemsAsksForTheParentAndTheSizeAndThePathOnlyOfBooksAndPhotos(RemoteItemType type, bool withPath)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+        await ItemsAsync(handler, new RemoteItemQuery("lib", type, 0, 200));
+
+        var query = Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.Query);
+        Assert.Contains("includeItemTypes=" + type, query, StringComparison.Ordinal);
+        var fields = query.Split('&').Single(part => part.StartsWith("fields=", StringComparison.Ordinal))["fields=".Length..].Split(',');
+        Assert.Contains("ParentId", fields);
+        Assert.Contains("Width", fields);
+        Assert.Contains("Height", fields);
+        Assert.Equal(withPath, fields.Contains("Path"));
     }
 
     [Fact]
@@ -600,6 +664,8 @@ public class JellyfinRemoteClientTests
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Genres\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"People\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Studios\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"AlbumArtists\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"Artists\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Chapters\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"ImageTags\":{\"Primary\":null}}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"MediaSources\":[null]}],\"TotalRecordCount\":1}")]

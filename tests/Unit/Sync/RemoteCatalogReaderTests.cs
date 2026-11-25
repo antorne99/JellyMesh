@@ -408,6 +408,33 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
     }
 
+    [Theory]
+    [InlineData("movies", "Movie")]
+    [InlineData("tvshows", "Series,Season,Episode")]
+    [InlineData("mixed", "Movie,Series,Season,Episode")]
+    [InlineData("music", "Audio")]
+    [InlineData("musicvideos", "MusicVideo")]
+    [InlineData("homevideos", "Video,Photo,PhotoAlbum,Folder")]
+    [InlineData("books", "Book,AudioBook")]
+    [InlineData("boxsets", "")]
+    public async Task EachLibraryTypeReadsOnlyItsOwnItemTypes(string collectionType, string types)
+    {
+        const string Library = "7e570000000000000000000000000001";
+        _fixture.Client.Libraries.Add(new(Library, "Library", collectionType));
+        foreach (var type in Enum.GetValues<RemoteItemType>())
+        {
+            _fixture.Client.Add(Library, type, new RemoteItem { Id = type.ToString() });
+        }
+
+        var server = await _fixture.AddServerAsync("A", Library);
+
+        var result = await ReadAsync(server);
+
+        var expected = types.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(expected, _fixture.Client.Queries.Select(query => query.Type.ToString()));
+        Assert.Equal(expected, result.Value!.Select(item => item.Kind.ToString()));
+    }
+
     [Fact]
     public async Task ASeriesLibraryReadsSeriesSeasonsAndEpisodes()
     {

@@ -29,6 +29,8 @@ internal static class RemoteAnswers
             && HasNoNull(item.BackdropImageTags)
             && HasNoNull(item.Studios)
             && HasNoNull(item.People)
+            && HasNoNull(item.Artists)
+            && HasNoNull(item.AlbumArtists)
             && HasNoNull(item.Chapters)
             && (item.ImageTags?.Values.All(tag => tag is not null) ?? true)
             && (item.MediaSources?.All(source => source is { Id.Length: > 0 } && HasNoNull(source.MediaStreams)) ?? true);

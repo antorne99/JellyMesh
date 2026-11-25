@@ -201,6 +201,45 @@ public sealed class VanishedLibrarySyncTests : IDisposable
         Assert.Equal(["b", "m"], CatalogOf(server).Items.Select(item => item.ItemId).Order());
     }
 
+    [Theory]
+    [InlineData("movies")]
+    [InlineData("tvshows")]
+    public async Task A_mixed_library_missing_beside_an_unknown_film_or_series_view_that_may_combine_libraries_is_no_absence(string groupedType)
+    {
+        const string Mixed = "313e0000000000000000000000000001";
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Add(Mixed, RemoteItemType.Movie, TestItems.Movie("x", "Mixed", 2019, "3"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(Mixed, "Mista", "mixed"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, Mixed);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        RemoveOnRemote(Mixed);
+        _fixture.Client.Libraries.Add(new RemoteLibrary("grouped", "Grouped", groupedType) { MayCombine = true });
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Contains(Mixed, ConfigOf(server).ImportedLibraryIds);
+        Assert.Empty(ConfigOf(server).AbsentLibraryIds);
+        Assert.Equal(["m", "x"], CatalogOf(server).Items.Select(item => item.ItemId).Order());
+    }
+
+    [Fact]
+    public async Task A_mixed_library_missing_beside_an_unknown_music_view_is_an_absence()
+    {
+        const string Mixed = "313e0000000000000000000000000001";
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(Mixed, "Mista", "mixed"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, Mixed);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        RemoveOnRemote(Mixed);
+        _fixture.Client.Libraries.Add(new RemoteLibrary("grouped", "Musica", "music") { MayCombine = true });
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal([TestLibraries.Films], ConfigOf(server).ImportedLibraryIds);
+    }
+
     [Fact]
     public async Task A_library_missing_beside_another_library_of_its_type_is_an_absence()
     {

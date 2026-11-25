@@ -9,6 +9,11 @@ namespace Jellyfin.Plugin.JellyMesh.Storage;
 public static class SchemaMigrations
 {
     /// <summary>
+    /// The version from which the index may hold music, home videos, photos and books, which an older build cannot read.
+    /// </summary>
+    public const int NewItemKindsVersion = 9;
+
+    /// <summary>
     /// Gets every step, with versions 1, 2, 3 and so on.
     /// </summary>
     public static IReadOnlyList<SchemaMigration> All { get; } =
@@ -35,7 +40,11 @@ public static class SchemaMigrations
         new(7, SmallStateSchema.AddWarnings),
 
         // The stubs that split and wait for their watch state (F44b).
-        new(8, Library.StubTables.AddSplits)
+        new(8, Library.StubTables.AddSplits),
+
+        // No table changes: the index entries of the new kinds are JSON in the same rows (F50). The version keeps an older
+        // build, which would take them for damage and empty the index, away from the file.
+        new(NewItemKindsVersion, static (_, _) => { })
     ];
 
     /// <summary>

@@ -62,14 +62,13 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     // Everything a catalog entry keeps. ImageTags, BackdropImageTags, ratings, dates and numbers come by default, and
     // MediaSources holds the streams of each version. The list is what can reach the index: see RemoteItem.
-    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers";
+    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers,ParentId,Width,Height";
 
     // Waits before each new try of a sync read, and the longest wait a Retry-After can ask for (decision 47).
     private static readonly TimeSpan[] _retryWaits = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
     private static readonly TimeSpan _maxRetryAfter = TimeSpan.FromSeconds(10);
 
     private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
-    private static readonly string[] _importableCollectionTypes = ["movies", "tvshows"];
     private static readonly string _version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0";
 
     private readonly IHttpClientFactory _httpClientFactory;
@@ -203,10 +202,12 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
 
         var libraries = views.Items
-            .Where(view => !string.IsNullOrEmpty(view.Id) && _importableCollectionTypes.Contains(view.CollectionType, StringComparer.OrdinalIgnoreCase))
-            .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!)
+            .Where(view => !string.IsNullOrEmpty(view.Id))
+            .Select(view => (View: view, Type: RemoteCollectionTypes.Of(view.CollectionType, view.Type)))
+            .Where(entry => entry.Type is not null)
+            .Select(entry => new RemoteLibrary(entry.View.Id!, entry.View.Name ?? string.Empty, entry.Type!)
             {
-                MayCombine = userViews && !string.Equals(view.Type, "CollectionFolder", StringComparison.Ordinal)
+                MayCombine = userViews && !string.Equals(entry.View.Type, "CollectionFolder", StringComparison.Ordinal)
             })
             .ToList();
         return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(new RemoteLibraryList(libraries, views.Items.Count(view => !string.IsNullOrEmpty(view.Id))));
@@ -355,7 +356,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             // A remote that groups films into collections would otherwise answer with the collection in their place.
             "collapseBoxSetItems=false",
             "enableUserData=false",
-            "fields=" + ItemFields,
+            // The path, which can name the remote's folders, only where the extension of the file is needed.
+            "fields=" + ItemFields + (query.Type is RemoteItemType.Book or RemoteItemType.Photo ? ",Path" : string.Empty),
             string.Create(CultureInfo.InvariantCulture, $"startIndex={query.StartIndex}"),
             string.Create(CultureInfo.InvariantCulture, $"limit={query.Limit}")
         };

@@ -117,6 +117,38 @@ public sealed class FederationIndexTests : IDisposable
     }
 
     [Fact]
+    public async Task EntriesOfTheNewTypesComeBackWholeAfterARestart()
+    {
+        var track = Item("t", _now) with
+        {
+            Kind = IndexedItemKind.Audio,
+            ParentId = "album",
+            Album = "Album",
+            AlbumId = "album",
+            AlbumPrimaryImageTag = "tag",
+            Artists = ["Artist", "Guest"],
+            AlbumArtists = ["Artist"],
+            HasLyrics = true
+        };
+        var photo = Item("p", _now) with
+        {
+            Kind = IndexedItemKind.Photo,
+            ParentId = "photos",
+            Extension = "jpg",
+            Photo = new IndexedPhoto { Width = 640, Height = 480, CameraMake = "Make", ExposureTime = 0.004, ImageOrientation = "RightTop", IsoSpeedRating = 200 }
+        };
+        var book = Item("b", _now) with { Kind = IndexedItemKind.Book, Extension = "epub" };
+        using (var index = NewIndex())
+        {
+            await index.ReplaceServerAsync(_first, [track, photo, book], _now, null, CancellationToken.None);
+        }
+
+        using var restarted = NewIndex();
+
+        Assert.Equal([Json(track), Json(photo), Json(book)], restarted.Snapshot.Find(_first)!.Items.Select(Json));
+    }
+
+    [Fact]
     public async Task DroppingAServerRemovesItForGood()
     {
         using (var index = NewIndex())
