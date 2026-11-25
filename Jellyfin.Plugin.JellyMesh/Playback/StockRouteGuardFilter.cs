@@ -41,6 +41,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     private const string LyricsController = "Lyrics";
 
+    private const string SubtitleController = "Subtitle";
+
     private const string GetLyricsAction = "GetLyrics";
 
     private const string DownloadAction = "GetDownload";
@@ -341,10 +343,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
             var user = authorization.User!;
 
-            // Stock would start reading the .strm. The stub the named local play session plays goes on.
+            // Stock would start reading the .strm. The stub the named local play session plays goes on. The subtitles of a
+            // stub are refused while the database cannot be used (row 565).
             var isSuspended = _coordinator.IsSuspended;
-            if (_streamControllers.Contains(controller)
-                && stubs.Any(entry => (isSuspended || entry.Value is null) && !named.Any(playSessionId => _sessions.LocalItemOf(playSessionId) == entry.Key)))
+            if ((_streamControllers.Contains(controller)
+                    && stubs.Any(entry => (isSuspended || entry.Value is null) && !named.Any(playSessionId => _sessions.LocalItemOf(playSessionId) == entry.Key)))
+                || (isSuspended && controller == SubtitleController))
             {
                 _logger.LogWarning("{Controller}.{Action} of a federated title is refused: database suspended {Suspended}, unknown stub {Unknown}", controller, action, isSuspended, stubs.ContainsValue(null));
                 context.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, isSuspended ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);

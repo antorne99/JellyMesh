@@ -77,7 +77,7 @@ public static partial class StubPlanner
         var names = new FolderNames(own);
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var items = serverCatalog.Items
-            .Where(item => item.Kind == IndexedItemKind.Video || (item.Kind == IndexedItemKind.Photo && item.Extension is not null))
+            .Where(item => item.Kind == IndexedItemKind.Video || PhotoPlaceholders.HasPlaceholder(item))
             .OrderBy(item => item.ItemId, StringComparer.Ordinal);
         foreach (var item in items)
         {

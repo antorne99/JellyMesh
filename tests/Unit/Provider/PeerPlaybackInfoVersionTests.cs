@@ -7,6 +7,7 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Model.Dto;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -21,6 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Provider;
 public class PeerPlaybackInfoVersionTests
 {
     private static readonly Guid _version = Guid.Parse("60000000-0000-0000-0000-00000000000a");
+    private static readonly Guid _strm = Guid.Parse("60000000-0000-0000-0000-00000000000b");
 
     private readonly ProviderFixture _fixture = new();
     private readonly PeerPlaybackInfoFilter _filter;
@@ -34,6 +36,62 @@ public class PeerPlaybackInfoVersionTests
     private static MediaSourceInfo Source(Guid id) => new() { Id = id.ToString("N") };
 
     private static OkObjectResult Answer(params MediaSourceInfo[] sources) => new(new PlaybackInfoResponse { PlaySessionId = "play", MediaSources = sources });
+
+    // A source of a .strm as stock could give it, with the URL in every field that can hold one.
+    private static MediaSourceInfo WithUrl(MediaSourceInfo source, string url)
+    {
+        source.Path = url;
+        source.EncoderPath = url;
+        source.RequiredHttpHeaders = new() { ["Authorization"] = url };
+        source.MediaStreams = [new MediaStream { Index = 0, Type = MediaStreamType.Video, Path = url }, new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, Path = url }];
+        return source;
+    }
+
+    // Every text of an answer, through its objects, lists and dictionaries.
+    private static List<string> TextsOf(object? value)
+    {
+        var texts = new List<string>();
+        Collect(value, texts, new HashSet<object>(ReferenceEqualityComparer.Instance));
+        return texts;
+    }
+
+    private static void Collect(object? value, List<string> texts, HashSet<object> seen)
+    {
+        switch (value)
+        {
+            case null:
+                return;
+            case string text:
+                texts.Add(text);
+                return;
+            case System.Collections.IDictionary dictionary:
+                foreach (System.Collections.DictionaryEntry entry in dictionary)
+                {
+                    Collect(entry.Key, texts, seen);
+                    Collect(entry.Value, texts, seen);
+                }
+
+                return;
+            case System.Collections.IEnumerable items:
+                foreach (var item in items)
+                {
+                    Collect(item, texts, seen);
+                }
+
+                return;
+        }
+
+        var type = value.GetType();
+        if (type.IsPrimitive || type.IsEnum || value is Guid or DateTime or DateTimeOffset or TimeSpan or decimal || !seen.Add(value))
+        {
+            return;
+        }
+
+        foreach (var property in type.GetProperties().Where(property => property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0))
+        {
+            Collect(property.GetValue(value), texts, seen);
+        }
+    }
 
     private static string[] Ids(OkObjectResult answer) => ((PlaybackInfoResponse)answer.Value!).MediaSources.Select(source => source.Id).ToArray();
 
@@ -126,6 +184,50 @@ public class PeerPlaybackInfoVersionTests
 
         Assert.Equal([ProviderFixture.SharedItem.ToString("N"), _version.ToString("N")], Ids(answer));
         Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
+    }
+
+    // Row 565: the path of an admin's .strm is the URL it holds, and no field of the answer gives it to a peer.
+    [Fact]
+    public async Task The_answer_gives_no_url_of_the_strm_of_the_admin()
+    {
+        const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+        var answer = Answer(Source(ProviderFixture.SharedItem), WithUrl(Source(_strm), Secret));
+
+        await RunAsync(answer, new PostedBody());
+
+        Assert.Equal([ProviderFixture.SharedItem.ToString("N"), _strm.ToString("N")], Ids(answer));
+        Assert.DoesNotContain(TextsOf(answer.Value), text => text.Contains("strm-secret", StringComparison.Ordinal));
+        Assert.True(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
+    }
+
+    // A source that reads anything but a file of this server holds a URL too, whatever its item.
+    [Theory]
+    [InlineData(MediaProtocol.Http, false)]
+    [InlineData(MediaProtocol.File, true)]
+    public async Task The_answer_gives_no_url_of_a_source_that_is_not_a_file(MediaProtocol protocol, bool isRemote)
+    {
+        const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
+        var source = WithUrl(Source(ProviderFixture.SharedItem), Secret);
+        source.Protocol = protocol;
+        source.IsRemote = isRemote;
+        var answer = Answer(source);
+
+        await RunAsync(answer, new PostedBody());
+
+        Assert.DoesNotContain(TextsOf(answer.Value), text => text.Contains("strm-secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task The_answer_for_a_file_of_this_server_is_left_as_stock_gives_it()
+    {
+        var source = Source(ProviderFixture.SharedItem);
+        source.Path = "/media/film/a.mkv";
+        var answer = Answer(source);
+
+        await RunAsync(answer, new PostedBody());
+
+        Assert.Equal("/media/film/a.mkv", Assert.Single(((PlaybackInfoResponse)answer.Value!).MediaSources).Path);
     }
 
     [Fact]

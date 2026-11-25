@@ -163,13 +163,40 @@ public partial class PlaybackFiltersTests
     }
 
     [Fact]
-    public async Task With_the_database_damaged_a_local_item_and_the_subtitles_of_a_stub_stay_with_stock()
+    public async Task With_the_database_damaged_a_local_item_stays_with_stock()
     {
         CanSeeItem();
         _fixture.Damage();
 
         Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()))));
-        Assert.True(await RunAsync(GuardFilter(), Context("Subtitle", "GetSubtitle", ("routeItemId", _itemId))));
+        Assert.True(await RunAsync(GuardFilter(), Context("Subtitle", "GetSubtitle", ("routeItemId", LocalItem()))));
+    }
+
+    // Row 565: stock would read the subtitles of a stub from its remote, so none are read while the database cannot be used.
+    [Theory]
+    [InlineData("GetSubtitle", "routeItemId")]
+    [InlineData("GetSubtitlePlaylist", "itemId")]
+    public async Task With_the_database_damaged_the_subtitles_of_a_stub_are_refused(string action, string argument)
+    {
+        CanSeeItem();
+        _fixture.Damage();
+        var context = Context("Subtitle", action, (argument, _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
+        Assert.Single(_guardLog.Lines, line => line.Contains("Subtitle." + action + " of a federated title is refused: database suspended True", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task With_the_database_damaged_the_subtitles_of_a_stub_still_want_a_user_who_sees_it()
+    {
+        _fixture.Damage();
+        var context = Context("Subtitle", "GetSubtitle", ("routeItemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
     [Fact]

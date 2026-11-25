@@ -334,6 +334,27 @@ public sealed class CatalogSyncServiceTests : IDisposable
         Assert.Equal((0, 0, 0), (server.Movies, server.Series, server.Episodes));
     }
 
+    // Row 565: a photo with no placeholder, in a format with no extension or another JellyMesh's placeholder, is not counted.
+    [Fact]
+    public async Task TheStatusCountsOnlyThePhotosThatGetAPlaceholder()
+    {
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.HomeVideos, "Casa", "homevideos"));
+        _fixture.Client.Add(
+            TestLibraries.HomeVideos,
+            RemoteItemType.Photo,
+            new RemoteItem { Id = "p1", Name = "p1", Path = "/home/1.jpg" },
+            new RemoteItem { Id = "p2", Name = "p2", Path = "/home/2.png" },
+            new RemoteItem { Id = "p3", Name = "p3", Path = "/home/3.psd" },
+            new RemoteItem { Id = "p4", Name = "p4", Path = "/home/4" },
+            new RemoteItem { Id = "p5", Name = "p5", Path = "/home/5.jpg", ProviderIds = new Dictionary<string, string?> { [global::Jellyfin.Plugin.JellyMesh.Library.FederatedPlaceholderMark.ProviderId] = "stub" } });
+        await _fixture.AddServerAsync("Friend", TestLibraries.HomeVideos);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        var server = Assert.Single(_fixture.Sync.GetStatus().Servers);
+        Assert.Equal(2, server.Photos);
+    }
+
     [Fact]
     public async Task TheLogsHoldNoSecretAndNoAddress()
     {

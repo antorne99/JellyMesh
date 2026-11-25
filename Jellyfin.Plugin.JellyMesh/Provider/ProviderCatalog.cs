@@ -162,6 +162,28 @@ public sealed class ProviderCatalog
     public BaseItem? FindVisible(PeerCaller caller, Guid itemId) => FindVisible(caller, itemId, new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes));
 
     /// <summary>
+    /// Tells whether an item, as a peer reaches it, is a .strm file of this server. Its text is a URL that may carry
+    /// credentials, so neither its file nor its path goes to a peer (rows 561 and 565).
+    /// </summary>
+    /// <param name="caller">The peer.</param>
+    /// <param name="itemId">The item, or the version as its media source names it.</param>
+    /// <returns>Whether it is a .strm file.</returns>
+    public bool IsStrmFile(PeerCaller caller, Guid itemId)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        return !itemId.Equals(Guid.Empty) && IsStrm(_library.GetItemById<BaseItem>(itemId, caller.User)?.Path);
+    }
+
+    /// <summary>
+    /// Tells whether a path is a .strm file, whatever the case of its extension.
+    /// </summary>
+    /// <param name="path">The path.</param>
+    /// <returns>Whether it is one.</returns>
+    public static bool IsStrm(string? path)
+        => string.Equals(Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Turns changed items into the changes a peer is told of: those it may reach, each once with the libraries that give
     /// it, and an album as its tracks. A change no read of its libraries would return would only make the consumer index it.
     /// </summary>

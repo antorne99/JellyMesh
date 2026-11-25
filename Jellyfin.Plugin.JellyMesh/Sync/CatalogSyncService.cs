@@ -326,7 +326,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             HomeVideos = Count(IndexedItemKind.Video),
             Books = Count(IndexedItemKind.Book),
             AudiobookFiles = Count(IndexedItemKind.AudioBook),
-            Photos = Count(IndexedItemKind.Photo)
+            Photos = catalog?.Items.Count(PhotoPlaceholders.HasPlaceholder) ?? 0
         };
     }
 
