@@ -159,7 +159,7 @@ Each server's card has three buttons: **Edit**, **Test connection** and **Remove
 On save, JellyMesh first logs in to the remote with what you entered, checks that the same server answers, reads the libraries the user sees and works out what the change does. That check saves nothing. If anything follows from the change, such as a rename, libraries leaving the import, streams being stopped or a new library mode, the form lists it and asks **Save these changes?** first. Then it saves all the fields, or none of them. An error is shown on the field that caused it, and changes nothing.
 
 - If another server answers at the URL, the save is refused: remove this server and add the other one as a new server.
-- If the remote does not answer, you can still change the name and the library mode. The libraries are shown read-only, and the URL, user and password can change only while the remote answers.
+- If the remote does not answer, you can still change the name, unless the folder migration is not finished, and the library mode. The libraries are shown read-only, and the URL, user and password can change only while the remote answers.
 - If the saved password no longer decrypts, the form asks for the user and password again, and **Edit** is where you enter them.
 - A library the new user no longer sees is marked "no longer visible, will be removed", and leaves the import when you save. Its titles leave at the next sync.
 - A new user ends the streams of the server and the old user's login on the remote within a few seconds.
