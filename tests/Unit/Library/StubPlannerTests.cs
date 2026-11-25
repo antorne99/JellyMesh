@@ -145,6 +145,23 @@ public class StubPlannerTests
         Sources = [new StubSource(server, itemId, itemId) { LibraryId = library }]
     };
 
+    [Theory]
+    [InlineData("trailer")]
+    [InlineData("Beach-trailer")]
+    [InlineData("Beach_sample")]
+    [InlineData("Trailers")]
+    [InlineData("theme-music")]
+    public void AFilmWhoseFileJellyfinWouldReadAsAnExtraGetsTheIdInItsFolder(string name)
+    {
+        Assert.True(JellyfinNaming.IsExtra(Path.Combine("Film", name, name + ".strm")));
+
+        var stub = Assert.Single(Plan([Film("k", Source(_serverA, "m"))], [Catalog(_serverA, ServerSyncState.Complete, Film("m", name, null))]).Stubs);
+
+        var folder = $"{name} [{stub.Entry.Id[..8]}]";
+        Assert.Equal(Path.Combine("Film", folder, folder + ".strm"), stub.Entry.RelativePath);
+        Assert.False(JellyfinNaming.IsExtra(stub.Entry.RelativePath));
+    }
+
     [Fact]
     public void AWinnerGetsAStubWhosePathDoesNotDependOnTheServer()
     {

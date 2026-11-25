@@ -199,6 +199,19 @@ public sealed class ServerStubRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task AHomeVideoWhoseNameEndsWithTheLabelKeepsItsFiles()
+    {
+        var home = Path.Combine(_server.ToString("D"), TestLibraries.HomeVideos, "Video domestici", "Trip - Casa.strm");
+        await SeedAsync(Film("h", home) with { Kind = StubKind.HomeVideo });
+        Write(home, "url-h");
+
+        Assert.Equal(0, await _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-h", Read(home));
+        Assert.Equal(home, _registry.State.Stubs.Single().RelativePath);
+    }
+
+    [Fact]
     public async Task ALabelTakenByAnotherServerGetsTheGuidDigits()
     {
         await SeedAsync(Film("f", FilmPath("Casa")));
@@ -336,6 +349,27 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal(
             ["S S01E01 - Mare-thumb.jpg", "S S01E01 - Mare.nfo", "S S01E01 - Mare.strm"],
             Directory.EnumerateFiles(folder).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task AMusicVideoLosesItsOldStrmAndNfo()
+    {
+        var folder = Path.Combine(_server.ToString("D"), TestLibraries.MusicVideos, "Video musicali", "Song (2019)");
+        string Clip(string label) => Path.Combine(folder, "Song (2019) - " + label + ".strm");
+        await SeedAsync(Film("m", Clip("Casa")) with { Kind = StubKind.MusicVideo });
+        Write(Clip("Casa"), "url");
+        Write(Path.ChangeExtension(Clip("Casa"), ".nfo"), "nfo");
+        Write(Path.Combine(folder, "poster.jpg"), "poster");
+        await _renamer.RelabelAsync(_server, "Mare", CancellationToken.None);
+        Scanned(Clip("Casa"), new MusicVideo());
+        Scanned(Clip("Mare"), new MusicVideo());
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal("nfo", Read(Path.ChangeExtension(Clip("Mare"), ".nfo")));
+        Assert.Equal(
+            ["Song (2019) - Mare.nfo", "Song (2019) - Mare.strm", "poster.jpg"],
+            Directory.EnumerateFiles(Full(folder)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -828,7 +862,7 @@ public sealed class ServerStubRenamerTests : IDisposable
         where T : Video
     {
         item.Path = Full(relative);
-        item.Id = IdOf(item.Path, item is Episode ? typeof(Episode) : typeof(Movie));
+        item.Id = IdOf(item.Path, item.GetType());
         _items[item.Id] = item;
         return item;
     }

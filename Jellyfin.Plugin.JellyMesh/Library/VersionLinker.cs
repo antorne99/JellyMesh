@@ -558,8 +558,7 @@ public sealed class VersionLinker : IVersionLinker
         private Guid[] IdsOf(StubEntry stub)
         {
             var path = FederatedPaths.Resolve(root, stub.RelativePath);
-            Type kind = stub.Kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
-            return [library.GetNewItemId(path, kind), library.GetNewItemId(path, typeof(Video))];
+            return [library.GetNewItemId(path, StubItemTypes.Of(stub.Kind)), library.GetNewItemId(path, typeof(Video))];
         }
 
         public string Best(IReadOnlyList<string> stubIds, StubRegistry registry)

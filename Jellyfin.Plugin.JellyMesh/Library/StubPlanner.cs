@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// A stub whose content turned local is left alone here: only the post-scan task may remove it, after handing over the
 /// watch state (decision 2). This plan removes only what is proved gone from the remotes.
 /// </remarks>
-public static class StubPlanner
+public static partial class StubPlanner
 {
     private static readonly string[] _seriesKeyProviders = ["Custom", "Tvdb", "Imdb"];
 
@@ -51,7 +51,7 @@ public static class StubPlanner
         var matcher = new StubMatcher(flat);
         var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
-        var paths = new PathAllocator(flat, flatSeries);
+        var paths = new PathAllocator(flat, flatSeries, input.IgnoreRules);
         var scope = new SeriesScope(null, flatSeries, ByWork(input.View.Contents), (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
@@ -131,6 +131,7 @@ public static class StubPlanner
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
         var tracks = new List<StubWork>();
+        var videoWorks = new List<StubWork>();
 
         // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
         var legacy = input.KeepsOlderLayout;
@@ -138,7 +139,8 @@ public static class StubPlanner
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Track && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Track && !IsVideoKind(stub.Kind) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsVideoKind(stub.Kind)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
             var parts = legacy
@@ -149,7 +151,7 @@ public static class StubPlanner
                 var matcher = new StubMatcher(part.Stubs);
                 var claims = matcher.ClaimAll(StubContents.Group(part.Contents));
 
-                var paths = new PathAllocator(part.Stubs, part.Series);
+                var paths = new PathAllocator(part.Stubs, part.Series, input.IgnoreRules);
                 var scope = new SeriesScope(server.Id, part.Series, ByWork(part.Contents), (remote, winner, title, year, id) => paths.SeriesFolder(part.FolderOf([remote, winner], TypeFolder.Series), title, year, id), _ => null);
                 var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
                 foreach (var (content, stub) in claims)
@@ -162,7 +164,7 @@ public static class StubPlanner
                     if (content.Identity.Kind == ContentKind.Movie)
                     {
                         var folder = part.FolderOf([winner], TypeFolder.Movies);
-                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id), label)), content, winner));
+                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id, label), label)), content, winner));
                     }
                     else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
                     {
@@ -188,9 +190,21 @@ public static class StubPlanner
                 tracks.AddRange(serverTracks);
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
+
+            // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
+            if (legacy)
+            {
+                claimed.UnionWith(ownVideos.Select(stub => stub.Id));
+            }
+            else
+            {
+                videoWorks.AddRange(VideoWorks(input, catalog, server, label, ownVideos, claimed, unplaceable));
+            }
         }
 
         works.AddRange(tracks);
+        works.AddRange(videoWorks);
+
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)) && !claimed.Contains(stub.Id)).ToList();
 
@@ -261,7 +275,7 @@ public static class StubPlanner
         foreach (var server in servers)
         {
             var contents = ServerContents(view, snapshot, catalog, server);
-            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath)).ToList();
+            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath) && !IsVideoKind(stub.Kind)).ToList();
             var parts = PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
             claims.AddRange(parts.SelectMany(part => new StubMatcher(part.Stubs).ClaimAll(StubContents.Group(part.Contents))));
         }
@@ -1127,12 +1141,14 @@ public static class StubPlanner
     private sealed class PathAllocator
     {
         private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
+        private readonly IServerIgnoreRules _rules;
 
-        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series)
+        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series, IServerIgnoreRules rules)
         {
+            _rules = rules;
             foreach (var stub in stubs)
             {
-                _taken.Add(stub.Kind == StubKind.Movie ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
+                _taken.Add(stub.Kind is StubKind.Movie or StubKind.MusicVideo ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
                 if (stub.Kind == StubKind.Episode)
                 {
                     _taken.Add(SeriesFolderOf(stub));
@@ -1145,13 +1161,22 @@ public static class StubPlanner
             }
         }
 
-        // The folder name of a film, unique in its type folder.
-        public string MovieFolderName(string typeFolder, string? title, int? year, string id)
-            => Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id);
+        // The folder name of a film, unique in its type folder, with the id when Jellyfin would read its stub as an extra or skip it.
+        public string MovieFolderName(string typeFolder, string? title, int? year, string id, string? label = null)
+        {
+            var name = FederatedPaths.TitleFolder(title, year);
+            var folder = Path.Combine(typeFolder, name);
+            var stub = label is null ? Path.Combine(folder, name + ".strm") : FederatedPaths.MovieStubIn(typeFolder, name, label);
+            var hidden = IsReadAsExtra(stub) || _rules.Ignores(typeFolder, name, true) || _rules.Ignores(folder, Path.GetFileName(stub), false);
+            return Unique(typeFolder, name, id, hidden);
+        }
 
-        // The relative folder of a series, unique in its type folder.
+        // The relative folder of a series, unique in its type folder, with the id when the server would skip it.
         public string SeriesFolder(string typeFolder, string? title, int? year, string id)
-            => Path.Combine(typeFolder, Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id));
+        {
+            var name = FederatedPaths.TitleFolder(title, year);
+            return Path.Combine(typeFolder, Unique(typeFolder, name, id, _rules.Ignores(typeFolder, name, true)));
+        }
 
         // The path of an episode stub, unique in its series folder.
         public string EpisodeStub(SeriesPlan series, int season, int number, int? last, string? label, string id)
@@ -1167,9 +1192,9 @@ public static class StubPlanner
             return unique;
         }
 
-        private string Unique(string typeFolder, string name, string id)
+        private string Unique(string typeFolder, string name, string id, bool hidden = false)
         {
-            if (_taken.Add(Path.Combine(typeFolder, name)))
+            if (!hidden && _taken.Add(Path.Combine(typeFolder, name)))
             {
                 return name;
             }

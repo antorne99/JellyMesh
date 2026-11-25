@@ -37,7 +37,7 @@ public sealed record TypeFolder(string Name, CollectionTypeOptions LibraryType)
     public static IReadOnlyList<TypeFolder> Older { get; } = [Movies, Series];
 
     /// <summary>Gets the type folders the plugin writes stubs into.</summary>
-    public static IReadOnlyList<TypeFolder> Written { get; } = [Movies, Series, Music];
+    public static IReadOnlyList<TypeFolder> Written { get; } = [Movies, Series, Music, MusicVideos, HomeVideos];
 
     /// <summary>Gives the type folder of a kind of stub.</summary>
     /// <param name="kind">The kind.</param>
@@ -47,6 +47,8 @@ public sealed record TypeFolder(string Name, CollectionTypeOptions LibraryType)
         StubKind.Movie => Movies,
         StubKind.Episode => Series,
         StubKind.Track => Music,
+        StubKind.MusicVideo => MusicVideos,
+        StubKind.HomeVideo => HomeVideos,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 

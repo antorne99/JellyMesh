@@ -73,10 +73,10 @@ public sealed record StubMetadata
     /// <summary>Gets the last episode of a stub that covers several.</summary>
     public int? EpisodeNumberEnd { get; init; }
 
-    /// <summary>Gets the album of a track.</summary>
+    /// <summary>Gets the album of a track or music video.</summary>
     public string? Album { get; init; }
 
-    /// <summary>Gets the artists of a track.</summary>
+    /// <summary>Gets the artists of a track or music video.</summary>
     public IReadOnlyList<string> Artists { get; init; } = [];
 
     /// <summary>Gets the album artists of a track.</summary>
@@ -146,7 +146,12 @@ public sealed record StubMetadata
             ProviderIds = item.ProviderIds,
             WritesCollections = writesCollections,
             CollectionName = collection?.Name,
-            TmdbCollectionId = collection?.TmdbId
+            TmdbCollectionId = collection?.TmdbId,
+            Artists = item.Kind == IndexedItemKind.MusicVideo ? item.Artists ?? [] : [],
+            Album = item.Kind == IndexedItemKind.MusicVideo ? item.Album : null,
+
+            // A home video has no fetcher for its date, which is when it was shot (spec §3.12).
+            PremiereDate = item.Kind == IndexedItemKind.Video ? item.PremiereDate : null
         };
 
         // Without protection the fetchers fill the rest (plan §3.1).

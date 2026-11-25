@@ -15,6 +15,9 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class StubRemover
 {
+    // A type folder is {server}/{remote library}/{type}.
+    private const int TypeFolderDepth = 3;
+
     private static readonly DeleteOptions _keepFiles = new() { DeleteFileLocation = false };
 
     private readonly ILibraryManager _library;
@@ -105,6 +108,12 @@ public sealed class StubRemover
             {
                 kept.UnionWith(series.Select(stub => stub.Id));
             }
+        }
+
+        // A folder left empty stays on a failure: its stub is gone either way.
+        foreach (var folder in stubs.Where(stub => stub.Kind == StubKind.HomeVideo && gone.Contains(stub.Id)).Select(stub => Path.GetDirectoryName(stub.RelativePath)!).Distinct(StringComparer.Ordinal))
+        {
+            Try(failures, () => DeleteEmptyFolders(root, folder));
         }
 
         var next = state with
@@ -235,7 +244,7 @@ public sealed class StubRemover
     {
         var strm = FederatedPaths.Resolve(root, stub.RelativePath);
         DeleteRow(strm, false);
-        if (stub.Kind == StubKind.Movie)
+        if (stub.Kind is StubKind.Movie or StubKind.MusicVideo)
         {
             DeleteFolder(root, Path.GetDirectoryName(stub.RelativePath)!);
         }
@@ -268,10 +277,37 @@ public sealed class StubRemover
         foreach (var file in Directory.EnumerateFiles(folder))
         {
             var name = Path.GetFileName(file);
-            if (name.StartsWith(stem + ".", StringComparison.Ordinal) || name.StartsWith(stem + "-thumb.", StringComparison.Ordinal))
+            if (HasExtensionOnly(name, stem + ".") || IsThumbnailOf(name, stem))
             {
                 File.Delete(file);
             }
+        }
+    }
+
+    // Whether a file name is the prefix and one extension, so that removing "clip" leaves "clip.final.strm".
+    private static bool HasExtensionOnly(string name, string prefix)
+        => name.StartsWith(prefix, StringComparison.Ordinal) && !name.AsSpan(prefix.Length).Contains('.');
+
+    // Whether a file is the thumbnail of a stem, and not the .strm or .nfo of a stub named like one.
+    private static bool IsThumbnailOf(string name, string stem)
+        => HasExtensionOnly(name, stem + "-thumb.")
+            && !name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
+            && !name.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase);
+
+    // Deletes a home video folder and the parents it leaves empty, with their rows, up to the type folder, which stays.
+    private void DeleteEmptyFolders(string root, string relative)
+    {
+        while (relative.Split(Path.DirectorySeparatorChar).Length > TypeFolderDepth)
+        {
+            var folder = FederatedPaths.Resolve(root, relative);
+            if (!Directory.Exists(folder) || Directory.EnumerateFileSystemEntries(folder).Any())
+            {
+                return;
+            }
+
+            DeleteRow(folder, true);
+            Directory.Delete(folder);
+            relative = Path.GetDirectoryName(relative)!;
         }
     }
 

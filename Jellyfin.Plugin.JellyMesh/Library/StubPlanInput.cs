@@ -45,6 +45,9 @@ public sealed record StubPlanInput(
     /// <summary>Gets the check for a relative path on the disk. Without it, no path that is kept changes.</summary>
     public Func<string, bool> IsOnDisk { get; init; } = _ => true;
 
+    /// <summary>Gets the rules by which the server skips files and folders: a planned name it would skip gets the id.</summary>
+    public IServerIgnoreRules IgnoreRules { get; init; } = NoIgnoreRules.Instance;
+
     /// <summary>Gives the default placement: one local library per server and type.</summary>
     /// <param name="serverId">The server.</param>
     /// <param name="libraryId">The remote library.</param>

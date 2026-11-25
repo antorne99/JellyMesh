@@ -105,8 +105,8 @@ public sealed class ServerStubRenamer : IServerStubRenamer
             }
 
             var stubs = state.Stubs.ToList();
-            // A track has no versions, so its name carries no label.
-            var paths = stubs.Select(stub => stub.ServerId == serverId && stub.Kind != StubKind.Track ? NewPath(stub.RelativePath, old, label) : null).ToList();
+            // Tracks and home videos have no versions, so their names carry no label.
+            var paths = stubs.Select(stub => stub.ServerId == serverId && stub.Kind is not (StubKind.Track or StubKind.HomeVideo) ? NewPath(stub.RelativePath, old, label) : null).ToList();
             var live = LivePaths(state, paths.OfType<string>());
 
             // The old files of a stub that left go now, so that a file written at their path is not deleted later; their item
@@ -354,7 +354,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         outcome.Status == WatchStateMoveStatus.Carried
         || (outcome.Status == WatchStateMoveStatus.UsersLeft && outcome.SkippedUsers.All(user => user.Reason == WatchStateUserSkipReason.NoVisibleVersion));
 
-    // The path with the new label, null for a stub whose name does not end with the old one.
+    // The path with the new label, null for a stub whose name does not end with the old one. Tracks and home videos carry no label.
     private static string? NewPath(string relative, string old, string label)
     {
         var suffix = " - " + old + ".strm";
@@ -452,8 +452,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private Video? ItemAt(string root, string relative, StubKind kind)
     {
         var path = FederatedPaths.Resolve(root, relative);
-        var type = kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
-        return _library.GetItemById(_library.GetNewItemId(path, type)) as Video
+        return _library.GetItemById(_library.GetNewItemId(path, StubItemTypes.Of(kind))) as Video
             ?? _library.GetItemById(_library.GetNewItemId(path, typeof(Video))) as Video;
     }
 

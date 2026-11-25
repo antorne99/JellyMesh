@@ -1842,6 +1842,9 @@ public sealed partial class ServerLibraryManagerTests
             Server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = serverName });
             Store.Configuration.FederatedFolderPath = root;
             Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
+            // The registry is read and holds no music, music videos or home videos unless a test says so.
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.MusicVideos)).Returns([]);
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.HomeVideos)).Returns([]);
             Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.Music)).Returns([]);
             Store.Configuration.Servers.Add(Server);
             var fileSystem = new Mock<IFileSystem>();
