@@ -359,6 +359,14 @@ public sealed class WatchStateKeeperTests : IDisposable
                 RunTimeTicks = 180 * TimeSpan.TicksPerSecond,
                 MediaSources = [TestItems.Source("v1", 1080, 5_000_000)]
             }),
+            StubKind.Photo => (new RemoteLibrary(TestLibraries.HomeVideos, "Casa", "homevideos"), RemoteItemType.Photo, new RemoteItem
+            {
+                Id = "f1",
+                Name = "Song",
+                ProductionYear = 2019,
+                ParentId = TestLibraries.HomeVideos,
+                Path = "/home/Song.jpg"
+            }),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         _fixture.Sync.Client.Libraries.Add(library);
@@ -384,7 +392,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     private static string LibraryOf(StubKind kind) => kind switch
     {
         StubKind.Track => TestLibraries.Music,
-        StubKind.HomeVideo => TestLibraries.HomeVideos,
+        StubKind.HomeVideo or StubKind.Photo => TestLibraries.HomeVideos,
         _ => TestLibraries.Books
     };
 
@@ -398,6 +406,7 @@ public sealed class WatchStateKeeperTests : IDisposable
             StubKind.Track => new MediaBrowser.Controller.Entities.Audio.Audio { Artists = ["Singer"], AlbumArtists = ["Singer"], Album = "Album" },
             StubKind.AudioBook => new AudioBook { Artists = ["Singer"], AlbumArtists = ["Singer"], Album = "Album" },
             StubKind.Book => new Book { SeriesName = "Saga" },
+            StubKind.Photo => new Photo(),
             _ => new Video()
         };
         item.Name = "Song";
@@ -424,6 +433,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     [InlineData(StubKind.AudioBook, KeptTitleKind.AudioBook)]
     [InlineData(StubKind.Book, KeptTitleKind.Book)]
     [InlineData(StubKind.HomeVideo, KeptTitleKind.HomeVideo)]
+    [InlineData(StubKind.Photo, KeptTitleKind.Photo)]
     public void EachKindOfStubIsKeptUnderAKindOfItsOwn(StubKind kind, KeptTitleKind kept) => Assert.Equal(kept, WatchStateKeeper.KeptKindOf(kind));
 
     [Fact]
@@ -441,6 +451,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     [InlineData(StubKind.AudioBook, KeptTitleKind.AudioBook, "Singer/Album/2-03 - Song.strm")]
     [InlineData(StubKind.Book, KeptTitleKind.Book, "Song (2019)/Song (2019).epub")]
     [InlineData(StubKind.HomeVideo, KeptTitleKind.HomeVideo, "Song.strm")]
+    [InlineData(StubKind.Photo, KeptTitleKind.Photo, "Song.jpg")]
     public async Task ATitleOfATypeOfItsOwnIsKeptUnderItsKindWithItsData(StubKind kind, KeptTitleKind expected, string place)
     {
         AddRemote(kind);
@@ -557,6 +568,28 @@ public sealed class WatchStateKeeperTests : IDisposable
         await RemoveAsync(a);
         Assert.True(Row(_anna, b).Played);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Row 560: no rule of identity knows a photo again yet, so its state stays kept, and a photo stops no other title.
+    [Fact]
+    public async Task APhotoKeepsItsStateAndStopsNoOtherTitleFromGettingItsStateBack()
+    {
+        AddRemote(StubKind.Photo);
+        AddRemote(StubKind.Book);
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.HomeVideos, TestLibraries.Books);
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.HomeVideos, TestLibraries.Books);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (photo, book) = (ItemOf(b, StubKind.Photo), ItemOf(b, StubKind.Book));
+        Watch(_anna, ItemOf(a, StubKind.Photo));
+        Watch(_anna, ItemOf(a, StubKind.Book));
+
+        await RemoveAsync(a);
+
+        Assert.True(Row(_anna, book).Played);
+        Assert.False(Row(_anna, photo).Played);
+        var kept = Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+        Assert.Equal((KeptTitleKind.Photo, "Song"), (kept.Kind, kept.Title));
     }
 
     [Theory]

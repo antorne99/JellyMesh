@@ -421,6 +421,7 @@ public sealed class LegacyImportTests : IDisposable
     [InlineData(3)]
     [InlineData(4)]
     [InlineData(7)]
+    [InlineData(8)]
     public async Task AKeptKindOfAfterTheOldVersionsIsNotImported(int kind)
     {
         await WriteKeptAsync(Guid.NewGuid(), Guid.NewGuid(), kind);

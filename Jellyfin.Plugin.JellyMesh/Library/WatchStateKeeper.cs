@@ -240,10 +240,11 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     // Matching reads only these two IDs on a film.
     private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
 
-    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453 and 535).
+    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453 and 535), but
+    // photos, which have none yet (row 560).
     private static bool IsInDedup(KeptTitle title) => !IsOfItsOwn(title.Kind);
 
-    private static bool IsOfItsOwn(KeptTitleKind kind) => kind is KeptTitleKind.Track or KeptTitleKind.AudioBook or KeptTitleKind.Book or KeptTitleKind.HomeVideo;
+    private static bool IsOfItsOwn(KeptTitleKind kind) => kind is KeptTitleKind.Track or KeptTitleKind.AudioBook or KeptTitleKind.Book or KeptTitleKind.HomeVideo or KeptTitleKind.Photo;
 
     // A kept track or audiobook file as the dedup of music reads it.
     private static TrackItem SavedTrack(KeptTitle title) => new()
@@ -343,6 +344,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         StubKind.AudioBook => KeptTitleKind.AudioBook,
         StubKind.Book => KeptTitleKind.Book,
         StubKind.HomeVideo => KeptTitleKind.HomeVideo,
+        StubKind.Photo => KeptTitleKind.Photo,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "A stub kind with no kind to be kept under.")
     };
 
@@ -630,8 +632,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     }
 
     // Every indexed source of the stubs of configured servers, as the dedup reads it, with the stubs it is in. Sources keep
-    // their server and item, so that a manual merge finds them (D21). Tracks, audiobooks, books and home videos only when
-    // their kind is kept.
+    // their server and item, so that a manual merge finds them (D21). Tracks, audiobooks, books, home videos and photos only
+    // when their kind is kept.
     private CurrentTitles CurrentStubs(HashSet<KeptTitleKind> kept)
     {
         var configured = _servers.GetServers().Select(server => server.Id).ToHashSet();
@@ -692,7 +694,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                         ProviderIds = WithoutMark(item.ProviderIds)
                     });
                     break;
-                default:
+                case StubKind.HomeVideo:
                     found.HomeVideos.Add(new HomeVideoItem
                     {
                         ServerId = serverId,
@@ -705,6 +707,9 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                         Folder = FolderOf(PlaceOf(stub.RelativePath))
                     });
                     break;
+                default:
+                    // No rule of identity knows a photo again yet: its kept state stays (row 560).
+                    return;
             }
 
             AddPath((false, serverId, item.ItemId), stub.RelativePath);
