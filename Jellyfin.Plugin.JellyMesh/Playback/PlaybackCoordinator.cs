@@ -401,7 +401,6 @@ public sealed class PlaybackCoordinator
 
         if (IsSuspended)
         {
-            _logger.LogWarning("The lyrics of track {StubId} are not read: the JellyMesh database cannot be used", stub.Id);
             return RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Suspended);
         }
 
