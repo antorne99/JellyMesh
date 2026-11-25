@@ -6,6 +6,8 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
@@ -655,6 +657,154 @@ public sealed class StubRegistryTests : IDisposable
         using var restarted = Create();
         Assert.Equal(saved.Stubs.Select(stub => stub.Id), restarted.State.Stubs.Select(stub => stub.Id));
         Assert.Equal(["x", "z"], restarted.State.Stubs.Select(stub => stub.Id));
+    }
+
+    // A suspended start leaves the registry empty; no sync has to run for it to know its stubs again.
+    [Theory]
+    [InlineData(nameof(IStubRegistry.Find))]
+    [InlineData(nameof(IStubRegistry.FindByPath))]
+    [InlineData(nameof(IStubRegistry.FindGroup))]
+    [InlineData(nameof(IStubRegistry.FindGroupOfLocal))]
+    public async Task ADatabaseThatTurnsHealthyIsReadAgainAtTheNextLookup(string lookup)
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.Suspended = true;
+        using var suspended = Create();
+        _database.Suspended = false;
+        _database.Reopen();
+        Assert.True(suspended.IsUnread);
+
+        Look(suspended, lookup);
+
+        await Until(() => !suspended.IsUnread);
+        Assert.Equal(Json(FullState()), Json(suspended.State));
+    }
+
+    private static void Look(StubRegistry registry, string lookup) => _ = lookup switch
+    {
+        nameof(IStubRegistry.Find) => (object?)registry.Find("abc"),
+        nameof(IStubRegistry.FindByPath) => registry.FindByPath("/federata/x"),
+        nameof(IStubRegistry.FindGroup) => registry.FindGroup("abc"),
+        _ => registry.FindGroupOfLocal(Guid.NewGuid())
+    };
+
+    private static async Task Until(Func<bool> reached)
+    {
+        for (var wait = 0; wait < 500 && !reached(); wait++)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(reached());
+    }
+
+    [Fact]
+    public async Task AReloadReadsTheRegistryOnceAndLeavesAReadOneAlone()
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.Suspended = true;
+        using var suspended = Create();
+        _database.Suspended = false;
+        _database.Reopen();
+        var generation = suspended.Generation;
+
+        await Task.WhenAll(suspended.ReloadAsync(CancellationToken.None), suspended.ReloadAsync(CancellationToken.None));
+        await suspended.ReloadAsync(CancellationToken.None);
+
+        Assert.Equal(generation + 1, suspended.Generation);
+        Assert.Equal("abc", suspended.Find("abc")?.Id);
+        Assert.False(suspended.IsUnread);
+    }
+
+    [Fact]
+    public async Task AReloadOfASuspendedDatabaseLeavesWhatIsInMemory()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        _database.Reopen();
+        _database.Suspended = true;
+
+        await registry.ReloadAsync(CancellationToken.None);
+
+        Assert.True(registry.IsUnread);
+        Assert.Equal("abc", registry.Find("abc")?.Id);
+    }
+
+    // Every request looks a stub up, so a database that stays unreadable is tried once for each time it was opened.
+    [Fact]
+    public async Task LookupsOfADatabaseThatCannotBeReadTryOnce()
+    {
+        _database.Suspended = true;
+        using var registry = Create();
+        _database.Reopen();
+
+        for (var look = 0; look < 200; look++)
+        {
+            Assert.Null(registry.Find("abc"));
+        }
+
+        await Until(() => Failures() == 2);
+        await Task.Delay(100);
+        registry.Find("abc");
+        await Task.Delay(100);
+        Assert.Equal(2, Failures());
+    }
+
+    private int Failures() => _logger.Lines.Count(line => line.Contains("Cannot read the stub registry", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task LookupsDoNotWaitForTheReload()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        await registry.EnterAsync(CancellationToken.None);
+        _database.Reopen();
+
+        Assert.Equal("abc", registry.Find("abc")?.Id);
+        using var limit = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.ReloadAsync(limit.Token));
+        Assert.True(registry.IsUnread);
+
+        registry.Exit();
+        await Until(() => !registry.IsUnread);
+    }
+
+    // The same with the real database: what Retry opens is read without a sync.
+    [Fact]
+    public async Task WhatRetryOpensIsReadWithoutALock()
+    {
+        var folder = Path.Combine(_folder, "real");
+        Directory.CreateDirectory(folder);
+        using (var seeded = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1))
+        using (var registry = new StubRegistry(seeded, _store, _logger))
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        var file = Directory.GetFiles(folder, "*.db").Single();
+        File.Move(file, file + ".aside");
+        Directory.CreateDirectory(file);
+        using var database = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);
+        using var suspended = new StubRegistry(database, _store, _logger);
+        Assert.True(database.Health.Suspended);
+        Assert.Null(suspended.Find("abc"));
+        Assert.True(suspended.IsUnread);
+
+        Directory.Delete(file);
+        File.Move(file + ".aside", file);
+        Assert.Equal(StoreHealth.Healthy, database.Retry());
+        suspended.Find("abc");
+
+        await Until(() => suspended.Find("abc") is not null);
+        Assert.False(suspended.IsUnread);
     }
 
     public static TheoryData<Exception> ConversionFailures() => new()

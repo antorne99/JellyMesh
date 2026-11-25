@@ -1,6 +1,8 @@
+using System;
 using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -20,15 +22,23 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 public class FederationStoreController : ControllerBase
 {
     private readonly IPluginDatabase _database;
+    private readonly IStubRegistry _stubs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationStoreController"/> class.
     /// </summary>
     /// <param name="database">The plugin database.</param>
-    public FederationStoreController(IPluginDatabase database)
+    /// <param name="stubs">The stub registry, read again after a retry.</param>
+    public FederationStoreController(IPluginDatabase database, IStubRegistry stubs)
     {
         _database = database;
+        _stubs = stubs;
     }
+
+    /// <summary>
+    /// Gets how long a retry waits for the stub registry.
+    /// </summary>
+    internal TimeSpan ReloadLimit { get; init; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Gets the state of the plugin database.
@@ -40,16 +50,29 @@ public class FederationStoreController : ControllerBase
     public Task<StoreStatus> GetStore(CancellationToken cancellationToken) => StatusAsync(cancellationToken);
 
     /// <summary>
-    /// Opens the plugin database again when it is not healthy.
+    /// Opens the plugin database again when it is not healthy, and then reads the stub registry again.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state after the attempt.</returns>
     [HttpPost("Store/Retry")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public Task<StoreStatus> Retry(CancellationToken cancellationToken)
+    public async Task<StoreStatus> Retry(CancellationToken cancellationToken)
     {
-        _database.Retry();
-        return StatusAsync(cancellationToken);
+        if (!_database.Retry().Suspended)
+        {
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(ReloadLimit);
+            try
+            {
+                await _stubs.ReloadAsync(limit.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The registry is read in the background instead.
+            }
+        }
+
+        return await StatusAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
