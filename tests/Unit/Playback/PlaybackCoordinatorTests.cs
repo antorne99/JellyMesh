@@ -284,7 +284,8 @@ public class PlaybackCoordinatorTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => keptCopy.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
-    // A remote that hangs costs the removal one short wait, not one per call.
+    // A remote that hangs costs the removal one short wait, not one per call. The stop outlasts its limit by 50 ms, so the
+    // time left for the slot is below zero whatever the grain of the timer.
     [Fact]
     public async Task A_server_about_to_go_stops_and_gives_back_within_one_shared_limit()
     {
@@ -293,6 +294,7 @@ public class PlaybackCoordinatorTests
         fixture.Registry.AddJellyMesh(leaving.ServerId);
         await fixture.OpenAsync(PlaybackValues.Stub(leaving));
         fixture.Client.StopsHang = true;
+        fixture.Client.StopOverrun = TimeSpan.FromMilliseconds(50);
         fixture.Coordinator.RemovalLimit = TimeSpan.FromMilliseconds(300);
 
         await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));

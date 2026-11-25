@@ -226,10 +226,13 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     {
         Stopped.Add(playSessionId);
         OnStop?.Invoke();
-        return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(RemoteResult.Success(true));
+        return StopsHang ? HangAsync(cancellationToken, StopOverrun) : Task.FromResult(RemoteResult.Success(true));
     }
 
     public bool StopsHang { get; set; }
+
+    /// <summary>Gets or sets how long a hanging stop still takes after it is cancelled, as a remote slow to drop the call.</summary>
+    public TimeSpan StopOverrun { get; set; }
 
     public List<string> Renewed { get; } = [];
 
@@ -251,9 +254,18 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
     }
 
-    private static async Task<RemoteResult<bool>> HangAsync(CancellationToken cancellationToken)
+    private static async Task<RemoteResult<bool>> HangAsync(CancellationToken cancellationToken, TimeSpan overrun = default)
     {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
+        try
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+        catch (OperationCanceledException) when (overrun > TimeSpan.Zero)
+        {
+            await Task.Delay(overrun, CancellationToken.None);
+            throw;
+        }
+
         return RemoteResult.Success(true);
     }
 }
