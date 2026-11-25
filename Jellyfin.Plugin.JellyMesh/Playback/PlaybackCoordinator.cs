@@ -1127,7 +1127,8 @@ public sealed class PlaybackCoordinator
         }
     }
 
-    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once.
+    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once. The slot is not given
+    // back with too little of it left.
     private async Task CloseForRemovalAsync(string sessionId)
     {
         if (_sessions.Remove(sessionId) is not { } session)
@@ -1143,7 +1144,7 @@ public sealed class PlaybackCoordinator
             return;
         }
 
-        if (left > TimeSpan.Zero)
+        if (left >= PlaybackTimeouts.MinimumRelease)
         {
             await ReleaseSlotAsync(session.Source.ServerId, playSessionId, left).ConfigureAwait(false);
         }

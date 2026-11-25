@@ -304,6 +304,23 @@ public class PlaybackCoordinatorTests
         Assert.Empty(fixture.Sessions.All);
     }
 
+    // Notion 1001: under the least time a release needs, the slot is not given back, and the removal keeps its limit.
+    [Fact]
+    public async Task A_server_about_to_go_gives_no_slot_back_with_less_than_the_least_time_left()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        fixture.Coordinator.RemovalLimit = PlaybackTimeouts.MinimumRelease / 2;
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(fixture.Client.Stopped);
+        Assert.Empty(fixture.Client.Released);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
     [Fact]
     public async Task A_server_about_to_go_opens_nothing_more_until_its_removal_fails()
     {
