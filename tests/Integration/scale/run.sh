@@ -9,8 +9,14 @@
 # incremental sync three times (the first finds the scanned library, the next ones find nothing changed), the nightly
 # reconciliation on scanned items and one more incremental after it.
 # SCALE_NAME, SCALE_PORT and SCALE_FAKE_PORT (the first fake; the others follow) override the container and the ports.
+# SCALE_TRACKS above 0 adds a music library of that many tracks to each fake; fake n holds share n of the albums
+# (SCALE_SERVER_INDEX), so three fakes overlap as fake_remote.py describes, and what a federation of them should hold
+# goes to music-expected.txt. SCALE_FILMS=0 SCALE_SERIES=0 leaves the music alone. With SCALE_SCAN=1 the music folders
+# the plugin lists on its status page are linked to a Music library too.
 # SCALE_FIRST_ONLY=1 measures the first sync alone. SCALE_TREE builds the plugin from another checkout, such as a worktree
 # of an older commit, so that two versions run under the same harness.
+# SCALE_MIN_FREE_GIB is the free disk the run needs to start (18 for a scanned run of 300,000 tracks or more, else 0). When
+# the container stops, restarts or Docker no longer answers, watch_container.py ends the run and what it has is kept.
 # usage: run.sh   (raw data and results.txt go in WORK, by default ${TMPDIR:-/tmp}/jm-scale-run)
 set -uo pipefail
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -22,12 +28,26 @@ NAME=${SCALE_NAME:-jm-scale-consumer}
 PORT=${SCALE_PORT:-18460}
 FAKE=${SCALE_FAKE_PORT:-18461}
 REMOTES=${SCALE_REMOTES:-1}
+TRACKS=${SCALE_TRACKS:-0}
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshScale", Device="scale", DeviceId="jm-scale-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
 SETTINGS=/JellyMesh/Admin/Settings
+
+# Fails unless the disk of the home folder has this many GiB free: <GiB>.
+need_free_gib() {
+  df -Pk "$HOME" | awk -v need="$1" 'END {
+    if ($4 ~ /^[0-9]+$/ && $4 >= need * 1048576) exit 0
+    printf "%.1f GiB free, %s needed: not started\n", $4 / 1048576, need; exit 1 }' >&2
+}
+NEED=0
+[ "${SCALE_SCAN:-0}" = 1 ] && [ $((REMOTES * TRACKS)) -ge 300000 ] && NEED=18
+NEED=${SCALE_MIN_FREE_GIB:-$NEED}
+[ "$NEED" = 0 ] || need_free_gib "$NEED" || exit 1
 rm -rf "$WORK"
 mkdir -p "$WORK"
+# The output of the run, for a message of a trap that runs while a call has its own sent away.
+exec 3>&2
 
 req() {
   local method=$1 path=$2 body=${3:-} token
@@ -55,9 +75,23 @@ login() {
   mv "$WORK/token.new" "$WORK/token"
 }
 
+# Keeps the log and the results of the phases that ended after the container went away, trying Docker for two minutes.
+save_partial() {
+  local i
+  echo "--- stopped: $(cat "$WORK/stopped.txt")" >&3
+  for i in $(seq 1 12); do
+    docker cp "$NAME:/config/log" "$WORK/log" >/dev/null 2>&1 && break
+    sleep 10
+  done
+  cat "$WORK"/log/log_*.log >"$WORK/jellyfin.log" 2>/dev/null
+  python3 "$S/analyze.py" "$WORK" >"$WORK/results-partial.txt" 2>&1
+}
+
 cleanup() {
+  [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null
   [ -n "${SAMPLER_PID:-}" ] && kill "$SAMPLER_PID" 2>/dev/null
   [ -n "${FAKE_PIDS:-}" ] && kill $FAKE_PIDS 2>/dev/null
+  [ -s "$WORK/stopped.txt" ] && save_partial
   if [ "${KEEP:-0}" != 1 ]; then
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" >/dev/null 2>&1 || true
@@ -65,6 +99,7 @@ cleanup() {
   true
 }
 trap cleanup EXIT
+trap 'exit 3' USR1
 
 # Every second: memory as docker stats reports it, CPU, and the resident and peak resident set of the Jellyfin process.
 sample() {
@@ -77,15 +112,28 @@ sample() {
   done
 }
 
-# Prints the number of version groups in the plugin's store, read from a copy of the database and its log.
-store_groups() {
-  local copy="$WORK/store-copy" f
-  rm -rf "$copy" && mkdir -p "$copy"
-  for f in jellymesh.db jellymesh.db-wal; do
-    docker cp "$NAME:/config/plugins/Jellyfin.Plugin.JellyMesh/$f" "$copy/" >/dev/null 2>&1
+# Size and change time of the store and its WAL, which a checkpoint or a write changes.
+store_stamp() {
+  in_box 'cd /config/plugins/Jellyfin.Plugin.JellyMesh && stat -c "%n %s %.9Y" jellymesh.db jellymesh.db-wal 2>/dev/null'
+}
+
+# Reads a copy of the plugin's store and its log: the number of version groups goes to <phase>-groups.txt, and each
+# table's row count and a digest of its rows to <phase>-tables.txt, so that a phase that wrote a table shows: <phase>.
+store_snapshot() {
+  local phase=$1 copy="$WORK/store-copy" f try before state=torn
+  for try in 1 2 3 4 5; do
+    rm -rf "$copy" && mkdir -p "$copy"
+    before=$(store_stamp)
+    for f in jellymesh.db jellymesh.db-wal; do
+      docker cp "$NAME:/config/plugins/Jellyfin.Plugin.JellyMesh/$f" "$copy/" >/dev/null 2>&1
+    done
+    [ -n "$before" ] && [ "$before" = "$(store_stamp)" ] && state=whole && break
+    sleep 5
   done
+  echo "$state after $try" >"$WORK/$phase-store-copy.txt"
   python3 -I -c 'import sqlite3, sys; print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM stub_groups").fetchone()[0])' \
-    "$copy/jellymesh.db" 2>/dev/null
+    "$copy/jellymesh.db" >"$WORK/$phase-groups.txt" 2>/dev/null
+  python3 -I "$S/store_tables.py" "$copy/jellymesh.db" >"$WORK/$phase-tables.txt" 2>/dev/null
   rm -rf "$copy"
 }
 
@@ -95,7 +143,7 @@ snapshot() {
   get /JellyMesh/Admin/Sync >"$WORK/$phase-status.json"
   in_box "awk '/VmHWM|VmRSS/ { print \$1, int(\$2 / 1024) }' /proc/$JPID/status; echo cgroup-peak \$(( \$(cat /sys/fs/cgroup/memory.peak) / 1048576 ))" >"$WORK/$phase-memory.txt"
   in_box "for f in \$(find /config -name 'jellymesh.db*'); do echo \$(basename \$f) \$(stat -c '%s %.3Y' \$f); done" >"$WORK/$phase-files.txt"
-  store_groups >"$WORK/$phase-groups.txt"
+  store_snapshot "$phase"
   # After the scan: the films and episodes Jellyfin lists, by how many versions each one holds.
   [ -f "$WORK/scan-requested" ] && get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSourceCount' |
     jq -c '[.Items[] | .MediaSourceCount // 0] | group_by(.) | map({versions: .[0], items: length})' >"$WORK/$phase-links.txt"
@@ -141,15 +189,19 @@ FAKE_PIDS=
 touch "$WORK/hold"
 for n in $(seq 1 "$REMOTES"); do
   echo "--- fake remote $n on :$((FAKE + n - 1))"
-  SCALE_HOLD="$WORK/hold" SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" \
+  SCALE_HOLD="$WORK/hold" SCALE_SERVER_ID=$(printf '%032x' $((0x8000 + n))) SCALE_SERVER_NAME="scale-remote-$n" SCALE_SERVER_INDEX="$n" \
     python3 "$S/fake_remote.py" "$((FAKE + n - 1))" "$WORK/requests.log" >"$WORK/fake-$n.out" 2>&1 &
   FAKE_PIDS="$FAKE_PIDS $!"
 done
+[ "$TRACKS" -gt 0 ] && python3 "$S/fake_remote.py" --expect "$REMOTES" | tee "$WORK/music-expected.txt"
 
 echo "--- consumer $NAME on :$PORT"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" >/dev/null 2>&1 || true
+# The library options do not reach the artists that the stock ArtistsPostScanTask looks up on MusicBrainz, so its name and
+# TheAudioDB's resolve to nowhere: invented artists must not be asked of a public service.
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:8096" --add-host host.docker.internal:host-gateway \
+  --add-host musicbrainz.org:127.0.0.1 --add-host www.theaudiodb.com:127.0.0.1 \
   -e TZ=UTC -v "$NAME-config:/config" -v "$NAME-cache:/cache" -v "$NAME-fed:/federata" "$IMAGE" >/dev/null
 wait_ready
 sleep 3
@@ -162,6 +214,8 @@ NUGET_VOLUME=jellymesh-nuget bash "$TREE/tests/Integration/scripts/install-plugi
 sleep 3
 wait_ready
 login
+python3 -I "$S/watch_container.py" "$NAME" "$WORK/stopped.txt" "${SCALE_WATCH_S:-5}" &
+WATCH_PID=$!
 JPID=$(in_box 'for p in /proc/[0-9]*; do tr "\0" " " <$p/cmdline 2>/dev/null | grep -q "jellyfin.dll\|/jellyfin/jellyfin" && { echo ${p#/proc/}; break; }; done')
 echo "Jellyfin process: $JPID"
 # No scheduled sync during the measurement: every sync here is started by hand.
@@ -208,24 +262,71 @@ if [ "${SCALE_SCAN:-0}" = 1 ]; then
     films="$films&paths=/federata/$server/Film"
     shows="$shows&paths=/federata/$server/Serie"
   done
-  post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false$films" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
-  post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false$shows" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  [ "${SCALE_FILMS:-5000}" -gt 0 ] &&
+    post "/Library/VirtualFolders?name=Films&collectionType=movies&refreshLibrary=false$films" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  [ "${SCALE_SERIES:-500}" -gt 0 ] &&
+    post "/Library/VirtualFolders?name=Shows&collectionType=tvshows&refreshLibrary=false$shows" '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
+  if [ "$TRACKS" -gt 0 ]; then
+    # The music folders are where the status page says to add them, one per server and remote library. No online
+    # fetcher: stock asks MusicBrainz for every album and artist otherwise, which for invented names only waits on it.
+    music=$(get /JellyMesh/Admin/Status | jq -r '[.Servers[].AutomaticLibraries.ManualPaths[]? | select(.LibraryType == "music") | "&paths=" + (.Path | @uri)] | join("")')
+    offline='{"LibraryOptions":{"EnableInternetProviders":false,"EnableLUFSScan":false,"TypeOptions":['
+    offline+='{"Type":"MusicArtist","MetadataFetchers":[],"MetadataFetcherOrder":[],"ImageFetchers":[],"ImageFetcherOrder":[]},'
+    offline+='{"Type":"MusicAlbum","MetadataFetchers":[],"MetadataFetcherOrder":[],"ImageFetchers":[],"ImageFetcherOrder":[]},'
+    offline+='{"Type":"Audio","MetadataFetchers":[],"MetadataFetcherOrder":[],"ImageFetchers":[],"ImageFetcherOrder":[]}]}}'
+    if [ -n "$music" ]; then
+      post "/Library/VirtualFolders?name=Music&collectionType=music&refreshLibrary=false$music" "$offline" >/dev/null
+    else
+      echo "the status page lists no music folder: no Music library" | tee "$WORK/scan-music.txt"
+    fi
+  fi
   echo "$(now_ms)" >"$WORK/scan-requested"
   post /Library/Refresh >/dev/null
   sleep 10
-  for i in $(seq 1 7200); do
+  # SCALE_SCAN_WAIT_S caps the wait (4 h by default); scan-state.txt says whether the scan ended within it.
+  scan_end=$(( $(date +%s) + ${SCALE_SCAN_WAIT_S:-14400} ))
+  while [ "$(date +%s)" -lt "$scan_end" ]; do
     [ "$(get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | .State')" = Idle ] && break
     sleep 2
   done
+  get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | "\(.State) \(.CurrentProgressPercentage // "-")"' >"$WORK/scan-state.txt"
   echo "$(now_ms)" >"$WORK/scan-seen"
   snapshot scan
   get '/Items?Recursive=true&IncludeItemTypes=Movie,Episode,Series&Limit=0' | jq -r .TotalRecordCount >"$WORK/scan-items.txt"
+  [ "$TRACKS" -gt 0 ] && for type in Audio MusicAlbum MusicArtist; do
+    echo "$type $(get "/Items?Recursive=true&IncludeItemTypes=$type&Limit=0" | jq -r .TotalRecordCount)"
+  done >"$WORK/scan-music-items.txt"
   echo "--- scan done: $(cat "$WORK/scan-items.txt") items"
   measure incremental-scanned start_incremental
   measure incremental-scanned-again start_incremental
   measure incremental-scanned-third start_incremental
   measure nightly-scanned start_nightly
   measure incremental-after-nightly start_incremental
+  # The provider guard reads the libraries on each peer request: /Library/VirtualFolders runs the same read, /System/Info
+  # is an authenticated call that reads none. Timed with the scanned libraries, then with ten more of two empty paths each.
+  # Calls the two in turn 300 times, so that a change of load on the host weighs on both alike.
+  time_pair() {
+    local i token
+    token=$(cat "$WORK/token")
+    for i in $(seq 1 300); do
+      for path in /Library/VirtualFolders /System/Info; do
+        echo "$path $(curl -sS -o /dev/null -w '%{time_total}' -H "$ACCEPT" -H "Authorization: $AUTH, Token=\"$token\"" "$U$path")"
+      done
+    done | sort -k1,1 -k2,2n | awk '{ n[$1]++; v[$1, n[$1]] = $2 }
+      END { for (p in n) printf "%s %.2f ms median, %.2f ms fastest\n", p, v[p, int((n[p] + 1) / 2)] * 1000, v[p, 1] * 1000 }'
+  }
+  library_read() {
+    echo "libraries-$1 $(get /Library/VirtualFolders | jq length)"
+    time_pair | sed "s|^/Library/VirtualFolders|virtual-folders-$1|; s|^/System/Info|system-info-$1|" | sort
+  }
+  {
+    library_read scanned
+    for n in $(seq 1 10); do
+      in_box "mkdir -p /tmp/extra/$n/a /tmp/extra/$n/b"
+      post "/Library/VirtualFolders?name=Extra$n&collectionType=music&refreshLibrary=false&paths=/tmp/extra/$n/a&paths=/tmp/extra/$n/b" '{"LibraryOptions":{}}' >/dev/null
+    done
+    library_read extra
+  } >"$WORK/library-read.txt"
 fi
 
 sleep 3

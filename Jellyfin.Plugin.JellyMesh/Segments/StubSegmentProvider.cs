@@ -44,7 +44,7 @@ public sealed class StubSegmentProvider : IMediaSegmentProvider
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return ValueTask.FromResult(Segments() is { } segments && segments.Supports(item.Id));
+        return ValueTask.FromResult(item is Video && Segments() is { } segments && segments.Supports(item.Id));
     }
 
     /// <inheritdoc />

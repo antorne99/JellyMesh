@@ -258,7 +258,7 @@ public sealed class VersionLinker : IVersionLinker
             return [];
         }
 
-        var run = new Run(root, true, _index, _library);
+        var run = new Run(root, true, _index, _library, everyKind: true);
         run.KnowItemsOf(stubs);
         return await DetachEachAsync(stubs, run, cancellationToken).ConfigureAwait(false);
     }
@@ -506,7 +506,7 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     // What one run looks up once: the quality of the stubs and the collections.
-    private sealed class Run(string root, bool thorough, IFederationIndex index, ILibraryManager library)
+    private sealed class Run(string root, bool thorough, IFederationIndex index, ILibraryManager library, bool everyKind = false)
     {
         private const int KnownChunk = 1000;
 
@@ -536,7 +536,7 @@ public sealed class VersionLinker : IVersionLinker
         public void KnowItemsOf(IEnumerable<StubEntry> stubs)
         {
             _known.Clear();
-            foreach (var chunk in stubs.SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
+            foreach (var chunk in stubs.Where(MayBeVersion).SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
             {
                 foreach (var video in library.GetItemList(new InternalItemsQuery { ItemIds = chunk }).OfType<Video>())
                 {
@@ -545,8 +545,14 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
+        // The links of the stub's item, null for a kind the run does not read.
         public ItemLinks? FindStub(StubEntry stub)
         {
+            if (!MayBeVersion(stub))
+            {
+                return null;
+            }
+
             if (IdsOf(stub).Select(id => _known.GetValueOrDefault(id)).OfType<ItemLinks>().FirstOrDefault() is { } links)
             {
                 return links;
@@ -557,6 +563,9 @@ public sealed class VersionLinker : IVersionLinker
 
         // The links of any item, from the block read or else looked up.
         public ItemLinks? Find(Guid id) => _known.TryGetValue(id, out var links) ? links : library.GetItemById(id) is Video video ? LinksOf(video, this) : null;
+
+        // A removal reads every kind, since a library of another type may have made a video of any stub (Q351).
+        private bool MayBeVersion(StubEntry stub) => everyKind || StubItemTypes.IsVideo(stub.Kind);
 
         // The item of the stub's path as Jellyfin names a film or an episode, then as a plain video.
         private Guid[] IdsOf(StubEntry stub)

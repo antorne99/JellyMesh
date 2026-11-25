@@ -15,6 +15,7 @@ using MediaBrowser.Controller.Library;
 using Moq;
 using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
+using Xunit.Abstractions;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
@@ -34,11 +35,13 @@ public sealed class VersionCheckCostTests : IDisposable
     private readonly Mock<ILibraryManager> _library = new();
     private readonly Mock<IFederationIndex> _index = new();
     private readonly Dictionary<Guid, BaseItem> _items = [];
+    private readonly ITestOutputHelper _output;
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StubRegistry _registry;
 
-    public VersionCheckCostTests()
+    public VersionCheckCostTests(ITestOutputHelper output)
     {
+        _output = output;
         _store.Configuration.FederatedFolderPath = "/federata";
         _database = new TestDatabase(_data);
         _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
@@ -147,6 +150,7 @@ public sealed class VersionCheckCostTests : IDisposable
             fastest = watch.Elapsed < fastest ? watch.Elapsed : fastest;
         }
 
+        _output.WriteLine($"fastest: {fastest.TotalMilliseconds:F2} ms");
         Assert.True(fastest < limit, $"The checks of {Checked} items took {fastest.TotalMilliseconds:F1} ms at best.");
     }
 }

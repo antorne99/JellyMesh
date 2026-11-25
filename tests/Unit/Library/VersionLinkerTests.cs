@@ -433,6 +433,29 @@ public sealed class VersionLinkerTests : IDisposable
         }
     }
 
+    // A track and a book are never versions: a run reads nothing of them, by ID or by path.
+    [Theory]
+    [InlineData(false, StubKind.Track)]
+    [InlineData(true, StubKind.Track)]
+    [InlineData(false, StubKind.Book)]
+    [InlineData(true, StubKind.Book)]
+    public async Task AStubThatIsNoVideoIsNotReadFromTheLibrary(bool thorough, StubKind kind)
+    {
+        var film = Stub("film", _serverA, 1080);
+        var other = Stub("other", _serverB, 2160) with { Kind = kind };
+        await SaveAsync([film, other]);
+        var item = Scanned(film);
+        var path = FederatedPaths.Resolve(Root, other.RelativePath);
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(item.Id))), Times.Once);
+        _library.Verify(
+            library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(IdOf(path, StubItemTypes.Of(kind))) || query.ItemIds.Contains(IdOf(path, typeof(Video))))),
+            Times.Never);
+        _library.Verify(library => library.FindByPath(path, It.IsAny<bool?>()), Times.Never);
+    }
+
     // Q387: the link state comes from block reads; a group already linked costs no lookup of its own.
     [Theory]
     [InlineData(false)]
@@ -1228,8 +1251,11 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     // Q351: the old path of a stub that left the registry has no kind, so its item is found by path whatever kind is given.
-    [Fact]
-    public async Task AnEntryAboutToBeRemovedIsFoundByPathWhateverItsKind()
+    [Theory]
+    [InlineData(StubKind.Movie)]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.Book)]
+    public async Task AnEntryAboutToBeRemovedIsFoundByPathWhateverItsKind(StubKind kind)
     {
         var episode = Stub("se", _serverA, 1080, StubKind.Episode);
         await SaveAsync([]);
@@ -1238,7 +1264,7 @@ public sealed class VersionLinkerTests : IDisposable
         item.SetPrimaryVersionId(local.Id);
         local.LinkedAlternateVersions = [Link(item.Id)];
 
-        Assert.Empty(await _linker.DetachForRemovalAsync([episode with { Kind = StubKind.Movie }], CancellationToken.None));
+        Assert.Empty(await _linker.DetachForRemovalAsync([episode with { Kind = kind }], CancellationToken.None));
 
         Assert.Null(item.PrimaryVersionId);
         Assert.Empty(local.LinkedAlternateVersions);

@@ -1,3 +1,64 @@
+# Row 932 (F65), new plugin at ce1d457: three remotes of 100,000 tracks, stopped in the scan, on 2026-11-24
+
+No other agent was running, load 3.6-6.5. MusicBrainz and TheAudioDB blocked, container cap 5500 MiB without swap.
+The run was stopped by its own disk guard (under 6 GiB free on the host) about a minute into the scan: the host went from
+14.3 GiB free to 5.9, with 6.5 of 8 GiB of swap used; removing the container and its volumes gave back 3.8 GiB. So no
+scanned phase was measured and the 30 s of an unchanged sync at 300,000 scanned tracks are NOT MEASURED. The run needs
+about 10 GiB of free host disk (19.5 to 9.7 GiB on 2026-11-23), plus the 6 GiB of the guard.
+
+first        99.3 s (read 26.4, materialization 72.9)
+incremental  13.8 s (read 0.6, materialization 13.2), no item scanned yet: not the sync of row 388
+repeat       78.4 s (read 46.2, materialization 32.1)
+nightly      274.8 s (read 55.1, materialization 219.6, version links 0.0)
+Unchanged syncs and the nightly change only sync_runs and sync_run_servers in the store. VmHWM 4.4 GiB, the cgroup reached
+the cap (page cache included, 3641 reclaims, no OOM), VM available memory never under 2.4 GiB. Kestrel logged a heartbeat
+13.8 s late during repeat, cause not known. These runs are not alternated with the old plugin, whose runs had no cap, so
+they are no before and after.
+versions/run.sh: 76 checks ok, 0 failed, with the plugin of ce1d457, from a copy of the proof that uses the library folders
+and no plugin-made library; the proof in the repository looks for the stubs in the old folders and fails 26 checks.
+
+# Row 932 (F65): three remotes of 100,000 tracks, measured on 2026-11-23
+
+Plugin eb1f949 is "old"; "new" also has the commits that skip the stubs that are no video when linking versions, answer
+that a non-video item has no segments without a library read, and keep detaching a removed stub whatever its kind.
+Jellyfin 12.4, fakes without delay, images on. No phase of the 3 x 100,000 scanned run has been measured on either plugin.
+
+Every number below was taken with other agents' builds on the same 8 GB VM (load 6-31), so compare only the pairs that
+alternate. The unscanned 3 x 100,000 figures were taken from 10:46 local, before the heavy load from about 11:25Z.
+
+3 x 100,000 unscanned, old        first 65.9 s (read 18.8, materialization 45.6), incremental 12.7 s, repeat 42.0 s,
+                                  nightly 341.0 s (materialization 171.1, after it 137.1); process VmHWM 4.8, 4.9, 5.8,
+                                  6.6 GiB, cgroup peak 6.9 of the VM's 7.65 GiB. An unchanged sync changes only
+                                  sync_runs and sync_run_servers in the store.
+3 x 100,000 scanned, old          NOT measured: the library walk took 35 min, ArtistsPostScanTask 5:53 with public
+                                  MusicBrainz lookups, CollectionPosterVerifyPostScanTask had not ended after 59 min,
+                                  then the process was OOM-killed (11:36Z; that the other agents' load caused it is
+                                  likely, not shown).
+
+3 x 30,000 (90,000 tracks), old, MusicBrainz and TheAudioDB blocked, load 6-20, 4 GiB container cap set by docker update
+at about 12:08Z, during the scan:
+  first 217.8 s, incremental 24.4, repeat 61.0, nightly 411.6, scan 2412.5 s (library walk 26 min, StubCleanupTask 41 s,
+  ArtistsPostScanTask 4:13, CollectionPosterVerify 8:45 with no segment task running beside it), incremental scanned and
+  not skipped 65.2 s (read 0.7, materialization 19.1, version links 45.5, 0 items read), skipped 1.1 and 0.6 s.
+  VmHWM 2872 MiB, the cgroup reached the cap (page cache included, 5023 reclaims, no OOM). nightly scanned: not completed.
+  An unchanged sync changes only sync_runs and sync_run_servers.
+
+Old against new on that library, alternated, load 22-31: incremental not skipped 94.8 and 116.0 s old, 37.7 and 84.1 s
+new; version links alone 53.7 and 60.5 s old, 0.1 s new. At load about 9-10: 47.9 s old, 22.5 and 14.9 s new, then 0.4 and
+0.3 s skipped. Nightly on the new plugin 307.3 s, version links under 0.1 s of it (the old one was stopped unfinished, its
+stacks in the path lookup per track).
+Rescan of the same library, with the stock segment task running beside it, load 11-22, one run each: old plugin with the
+provider on 464.6 s, off (the DisabledMediaSegmentProviders library option) 458.9 s, new with it on 424.3 s, off 428.5 s;
+StubCleanupTask 58, 50, 5 and 6 s of these. The gap is the version links. The provider on or off is within noise in the
+scan and in the segment task (75 s windows, items per s, old on 48.7-180.2 and off 77.9-148.9, new on 132.6-141.0 and off
+125.0-144.8).
+CollectionPosterVerifyPostScanTask took 0 s in every rescan, so what the provider cost it in a first scan is not known.
+Checked live on 12.4 with a counting build: the provider is called once per item of the task; disabled by its name it is
+not called (0 of 4,797 items walked), disabled by the id we tried (from memory) it still is (4,600 of 4,662).
+Library read with the 90,000-track library, host not quiet: /Library/VirtualFolders 19.62 ms median against 18.32 ms for
+/System/Info with one library, 27.54 against 25.11 ms with eleven: no cache needed.
+Filter: 100 items in 11.94 ms, fastest of 7, in a unit test with the Jellyfin lookups mocked.
+
 # Row 389: the first sync at 3 x 55,000, measured on 2026-11-19 (feature/perf-first-sync)
 
 Base 0eb50cb (develop) against the head of feature/perf-first-sync, with c1934e3 (series planned from their own
