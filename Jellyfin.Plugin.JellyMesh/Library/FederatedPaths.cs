@@ -18,6 +18,7 @@ public static partial class FederatedPaths
     public const string HiddenFileName = ".jellymesh";
 
     private const int MaxNameBytes = 120;
+    private const int MaxFileNameBytes = 255;
     private const int MaxLabelLength = 40;
     private const int GuidDigits = 8;
     private const string FallbackName = "Untitled";
@@ -200,6 +201,20 @@ public static partial class FederatedPaths
         var others = stored.Where(entry => entry.Key != serverId).ToDictionary(entry => entry.Key, entry => entry.Value);
         var label = Labels([(serverId, name)], others)[serverId];
         return stored.TryGetValue(serverId, out var current) && string.Equals(current, label, StringComparison.OrdinalIgnoreCase) ? current : label;
+    }
+
+    /// <summary>
+    /// Tells whether each name of a path is short enough for a file system that counts its bytes.
+    /// </summary>
+    /// <param name="relativePath">The path.</param>
+    /// <returns>True if all names fit.</returns>
+    public static bool FitsInNames(string relativePath)
+    {
+        ArgumentNullException.ThrowIfNull(relativePath);
+
+        return relativePath
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .All(name => Encoding.UTF8.GetByteCount(name) <= MaxFileNameBytes);
     }
 
     /// <summary>

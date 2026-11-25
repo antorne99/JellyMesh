@@ -455,14 +455,32 @@ public static class StubPlanner
             .ToList();
     }
 
+    // The path that is kept. One that was never written because a name is too long changes if the new one fits.
+    private static string PathOf(StubPlanInput input, string? kept, string? contentHash, Func<string> newPath)
+    {
+        if (kept is null)
+        {
+            return newPath();
+        }
+
+        if (contentHash is not null || FederatedPaths.FitsInNames(kept) || input.IsOnDisk(kept))
+        {
+            return kept;
+        }
+
+        var planned = newPath();
+        return FederatedPaths.FitsInNames(planned) ? planned : kept;
+    }
+
     private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, Func<string, string> newPath)
     {
         var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? newPath(id);
+        var relative = PathOf(input, stub?.RelativePath, stub?.ContentHash, () => newPath(id));
         var folder = Path.GetDirectoryName(relative)!;
 
         var entry = (stub ?? NewEntry(id, StubKind.Movie, relative)) with
         {
+            RelativePath = relative,
             ServerId = serverId,
             IdentityKey = content.Identity.Key,
             Sources = SourcesOf(content, catalog)
@@ -490,7 +508,7 @@ public static class StubPlanner
         var number = content.Identity.EpisodeNumber!.Value;
         var last = content.EpisodeNumberEnd;
         var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label);
+        var relative = PathOf(input, stub?.RelativePath, stub?.ContentHash, () => FederatedPaths.EpisodeStub(series.Entry.RelativePath, series.FileName, season, number, last, label));
         var stem = Path.ChangeExtension(relative, null);
 
         // A stub that stays in the folder of another season number gets no season files there.
@@ -502,12 +520,13 @@ public static class StubPlanner
 
         var entry = (stub ?? NewEntry(id, StubKind.Episode, relative)) with
         {
+            RelativePath = relative,
             ServerId = serverId,
             IdentityKey = content.Identity.Key,
             Sources = SourcesOf(content, catalog),
 
             // A stub stays in the series folder it was created in, even after two series became one work.
-            SeriesStubId = stub?.SeriesStubId ?? series.Entry.Id,
+            SeriesStubId = stub?.RelativePath == relative ? stub.SeriesStubId ?? series.Entry.Id : series.Entry.Id,
             SeasonNumber = season,
             EpisodeNumber = number,
             EpisodeNumberEnd = last,
@@ -565,13 +584,14 @@ public static class StubPlanner
         var metadata = SeriesMetadata(remote, local, input.IsProtected);
         var name = metadata.Title ?? remote.Name;
         var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? scope.NewFolder(name, metadata.Year, id);
+        var relative = PathOf(input, stub?.RelativePath, stub?.ContentHash, () => scope.NewFolder(name, metadata.Year, id));
 
         var nfo = NfoDocument.Series(metadata);
         var images = new List<StubImage>();
         var imageTag = SeriesImages(images, relative, local, remote, source.ServerId);
         var entry = (stub ?? new SeriesStub { Id = id, RelativePath = relative, WorkKey = workKey, NeedsRefresh = true }) with
         {
+            RelativePath = relative,
             ServerId = scope.ServerId,
             WorkKey = workKey,
             Sources = known.Select(item => new StubSource(item.ServerId, item.Item.ItemId, string.Empty)).ToList()

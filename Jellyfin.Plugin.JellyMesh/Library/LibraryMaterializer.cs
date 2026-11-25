@@ -243,7 +243,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
         _refresher?.Request(view.LocalItemsAwaitingRefresh);
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null) { WritesCollections = writesCollections });
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null)
+        {
+            WritesCollections = writesCollections,
+            IsOnDisk = path => Path.Exists(FederatedPaths.Resolve(root, path))
+        });
 
         WriteServerFolders(root, servers);
 

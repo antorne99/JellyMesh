@@ -104,7 +104,8 @@ public class ServerStubPlannerTests
         IReadOnlyList<ServerCatalog> catalogs,
         StubState? state = null,
         IReadOnlyList<RemoteServerInfo>? servers = null,
-        LocalSeries? localSeries = null)
+        LocalSeries? localSeries = null,
+        Func<string, bool>? isOnDisk = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = catalogs };
         return StubPlanner.PlanByServer(new StubPlanInput(
@@ -114,7 +115,10 @@ public class ServerStubPlannerTests
             servers ?? [Server(_serverA, "Casa"), Server(_serverB, "Ufficio")],
             true,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => localSeries));
+            _ => localSeries)
+        {
+            IsOnDisk = isOnDisk ?? (_ => true)
+        });
     }
 
     private static StubWork On(StubPlan plan, Guid server) => Assert.Single(plan.Stubs, stub => stub.Entry.ServerId == server);
@@ -324,6 +328,43 @@ public class ServerStubPlannerTests
         Assert.Equal(2, group.StubIds.Count);
         Assert.DoesNotContain("flat", group.StubIds);
         Assert.Contains(flat, plan.State.Stubs);
+    }
+
+    // Row 555: the path of a stub that was never written because its name is too long changes, unless it is on the disk.
+    [Theory]
+    [InlineData(false, null, true)]
+    [InlineData(true, null, false)]
+    [InlineData(false, "hash", false)]
+    public void OnlyAStubThatWasNeverWrittenLeavesItsLongName(bool isOnDisk, string? contentHash, bool moves)
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m")) };
+        var first = Plan([Title("k", OnA("m"))], catalogs);
+        var kept = Path.Combine(A, "Film", new string('漢', 120), "x.strm");
+        var state = first.State with { Stubs = [first.State.Stubs[0] with { RelativePath = kept, ContentHash = contentHash }] };
+
+        var stub = Assert.Single(Plan([Title("k", OnA("m"))], catalogs, state, isOnDisk: _ => isOnDisk).State.Stubs);
+
+        Assert.Equal(first.State.Stubs[0].Id, stub.Id);
+        Assert.Equal(moves ? first.State.Stubs[0].RelativePath : kept, stub.RelativePath);
+    }
+
+    [Fact]
+    public void AStubKeepsItsLongNameWhenTheNewOneIsTooLongToo()
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m", new string('漢', 120))) };
+        var servers = new[] { Server(_serverA, new string('漢', 40)) };
+        var first = Plan([Title("k", OnA("m"))], catalogs, servers: servers);
+        var kept = Path.Combine(A, "Film", new string('漢', 120), "x.strm");
+        var state = first.State with
+        {
+            Stubs = [first.State.Stubs[0] with { RelativePath = kept }],
+            Labels = new Dictionary<Guid, string> { [_serverA] = new string('漢', 60) }
+        };
+
+        var stub = Assert.Single(Plan([Title("k", OnA("m"))], catalogs, state, servers, isOnDisk: _ => false).State.Stubs);
+
+        Assert.Equal(first.State.Stubs[0].Id, stub.Id);
+        Assert.Equal(kept, stub.RelativePath);
     }
 
     [Fact]

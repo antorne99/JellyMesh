@@ -26,4 +26,7 @@ public sealed record StubPlanInput(
 {
     /// <summary>Gets a value indicating whether films carry the collection of their remote.</summary>
     public bool WritesCollections { get; init; }
+
+    /// <summary>Gets the check for a relative path on the disk. Without it, no path that is kept changes.</summary>
+    public Func<string, bool> IsOnDisk { get; init; } = _ => true;
 }
