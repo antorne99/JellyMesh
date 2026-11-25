@@ -765,7 +765,7 @@ public class ProviderCatalogTests
         const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
         var strm = Guid.Parse("60000000-0000-0000-0000-00000000000b");
         _fixture.AddItem(strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
-        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Video, Path = Secret }, new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = Secret });
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Video, Path = Secret }, new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = Secret, DeliveryUrl = Secret });
         var source = dto.MediaSources[0];
         source.Id = (isStrm ? strm : ProviderFixture.SharedItem).ToString("N");
         source.Protocol = protocol;
@@ -782,12 +782,14 @@ public class ProviderCatalogTests
         Assert.Null(sent.EncoderPath);
         Assert.Empty(sent.RequiredHttpHeaders);
         Assert.All(sent.MediaStreams, stream => Assert.Null(stream.Path));
+        Assert.All(sent.MediaStreams, stream => Assert.Null(stream.DeliveryUrl));
     }
 
     [Fact]
-    public void A_file_of_this_server_keeps_its_headers_in_the_catalog()
+    public void A_file_of_this_server_keeps_its_headers_and_delivery_urls_in_the_catalog()
     {
-        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Video, Path = "/media/secret.mkv" });
+        const string Subtitle = "/Videos/a/a/Subtitles/1/0/Stream.vtt";
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = "/media/secret.srt", DeliveryUrl = Subtitle });
         dto.MediaSources[0].RequiredHttpHeaders = new() { ["X-Kept"] = "kept" };
         _fixture.WithDtos(dto);
 
@@ -797,6 +799,7 @@ public class ProviderCatalogTests
         Assert.Null(sent.Path);
         Assert.Null(sent.MediaStreams[0].Path);
         Assert.Equal("kept", sent.RequiredHttpHeaders["X-Kept"]);
+        Assert.Equal(Subtitle, sent.MediaStreams[0].DeliveryUrl);
     }
 }
 

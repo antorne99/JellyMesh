@@ -43,7 +43,7 @@ public class PeerPlaybackInfoVersionTests
         source.Path = url;
         source.EncoderPath = url;
         source.RequiredHttpHeaders = new() { ["Authorization"] = url };
-        source.MediaStreams = [new MediaStream { Index = 0, Type = MediaStreamType.Video, Path = url }, new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, Path = url }];
+        source.MediaStreams = [new MediaStream { Index = 0, Type = MediaStreamType.Video, Path = url }, new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, Path = url, DeliveryUrl = url }];
         return source;
     }
 
@@ -221,13 +221,17 @@ public class PeerPlaybackInfoVersionTests
     [Fact]
     public async Task The_answer_for_a_file_of_this_server_is_left_as_stock_gives_it()
     {
+        const string Subtitle = "/Videos/a/a/Subtitles/1/0/Stream.vtt";
         var source = Source(ProviderFixture.SharedItem);
         source.Path = "/media/film/a.mkv";
+        source.MediaStreams = [new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, DeliveryUrl = Subtitle }];
         var answer = Answer(source);
 
         await RunAsync(answer, new PostedBody());
 
-        Assert.Equal("/media/film/a.mkv", Assert.Single(((PlaybackInfoResponse)answer.Value!).MediaSources).Path);
+        var sent = Assert.Single(((PlaybackInfoResponse)answer.Value!).MediaSources);
+        Assert.Equal("/media/film/a.mkv", sent.Path);
+        Assert.Equal(Subtitle, sent.MediaStreams[0].DeliveryUrl);
     }
 
     [Fact]
