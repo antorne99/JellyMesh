@@ -465,9 +465,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 : Unavailable(itemId);
         }
 
-        // A book goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
-        var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
-        if (stub.Kind == StubKind.Book)
+        // A book or a photo goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
+        var mediaType = stub.Kind switch
+        {
+            StubKind.Book => BookPlaceholders.MediaTypeOf(stub.RelativePath),
+            StubKind.Photo => PhotoPlaceholders.MediaTypeOf(stub.RelativePath),
+            _ => null
+        };
+        if (mediaType is not null)
         {
             http.Response.Headers.XContentTypeOptions = "nosniff";
         }
@@ -475,7 +480,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (action == DownloadAction)
         {
             var disposition = new ContentDispositionHeaderValue("attachment");
-            disposition.SetHttpFileName(stub.Kind == StubKind.Book ? Path.GetFileName(stub.RelativePath) : DownloadName(stub.RelativePath, opened.Headers.ContentType));
+            disposition.SetHttpFileName(stub.Kind is StubKind.Book or StubKind.Photo ? Path.GetFileName(stub.RelativePath) : DownloadName(stub.RelativePath, opened.Headers.ContentType));
             http.Response.Headers.ContentDisposition = disposition.ToString();
         }
 
@@ -523,7 +528,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return await _audio.ServeAsync(context, new AudioAccess(authorization.User!.Id, authorization.DeviceId ?? string.Empty, authorization.Token, track), stub).ConfigureAwait(false);
     }
 
-    // A 503, with a text for a book placeholder, whose readers show it.
+    // A 503, with a text for a book or photo placeholder, whose readers show it.
     private IActionResult Unavailable(Guid itemId)
     {
         return _stubs.IsPlaceholder(itemId)

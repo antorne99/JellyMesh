@@ -173,6 +173,15 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
         Recorded.Add(result.Failure);
         return result;
     }
+
+    /// <summary>Gets how many calls ran as anonymous.</summary>
+    public int AnonymousCalls { get; private set; }
+
+    public Task<RemoteResult<T>> RunAnonymousCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
+    {
+        AnonymousCalls++;
+        return RunWithSessionAsync(serverId, call, cancellationToken);
+    }
 }
 
 /// <summary>A remote scripted per test. Records what is asked of it, per item path.</summary>

@@ -106,6 +106,75 @@ public sealed class TypeStubRemoverTests : IDisposable
     }
 
     [Fact]
+    public void APhotoTakesOnlyItsOwnFile()
+    {
+        var gone = Stub("p1", StubKind.Photo, HomeFolder("Trips", "IMG_0001.jpg"), "folder.jpg");
+        var other = Stub("p2", StubKind.Photo, HomeFolder("Trips", "IMG_0001.png"));
+        var video = Stub("v1", StubKind.HomeVideo, HomeFolder("Trips", "IMG_0001-thumb [abcdef12].strm"));
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [gone, other, video] }, [gone]);
+
+        Assert.Equal([other, video], removal.State.Stubs);
+        Assert.Equal(
+            ["IMG_0001-thumb [abcdef12].strm", "IMG_0001.png", "folder.jpg"],
+            Directory.GetFiles(Abs(HomeFolder("Trips"))).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void TheLastPhotoOfAnAlbumTakesItsCoverAndTheFoldersItLeavesEmpty()
+    {
+        var gone = Stub("p1", StubKind.Photo, HomeFolder("Trips", "Sea", "IMG_0001.jpg"), "folder.jpg");
+        File.WriteAllText(Abs(HomeFolder("Trips", "folder.png")), "x");
+        var kept = Stub("v2", StubKind.HomeVideo, HomeFolder("Other.strm"));
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [gone, kept] }, [gone]);
+
+        Assert.Equal(kept, Assert.Single(removal.State.Stubs));
+        Assert.Empty(removal.Failures);
+        Assert.False(Directory.Exists(Abs(HomeFolder("Trips"))));
+        Assert.True(File.Exists(Abs(HomeFolder("Other.strm"))));
+    }
+
+    [Fact]
+    public void AnAlbumWithAPhotoLeftKeepsItsCover()
+    {
+        var gone = Stub("p1", StubKind.Photo, HomeFolder("Trips", "IMG_0001.jpg"), "folder.jpg");
+        var kept = Stub("p2", StubKind.Photo, HomeFolder("Trips", "IMG_0002.jpg"));
+
+        _remover.RemoveAll(_root, new StubState { Stubs = [gone, kept] }, [gone]);
+
+        Assert.Equal(
+            ["IMG_0002.jpg", "folder.jpg"],
+            Directory.GetFiles(Abs(HomeFolder("Trips"))).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AHomeVideoNamedFolderIsNotTakenForTheCover()
+    {
+        var gone = Stub("p1", StubKind.Photo, HomeFolder("Trips", "IMG_0001.jpg"), "folder.jpg");
+        var video = Stub("v1", StubKind.HomeVideo, HomeFolder("Trips", "folder.strm"), "folder.nfo");
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [gone, video] }, [gone]);
+
+        Assert.Equal(video, Assert.Single(removal.State.Stubs));
+        Assert.Equal(
+            ["folder.jpg", "folder.nfo", "folder.strm"],
+            Directory.GetFiles(Abs(HomeFolder("Trips"))).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AFolderWithAnotherFileThanTheCoverStays()
+    {
+        var gone = Stub("p1", StubKind.Photo, HomeFolder("Trips", "IMG_0001.jpg"), "folder.jpg", "folder.old.jpg");
+
+        _remover.RemoveAll(_root, new StubState { Stubs = [gone] }, [gone]);
+
+        Assert.Equal(
+            ["folder.jpg", "folder.old.jpg"],
+            Directory.GetFiles(Abs(HomeFolder("Trips"))).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public void AMusicVideoTakesItsTitleFolder()
     {
         var folder = Path.Combine(FederatedPaths.TypeFolderOf(_server, TestLibraries.MusicVideos, TypeFolder.MusicVideos), "Song (2019)");

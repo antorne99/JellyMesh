@@ -65,6 +65,17 @@ public static class PlaybackTimeouts
     public static readonly TimeSpan FileRefusalMemory = TimeSpan.FromSeconds(15);
 
     /// <summary>
+    /// The longest a client may take to read the image of a photo, so that a slow one does not hold it in memory.
+    /// </summary>
+    public static readonly TimeSpan PhotoImageWrite = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// How long no image of a photo is asked of a server that did not answer or whose login was refused, so that a page of photos
+    /// does not repeat the login or the wait for each one.
+    /// </summary>
+    public static readonly TimeSpan PhotoServerPause = TimeSpan.FromSeconds(10);
+
+    /// <summary>
     /// How long a source that stopped serving a user during playback goes after the others for that user and title, and how
     /// long its failure counts towards <see cref="PlaybackLimits.Reconnections"/> (row 57).
     /// </summary>

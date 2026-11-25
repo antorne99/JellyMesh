@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -221,6 +222,16 @@ public sealed class StubLookup
     public bool IsPlaceholder(Guid itemId) => IsPlaceholder(_libraryManager.GetItemById(itemId));
 
     /// <summary>
+    /// Tells whether an item is a photo stub: a photo of the federated folder, or one whose Primary is a thumbnail of the
+    /// plugin while the folder is not known.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a photo stub, even one the registry does not know.</returns>
+    public bool IsPhotoStub(Guid itemId)
+        => _libraryManager.GetItemById(itemId) is Photo photo
+            && (PlaceholderPath(photo) is not null || PhotoThumbnails.IsThumbnail(photo.GetImageInfo(ImageType.Primary, 0)?.Path));
+
+    /// <summary>
     /// Finds the stub of an item.
     /// </summary>
     /// <param name="itemId">The item.</param>
@@ -354,10 +365,10 @@ public sealed class StubLookup
 
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
 
-    // The path of a book in the federated folder, also through an alias of it, spelled under the folder; else null.
+    // The path of a book or a photo in the federated folder, also through an alias of it, spelled under the folder; else null.
     private string? PlaceholderPath(BaseItem? item)
     {
-        if (item is not Book { Path: { Length: > 0 } path } || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
+        if (item is not (Book or Photo) || item.Path is not { Length: > 0 } path || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
         {
             return null;
         }

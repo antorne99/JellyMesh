@@ -70,11 +70,11 @@ public sealed class StubSegments
     }
 
     /// <summary>
-    /// Tells whether an item is a stub with a source, other than a book, which has no segments (D63).
+    /// Tells whether an item is a stub with a source, other than a book or a photo, which have no segments (D63).
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>True for such a stub.</returns>
-    public bool Supports(Guid itemId) => _stubs.Find(itemId) is { Sources.Count: > 0, Kind: not StubKind.Book };
+    public bool Supports(Guid itemId) => _stubs.Find(itemId) is { Sources.Count: > 0, Kind: not (StubKind.Book or StubKind.Photo) };
 
     /// <summary>
     /// Finds the source the segments of a stub came from.
@@ -107,7 +107,7 @@ public sealed class StubSegments
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (_stubs.Find(request.ItemId) is not { Sources.Count: > 0, Kind: not StubKind.Book } stub)
+        if (_stubs.Find(request.ItemId) is not { Sources.Count: > 0, Kind: not (StubKind.Book or StubKind.Photo) } stub)
         {
             Forget(request.ItemId);
             return [];

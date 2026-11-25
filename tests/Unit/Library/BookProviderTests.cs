@@ -75,7 +75,7 @@ public sealed class BookProviderTests : IDisposable
         Assert.Equal(["Fantascienza"], item.Genres);
         Assert.Equal(["Chilton"], item.Studios);
         Assert.Equal("9780441013593", item.GetProviderId("Isbn"));
-        Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedBookMark.ProviderId));
+        Assert.Equal(Assert.Single(_fixture.Registry.State.Stubs).Id, item.GetProviderId(FederatedPlaceholderMark.ProviderId));
         Assert.Equal(isProtected, item.IsLocked);
         Assert.Empty(item.LockedFields);
     }

@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Jellyfin.Plugin.JellyMesh.Remote;
 
@@ -25,6 +26,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     /// The longest a removal waits for the remote to end its login (413).
     /// </summary>
     public static readonly TimeSpan LogoutTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// The shortest time between two log lines about the failed anonymous calls to a server (row 534), and between two about its
+    /// Server Id (row 540).
+    /// </summary>
+    public static readonly TimeSpan AnonymousLogInterval = TimeSpan.FromMinutes(5);
 
     private readonly IPluginConfigurationStore _store;
     private readonly ICredentialVault _vault;
@@ -63,10 +70,23 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         _activity = activity;
     }
 
+    // Who a call is for.
+    private enum CallOrigin
+    {
+        Server,
+        Playback,
+        Anonymous
+    }
+
     /// <summary>
     /// Gets the longest a removal waits for the logout. Shorter in tests.
     /// </summary>
     internal TimeSpan LogoutLimit { get; init; } = LogoutTimeout;
+
+    /// <summary>
+    /// Gets the clock of <see cref="AnonymousLogInterval"/>. Moved by hand in tests.
+    /// </summary>
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
 
     // Whether the registry holds in-memory state for a server. Read by tests.
     internal bool HoldsStateFor(Guid serverId) => _runtimes.ContainsKey(serverId);
@@ -545,20 +565,28 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken)
-        => RunCallAsync(serverId, call, countsForActivity: true, cancellationToken);
+        => RunCallAsync(serverId, call, CallOrigin.Server, cancellationToken);
 
     /// <inheritdoc />
     public Task<RemoteResult<T>> RunPlaybackCallAsync<T>(
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken)
-        => RunCallAsync(serverId, call, countsForActivity: false, cancellationToken);
+        => RunCallAsync(serverId, call, CallOrigin.Playback, cancellationToken);
 
-    // Runs a call with a session; only sync and admin calls tell the activity log the server went offline or came back (130).
+    /// <inheritdoc />
+    public Task<RemoteResult<T>> RunAnonymousCallAsync<T>(
+        Guid serverId,
+        Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
+        CancellationToken cancellationToken)
+        => RunCallAsync(serverId, call, CallOrigin.Anonymous, cancellationToken);
+
+    // Runs a call with a session. Only sync and admin calls tell the activity log the server went offline or came back (130),
+    // and an anonymous call records nothing and is told by one log line per interval (row 534).
     private async Task<RemoteResult<T>> RunCallAsync<T>(
         Guid serverId,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
-        bool countsForActivity,
+        CallOrigin origin,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(call);
@@ -579,14 +607,19 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
         var runtime = RuntimeOf(serverId);
 
-        var result = await CallOnceAsync(server, runtime, null, call, cancellationToken).ConfigureAwait(false);
+        var anonymous = origin == CallOrigin.Anonymous;
+        var result = await CallOnceAsync(server, runtime, null, anonymous, call, cancellationToken).ConfigureAwait(false);
         if (result.Attempt.Failure == RemoteFailure.AuthenticationFailed && result.Session is not null)
         {
-            result = await CallOnceAsync(server, runtime, result.Session, call, cancellationToken).ConfigureAwait(false);
+            result = await CallOnceAsync(server, runtime, result.Session, anonymous, call, cancellationToken).ConfigureAwait(false);
         }
 
-        Record(runtime, server.Name, result.Attempt.Failure, countsForActivity, result.Attempt.Error);
-        if (!result.Attempt.IsSuccess)
+        if (!anonymous)
+        {
+            Record(runtime, server.Name, result.Attempt.Failure, origin == CallOrigin.Server, result.Attempt.Error);
+        }
+
+        if (!result.Attempt.IsSuccess && MayLog(runtime, anonymous))
         {
             _logger.LogWarning(
                 "Call to remote server {ServerName} failed: {Failure}{Detail:l}",
@@ -1067,7 +1100,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     // Logs in, and ends at once a login the remote opened but that is refused (419).
-    private async Task<RemoteResult<RemoteSession>> LogInAsync(Guid serverId, RemoteEndpoint endpoint, RemoteCredentials credentials, string serverName, CancellationToken cancellationToken)
+    private async Task<RemoteResult<RemoteSession>> LogInAsync(Guid serverId, RemoteEndpoint endpoint, RemoteCredentials credentials, string serverName, CancellationToken cancellationToken, ILogger? log = null)
     {
         var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
         if (login.IsSuccess || login.Value is not { } refused)
@@ -1075,7 +1108,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return login;
         }
 
-        await EndUnusedLoginAsync(serverId, endpoint, refused, serverName, refusedIsEnded: true).ConfigureAwait(false);
+        await EndUnusedLoginAsync(serverId, endpoint, refused, serverName, refusedIsEnded: true, log).ConfigureAwait(false);
         return login.FailAs<RemoteSession>();
     }
 
@@ -1137,14 +1170,18 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         return libraries;
     }
 
+    // Whether a call may write the line about its failure: an anonymous one at most one per interval and server (row 534).
+    private bool MayLog(ServerRuntime runtime, bool anonymous) => !anonymous || runtime.TryTakeAnonymousLine(Clock);
+
     private async Task<SessionAttempt<T>> CallOnceAsync<T>(
         StoredServer server,
         ServerRuntime runtime,
         RemoteSession? refused,
+        bool anonymous,
         Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call,
         CancellationToken cancellationToken)
     {
-        var open = await GetSessionAsync(server, runtime, refused, cancellationToken).ConfigureAwait(false);
+        var open = await GetSessionAsync(server, runtime, refused, anonymous, cancellationToken).ConfigureAwait(false);
         if (open.Value is not { } opened)
         {
             return new SessionAttempt<T>(open.FailAs<T>(), null);
@@ -1159,8 +1196,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         StoredServer server,
         ServerRuntime runtime,
         RemoteSession? refused,
+        bool anonymous,
         CancellationToken cancellationToken)
     {
+        ILogger log = anonymous ? NullLogger.Instance : _logger;
+
         // One login at a time per server: a second one would log the first out on the remote.
         await runtime.LoginGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -1178,7 +1218,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             {
                 if (!current.IsOf(url, encrypted))
                 {
-                    _logger.LogInformation("The stored address or credentials of remote server {ServerName} changed, so it is logged in again", LogText.Clean(server.Name));
+                    log.LogInformation("The stored address or credentials of remote server {ServerName} changed, so it is logged in again", LogText.Clean(server.Name));
                     runtime.Kept = null;
                 }
                 else if (!ReferenceEquals(current.Session, refused))
@@ -1194,7 +1234,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                 return RemoteResult.Fail<OpenSession>(RemoteFailure.Suspended);
             }
 
-            var login = await LogInAsync(server.Id, endpoint, credentials, server.Name, cancellationToken).ConfigureAwait(false);
+            var login = await LogInAsync(server.Id, endpoint, credentials, server.Name, cancellationToken, log).ConfigureAwait(false);
             if (login.Value is not { } fresh)
             {
                 runtime.Kept = null;
@@ -1205,7 +1245,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             if (RefusedServerId(server.Id, fresh.ServerId) is { } refusedFor)
             {
                 runtime.Kept = null;
-                await RefuseOtherServerAsync(server.Id, endpoint, fresh, server.Name, refusedFor).ConfigureAwait(false);
+                await RefuseOtherServerAsync(server.Id, endpoint, fresh, server.Name, refusedFor, log).ConfigureAwait(false);
                 DropIfRemoved(server.Id, runtime);
                 return RemoteResult.Fail<OpenSession>(RemoteFailure.OtherServer);
             }
@@ -1219,7 +1259,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
             if (fresh.ServerId is { } remoteId)
             {
-                RememberServerId(server, remoteId);
+                RememberServerId(server, remoteId, () => !anonymous || runtime.TryTakeServerIdLine(Clock));
             }
 
             return RemoteResult.Success(new OpenSession(endpoint, fresh));
@@ -1404,12 +1444,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     // Ends a login that is not kept, such as one whose credentials could not be saved (419), within the logout limit.
     // With refusedIsEnded, a refused token was revoked by a later login and counts as ended.
-    private async Task EndUnusedLoginAsync(Guid serverId, RemoteEndpoint endpoint, RemoteSession session, string serverName, bool refusedIsEnded)
+    private async Task EndUnusedLoginAsync(Guid serverId, RemoteEndpoint endpoint, RemoteSession session, string serverName, bool refusedIsEnded, ILogger? log = null)
     {
         var logout = await LogOutWithinLimitAsync(endpoint, session).ConfigureAwait(false);
         if (!logout.IsSuccess && !(refusedIsEnded && logout.Failure == RemoteFailure.AuthenticationFailed))
         {
-            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login{Detail:l}", LogText.Clean(serverName), logout.Failure, LogLimitOf(serverId).Of(logout.Detail));
+            (log ?? _logger).LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login{Detail:l}", LogText.Clean(serverName), logout.Failure, LogLimitOf(serverId).Of(logout.Detail));
         }
     }
 
@@ -1454,7 +1494,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private bool IsConfigured(Guid serverId) => _store.Read(config => config.Servers.Any(server => server.Id == serverId));
 
     // Stores the Server Id of a server configured before it was read, at its first login (decision 121).
-    private void RememberServerId(StoredServer server, string remoteId)
+    private void RememberServerId(StoredServer server, string remoteId, Func<bool> mayLog)
     {
         var stored = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == server.Id)?.JellyfinServerId);
         if (stored is null || stored.Length > 0)
@@ -1472,14 +1512,17 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
                     heldElsewhere = !TryStoreServerId(config, stored, remoteId);
                 }
             });
-            if (heldElsewhere)
+            if (heldElsewhere && mayLog())
             {
                 WarnServerIdHeldElsewhere(server.Name, remoteId);
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, LogLimitOf(server.Id).Of(exception));
+            if (mayLog())
+            {
+                _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, LogLimitOf(server.Id).Of(exception));
+            }
         }
     }
 
@@ -1512,16 +1555,16 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     }
 
     // Ends a login on which another server answered, and logs both ids with neither the address nor the token (row 433).
-    private async Task RefuseOtherServerAsync(Guid serverId, RemoteEndpoint endpoint, RemoteSession login, string serverName, string storedId)
+    private async Task RefuseOtherServerAsync(Guid serverId, RemoteEndpoint endpoint, RemoteSession login, string serverName, string storedId, ILogger? log = null)
     {
-        WarnOtherServer(serverName, login.ServerId, storedId);
-        await EndUnusedLoginAsync(serverId, endpoint, login, serverName, refusedIsEnded: false).ConfigureAwait(false);
+        WarnOtherServer(serverName, login.ServerId, storedId, log);
+        await EndUnusedLoginAsync(serverId, endpoint, login, serverName, refusedIsEnded: false, log).ConfigureAwait(false);
     }
 
     // Logs a login refused because another server answered, with both ids and neither the address nor the token.
-    private void WarnOtherServer(string serverName, string? remoteId, string storedId)
+    private void WarnOtherServer(string serverName, string? remoteId, string storedId, ILogger? log = null)
     {
-        _logger.LogWarning(
+        (log ?? _logger).LogWarning(
             "Remote server {ServerName} answered with Server Id {RemoteServerId}, not the stored {StoredServerId}: another server answers at its address, so the login is refused",
             LogText.Clean(serverName),
             remoteId,
@@ -1614,6 +1657,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private sealed class ServerRuntime : IDisposable
     {
         private readonly Lock _gate = new();
+        private DateTimeOffset? _anonymousLine;
+        private DateTimeOffset? _serverIdLine;
         private bool? _reachable;
         private KeptLogin? _kept;
         private bool _forgotten;
@@ -1670,6 +1715,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
         }
 
+        // Takes the log line about the failed anonymous calls, at most one per interval.
+        public bool TryTakeAnonymousLine(TimeProvider clock) => TryTakeLine(ref _anonymousLine, clock);
+
+        // Takes the log line about the Server Id of an anonymous login, at most one per interval (row 540).
+        public bool TryTakeServerIdLine(TimeProvider clock) => TryTakeLine(ref _serverIdLine, clock);
+
         // Keeps a new login, unless the server was removed meanwhile.
         public bool TryKeep(KeptLogin login)
         {
@@ -1723,6 +1774,22 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
 
         public void Dispose() => LoginGate.Dispose();
+
+        // Takes a line when the last one is an interval old. A clock set back starts a new interval.
+        private bool TryTakeLine(ref DateTimeOffset? last, TimeProvider clock)
+        {
+            lock (_gate)
+            {
+                var now = clock.GetUtcNow();
+                if (now >= last && now - last < AnonymousLogInterval)
+                {
+                    return false;
+                }
+
+                last = now;
+                return true;
+            }
+        }
 
         // Offline when nothing answered, reachable when the remote answered. An error status, which a gateway in front of
         // it can send, or a call never sent says nothing about it.

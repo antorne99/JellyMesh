@@ -899,12 +899,14 @@ public class PlaybackCoordinatorTests
 
     // Row 515: a placeholder is read through File, which asks the remote user for no download permission, never Download.
     [Theory]
-    [InlineData("GET")]
-    [InlineData("HEAD")]
-    public async Task A_placeholder_is_read_through_File_on_each_remote_and_never_through_Download(string method)
+    [InlineData(StubKind.Book, "server/Libri/Dune (1965)/Dune (1965).epub", "GET")]
+    [InlineData(StubKind.Book, "server/Libri/Dune (1965)/Dune (1965).epub", "HEAD")]
+    [InlineData(StubKind.Photo, "server/Video domestici/Album/Spiaggia.jpg", "GET")]
+    [InlineData(StubKind.Photo, "server/Video domestici/Album/Spiaggia.jpg", "HEAD")]
+    public async Task A_placeholder_is_read_through_File_on_each_remote_and_never_through_Download(StubKind kind, string path, string method)
     {
         var fixture = new CoordinatorFixture();
-        var stub = PlaybackValues.Stub(PlaybackValues.Source("winner"), PlaybackValues.Source("backup")) with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965).epub" };
+        var stub = PlaybackValues.Stub(PlaybackValues.Source("winner"), PlaybackValues.Source("backup")) with { Kind = kind, RelativePath = path };
         var answers = new Queue<RemoteResult<RemoteContent>>([RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError), FakePlaybackClient.Bytes()]);
         fixture.Client.Open = (_, _) => Task.FromResult(answers.Dequeue());
 

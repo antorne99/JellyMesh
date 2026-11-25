@@ -97,6 +97,21 @@ public class StubSegmentsTests
     }
 
     [Fact]
+    public async Task A_photo_has_no_segments_and_asks_no_remote()
+    {
+        const string path = "/federata/server/Video domestici/Trips/IMG_0001.jpg";
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Id = _itemId, Path = path });
+        _stubs.Setup(stubs => stubs.FindByPath(path)).Returns(PlaybackValues.Stub(_best) with { Kind = StubKind.Photo });
+        var segments = new StubSegments(new StubLookup(_library.Object, _stubs.Object, store), _index.Object, _registry, _client, store, _clock, NullLogger<StubSegments>.Instance);
+
+        Assert.False(segments.Supports(_itemId));
+        Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
+        Assert.Empty(_client.Asked);
+    }
+
+    [Fact]
     public void Only_a_stub_is_supported()
     {
         var segments = Segments();

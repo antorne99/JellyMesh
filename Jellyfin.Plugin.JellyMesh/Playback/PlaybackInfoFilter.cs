@@ -155,6 +155,13 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
+        // A photo is shown, never played: stock answers on its local placeholder, as for a local photo.
+        if (routeStub?.Kind == StubKind.Photo)
+        {
+            await next().ConfigureAwait(false);
+            return;
+        }
+
         var target = asked ?? (routeStub is not null ? _versions.Choose(route, routeStub, user) : routeUnknown ? _versions.LinkedLocalCopy(route, user) ?? route : route);
         var targetStub = _stubs.ResolvePlayable(target, out var targetUnknown);
         if (targetUnknown)

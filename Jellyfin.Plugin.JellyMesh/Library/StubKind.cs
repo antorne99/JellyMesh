@@ -21,5 +21,8 @@ public enum StubKind
     HomeVideo,
 
     /// <summary>An ebook, PDF or comic: a placeholder with the real extension instead of a <c>.strm</c> (D47).</summary>
-    Book
+    Book,
+
+    /// <summary>A photo: a 1x1 placeholder image with the real extension, among the home videos (D7, D45).</summary>
+    Photo
 }

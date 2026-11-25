@@ -49,6 +49,35 @@ public static class PlaybackLimits
     public const int Reconnections = 3;
 
     /// <summary>
+    /// The most images of photos read from one server at once, apart from the calls and streams of playback, since they need
+    /// no login. A page of photos asks for dozens, so the others wait.
+    /// </summary>
+    public const int PhotoImagesPerServer = 8;
+
+    /// <summary>
+    /// The most images of photos in memory at once, of all servers, each until its client has read it.
+    /// </summary>
+    public const int PhotoImagesInMemory = 32;
+
+    /// <summary>
+    /// How many of <see cref="PhotoImagesInMemory"/> an anonymous read never takes, so that signed-in users still see their
+    /// photos. As many as the reads of one server at once, which fewer would not let run.
+    /// </summary>
+    public const int PhotoImagesForUsers = PhotoImagesPerServer;
+
+    /// <summary>
+    /// The most of <see cref="PhotoImagesPerServer"/> that anonymous reads take, so that they never keep signed-in users from a
+    /// server (row 540).
+    /// </summary>
+    public const int AnonymousPhotoImagesPerServer = 6;
+
+    /// <summary>
+    /// The longest the read of a photo image waits for all its places, among <see cref="PhotoImagesPerServer"/> and
+    /// <see cref="PhotoImagesInMemory"/>.
+    /// </summary>
+    public static readonly TimeSpan PhotoImageQueueWait = TimeSpan.FromSeconds(10);
+
+    /// <summary>
     /// The longest a call waits for a place among <see cref="CallsPerServer"/>. Below the shortest time decision 17 allows
     /// for a call, so that a busy server reads as busy and not as offline.
     /// </summary>

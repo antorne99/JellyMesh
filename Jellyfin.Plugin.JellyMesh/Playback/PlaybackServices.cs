@@ -36,6 +36,7 @@ public static class PlaybackServices
         services.AddSingleton<PlaybackInfoFilter>();
         services.AddSingleton<AudioStubRoutes>();
         services.AddSingleton<StockRouteGuardFilter>();
+        services.AddSingleton<PhotoImageFilter>();
         services.AddSingleton<StubSegments>();
         services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();
         services.AddSingleton<SegmentOffer>();
@@ -48,6 +49,7 @@ public static class PlaybackServices
         {
             options.Filters.AddService<PlaybackInfoFilter>();
             options.Filters.AddService<StockRouteGuardFilter>();
+            options.Filters.AddService<PhotoImageFilter>();
             options.Filters.AddService<SegmentRouteFilter>();
         });
     }

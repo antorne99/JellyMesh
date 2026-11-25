@@ -2753,6 +2753,159 @@ public partial class PlaybackFiltersTests
         Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
     }
 
+    private const string PhotoPath = "/federata/server/Video domestici/Trips/IMG_0001.jpg";
+
+    // A photo placeholder of the federated folder, its stub found by its path, as a photo has no URL to name it.
+    private InMemoryConfigurationStore PhotoPlaceholder(string extension = "jpg", bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Path = PhotoPath });
+        var relative = "server/Video domestici/Trips/IMG_0001." + extension;
+        _stubs.Setup(stubs => stubs.FindByPath(PhotoPath)).Returns(known ? _stub with { Kind = StubKind.Photo, RelativePath = relative } : null);
+        return store;
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_photo_comes_from_the_remote_file_with_its_range_and_never_from_the_placeholder(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        var context = FileRequest(action, "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("/Items/remote-item/File", Assert.Single(_fixture.Client.Opened));
+    }
+
+    // The type comes from the format of the placeholder, never from the remote, which says video/x-matroska here.
+    [Theory]
+    [InlineData("jpg", "image/jpeg")]
+    [InlineData("JPEG", "image/jpeg")]
+    [InlineData("png", "image/png")]
+    [InlineData("gif", "image/gif")]
+    [InlineData("webp", "image/webp")]
+    [InlineData("bmp", "image/bmp")]
+    [InlineData("tif", "image/tiff")]
+    [InlineData("tiff", "image/tiff")]
+    [InlineData("heic", "image/heic")]
+    [InlineData("heif", "image/heif")]
+    [InlineData("avif", "image/avif")]
+    [InlineData("cr2", "application/octet-stream")]
+    [InlineData("dng", "application/octet-stream")]
+    public async Task A_photo_goes_with_the_media_type_of_its_format_and_no_sniffing(string extension, string mediaType)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder(extension)), context));
+        Assert.Equal(mediaType, context.HttpContext.Response.ContentType);
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_photo_is_an_attachment_with_its_local_name_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = PhotoPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        Assert.Contains("IMG_0001.jpg", download.HttpContext.Response.Headers.ContentDisposition.ToString(), StringComparison.Ordinal);
+        Assert.Empty(file.HttpContext.Response.Headers.ContentDisposition.ToString());
+    }
+
+    [Fact]
+    public async Task A_photo_needs_a_user_who_sees_it_and_the_download_permission_on_Download()
+    {
+        MayDownload(false);
+        RemoteServes();
+        var store = PhotoPlaceholder();
+        var unseen = FileRequest("GetFile");
+        Assert.False(await RunAsync(GuardFilter(store: store), unseen));
+        CanSeeItem();
+        var download = FileRequest("GetDownload");
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(unseen.Result).StatusCode);
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(download.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_photo_whose_remote_is_offline_is_a_503()
+    {
+        CanSeeItem();
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable));
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ContentResult>(context.Result).StatusCode);
+        Assert.Empty(BodyOf(context));
+    }
+
+    // A photo is not played: its PlaybackInfo and streams reach no remote, and stock answers on the 1x1 placeholder.
+    [Fact]
+    public async Task PlaybackInfo_of_a_photo_reaches_no_remote()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(InfoFilter(PhotoPlaceholder()), Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId))));
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("MediaSegments", "GetItemSegments")]
+    public async Task A_stream_or_segment_of_a_photo_reaches_no_remote(string controller, string action)
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(store: PhotoPlaceholder()), Context(controller, action, ("itemId", _itemId))));
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_stream_of_a_photo_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_photo_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_photo_outside_the_federated_folder_stays_with_stock()
+    {
+        var store = PhotoPlaceholder();
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Path = "/media/Foto/IMG_0001.jpg" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
     [Fact]
     public async Task File_of_an_item_that_is_not_a_stub_stays_with_stock()
     {
