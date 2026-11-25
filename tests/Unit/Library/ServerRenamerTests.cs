@@ -128,6 +128,50 @@ public sealed class ServerRenamerTests : IDisposable
         Assert.Empty(_steps);
     }
 
+    // Row 564: a saved label over 40 bytes is renamed at start under the name the server already has.
+    [Fact]
+    public async Task AServerWithALabelOverTheLimitIsRenamedUnderItsOwnName()
+    {
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([_server]);
+
+        Assert.Equal(1, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Equal(["name Casa", "stubs Casa"], _steps.GetRange(0, 2));
+        Assert.Contains("scan", _steps);
+        Assert.False(_renamer.GetState(_server).Busy);
+    }
+
+    [Fact]
+    public async Task WithNoLabelOverTheLimitNothingIsRenamed()
+    {
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Empty(_steps);
+    }
+
+    [Fact]
+    public async Task ALongLabelOfAServerNoLongerSavedIsLeft()
+    {
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([Guid.NewGuid()]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Empty(_steps);
+    }
+
+    [Fact]
+    public async Task AServerWhoseStubsWaitForAScanIsLeftForTheNextStart()
+    {
+        _pending = true;
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([_server]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Empty(_steps);
+    }
+
     // Q359: a rename held up by a detach that keeps failing shows as stuck.
     [Fact]
     public void ARenameHeldUpByADetachShowsAsStuck()

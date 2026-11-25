@@ -98,6 +98,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
         serviceCollection.AddSingleton<IServerStubRenamer, ServerStubRenamer>();
         serviceCollection.AddSingleton<IServerRenamer, ServerRenamer>();
+        serviceCollection.AddHostedService<LongLabelRenameService>();
         serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
         serviceCollection.AddSingleton<IKeptWatchStateStore, KeptWatchStateStore>();
         serviceCollection.AddSingleton<IWatchStateKeeper, WatchStateKeeper>();

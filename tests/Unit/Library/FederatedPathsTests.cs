@@ -201,6 +201,34 @@ public class FederatedPathsTests
         Assert.Equal(string.Concat(Enumerable.Repeat(character, characters)), Label(string.Concat(Enumerable.Repeat(character, 500))));
     }
 
+    // Row 564: a saved label over 40 bytes is renamed, the start of the GUID it may end with left out.
+    [Theory]
+    [InlineData("x", 40, false)]
+    [InlineData("x", 41, true)]
+    [InlineData("Ж", 20, false)]
+    [InlineData("Ж", 21, true)]
+    [InlineData("漢", 13, false)]
+    [InlineData("漢", 14, true)]
+    public void ASavedLabelIsOverTheLimitPastFortyBytes(string character, int characters, bool over)
+    {
+        var label = string.Concat(Enumerable.Repeat(character, characters));
+
+        Assert.Equal(over, FederatedPaths.IsLabelOverLimit(_server, label));
+        Assert.Equal(over, FederatedPaths.IsLabelOverLimit(_server, label + " " + FederatedPaths.GuidStart(_server)));
+    }
+
+    [Fact]
+    public void TheGuidOfAnotherServerCountsInTheLabel()
+    {
+        Assert.True(FederatedPaths.IsLabelOverLimit(_server, new string('x', 40) + " " + FederatedPaths.GuidStart(_other)));
+    }
+
+    [Fact]
+    public void ALabelCutAtItsBytesIsNotOverTheLimit()
+    {
+        Assert.False(FederatedPaths.IsLabelOverLimit(_server, Label(new string('Ж', 500))));
+    }
+
     [Fact]
     public void TheLongestNamesOfALongLabelFitInAFileName()
     {

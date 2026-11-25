@@ -278,6 +278,22 @@ public static partial class FederatedPaths
     }
 
     /// <summary>
+    /// Tells whether a saved label is over the byte limit of a label, without the start of the GUID it may end with
+    /// (row 564).
+    /// </summary>
+    /// <param name="serverId">The server of the label.</param>
+    /// <param name="label">The saved label.</param>
+    /// <returns>True if the label is too long.</returns>
+    public static bool IsLabelOverLimit(Guid serverId, string label)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+
+        var suffix = " " + GuidStart(serverId);
+        var name = label.EndsWith(suffix, StringComparison.Ordinal) ? label[..^suffix.Length] : label;
+        return Encoding.UTF8.GetByteCount(name) > MaxLabelBytes;
+    }
+
+    /// <summary>
     /// Tells whether each name of a path is short enough for a file system that counts its bytes.
     /// </summary>
     /// <param name="relativePath">The path.</param>

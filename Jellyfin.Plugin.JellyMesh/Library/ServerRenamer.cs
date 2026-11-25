@@ -115,6 +115,32 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<int> RenameLongLabelsAsync(CancellationToken cancellationToken)
+    {
+        var servers = _registry.GetServers();
+        var ran = 0;
+        foreach (var serverId in _stubs.LongLabels())
+        {
+            if (servers.FirstOrDefault(server => server.Id == serverId) is not { } server)
+            {
+                continue;
+            }
+
+            var answer = Rename(serverId, server.Name, confirmed: true);
+            if (answer.Outcome != ServerRenameOutcome.Started)
+            {
+                _logger.LogInformation("The rename of a server with a label over the limit did not start, so the next start tries again: {Outcome}", answer.Outcome);
+                continue;
+            }
+
+            await answer.Job.WaitAsync(cancellationToken).ConfigureAwait(false);
+            ran++;
+        }
+
+        return ran;
+    }
+
+    /// <inheritdoc />
     public async Task<ServerRenameOutcome> CancelPendingAsync(Guid serverId)
     {
         if (!_registry.GetServers().Any(server => server.Id == serverId))
