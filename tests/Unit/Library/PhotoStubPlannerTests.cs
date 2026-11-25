@@ -298,4 +298,18 @@ public class PhotoStubPlannerTests
         Assert.Equal(first.TechnicalTag, afterText.TechnicalTag);
         Assert.NotEqual(first.ContentHash, afterText.ContentHash);
     }
+
+    // Row 555: the names taken from a title are cut at 120 UTF-8 bytes, so at 40 characters of three bytes.
+    [Fact]
+    public void TheNamesOfAPhotoAndAHomeVideoAreCutAt120Bytes()
+    {
+        var plan = Plan(items: [Album("a1", new string('漢', 100)), Photo("p1", new string('曲', 100)), HomeVideo("v1", new string('歌', 100))]);
+
+        var photo = Assert.Single(Photos(plan));
+        var video = Assert.Single(plan.Stubs, work => work.Entry.Kind == StubKind.HomeVideo);
+        Assert.Equal(In(new string('漢', 40), new string('曲', 40) + ".jpg"), photo.Entry.RelativePath);
+        Assert.Equal(In(new string('漢', 40), new string('歌', 40) + ".strm"), video.Entry.RelativePath);
+        Assert.True(FederatedPaths.FitsInNames(photo.Entry.RelativePath));
+        Assert.True(FederatedPaths.FitsInNames(video.Entry.RelativePath));
+    }
 }

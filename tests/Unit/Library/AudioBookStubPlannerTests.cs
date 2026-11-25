@@ -241,4 +241,14 @@ public class AudioBookStubPlannerTests
             Assert.StartsWith(Path.Combine("/root", BooksFolder) + Path.DirectorySeparatorChar, FederatedPaths.Resolve("/root", work.Entry.RelativePath), StringComparison.Ordinal);
         });
     }
+
+    // Row 555: the names taken from a title are cut at 120 UTF-8 bytes, so at 40 characters of three bytes.
+    [Fact]
+    public void TheNamesOfAPartAreCutAt120Bytes()
+    {
+        var work = Assert.Single(Plan([Part("p1", new string('漢', 100), 3, new string('曲', 100), new string('歌', 100))]).Stubs);
+
+        Assert.Equal(PathIn(new string('歌', 40), new string('曲', 40), "03 - " + new string('漢', 40) + ".strm"), work.Entry.RelativePath);
+        Assert.True(FederatedPaths.FitsInNames(work.Entry.RelativePath));
+    }
 }

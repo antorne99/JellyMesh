@@ -149,4 +149,15 @@ public class BookStubPlannerTests
         Assert.Equal(first, same);
         Assert.NotEqual(first, changed);
     }
+
+    // Row 555: the names taken from a title are cut at 120 UTF-8 bytes, so at 40 characters of three bytes.
+    [Fact]
+    public void TheNamesOfABookAreCutAt120Bytes()
+    {
+        var work = Assert.Single(Plan(items: Book("b1", new string('漢', 100))).Stubs);
+
+        var name = new string('漢', 40) + " (1965)";
+        Assert.Equal(Path.Combine(Folder, name, name + ".epub"), work.Entry.RelativePath);
+        Assert.True(FederatedPaths.FitsInNames(work.Entry.RelativePath));
+    }
 }

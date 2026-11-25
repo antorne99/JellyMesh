@@ -389,4 +389,15 @@ public class TypeStubPlannerTests
 
         Assert.Null(XDocument.Parse(work.Nfo).Root!.Element("lockdata"));
     }
+
+    // Row 555: the names taken from a title are cut at 120 UTF-8 bytes, so at 40 characters of three bytes.
+    [Fact]
+    public void TheNamesOfAMusicVideoAreCutAt120Bytes()
+    {
+        var work = Assert.Single(Plan(Catalog(MusicVideo("m1", new string('漢', 100)))).Stubs);
+
+        var folder = new string('漢', 40) + " (2019)";
+        Assert.Equal(In(MusicVideos, "Video musicali", folder, folder + " - Casa.strm"), work.Entry.RelativePath);
+        Assert.True(FederatedPaths.FitsInNames(work.Entry.RelativePath));
+    }
 }
