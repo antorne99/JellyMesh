@@ -433,12 +433,16 @@ public sealed class VersionLinkerTests : IDisposable
         }
     }
 
-    // A track and a book are never versions: a run reads nothing of them, by ID or by path.
+    // A track, an audiobook, a book and a photo are never versions: a run reads nothing of them, by ID or by path.
     [Theory]
     [InlineData(false, StubKind.Track)]
     [InlineData(true, StubKind.Track)]
+    [InlineData(false, StubKind.AudioBook)]
+    [InlineData(true, StubKind.AudioBook)]
     [InlineData(false, StubKind.Book)]
     [InlineData(true, StubKind.Book)]
+    [InlineData(false, StubKind.Photo)]
+    [InlineData(true, StubKind.Photo)]
     public async Task AStubThatIsNoVideoIsNotReadFromTheLibrary(bool thorough, StubKind kind)
     {
         var film = Stub("film", _serverA, 1080);
@@ -1254,7 +1258,9 @@ public sealed class VersionLinkerTests : IDisposable
     [Theory]
     [InlineData(StubKind.Movie)]
     [InlineData(StubKind.Track)]
+    [InlineData(StubKind.AudioBook)]
     [InlineData(StubKind.Book)]
+    [InlineData(StubKind.Photo)]
     public async Task AnEntryAboutToBeRemovedIsFoundByPathWhateverItsKind(StubKind kind)
     {
         var episode = Stub("se", _serverA, 1080, StubKind.Episode);
