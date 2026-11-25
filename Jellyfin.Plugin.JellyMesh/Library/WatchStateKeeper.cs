@@ -42,6 +42,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     private readonly IManualMergeStore _merges;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<WatchStateKeeper> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // The servers whose last save failed, in memory only: a restart lists them again at the next failed run.
@@ -61,6 +62,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     /// <param name="merges">The manual merges, which also join kept titles (D21).</param>
     /// <param name="timeProvider">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public WatchStateKeeper(
         StubRegistry registry,
         IFederationIndex index,
@@ -72,8 +74,10 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         IKeptWatchStateStore kept,
         IManualMergeStore merges,
         TimeProvider timeProvider,
-        ILogger<WatchStateKeeper> logger)
+        ILogger<WatchStateKeeper> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _index = index;
         _servers = servers;
@@ -141,7 +145,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot keep the manual merges of a removed server for its watch state, so its copies stay in them: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot keep the manual merges of a removed server for its watch state, so its copies stay in them: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }
@@ -194,7 +198,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot put back the kept watch state: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot put back the kept watch state: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
         finally
         {
@@ -422,7 +426,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The row stays for a later run.
-            _logger.LogError("Cannot put back the kept watch state of a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot put back the kept watch state of a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }
@@ -540,7 +544,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally

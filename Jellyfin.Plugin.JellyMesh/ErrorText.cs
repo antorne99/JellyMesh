@@ -220,12 +220,12 @@ public static partial class ErrorText
     }
 
     [GeneratedRegex(
-        NamePattern + """(?:(?<quote>\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22).*?(?:(?<!\\)\k<quote>|$)|\[(?:[^\]\n]|\n(?! +(?:at|--->?) ))*|(?!\{)[^\s&,;"'<>}\])]+)""",
+        NamePattern + """(?:(?<quote>\\*["']|\\+u0022|&quot;|&apos;|&#(?:34|39|x22|x27);|%22).*?(?:(?<!\\)\k<quote>|$)|\[(?:[^\]\n]|\n(?!(?:   at| --->|   ---) ))*|(?!\{)[^\s&,;"'<>}\])]+)""",
         RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant,
         matchTimeoutMilliseconds: 2000)]
     private static partial Regex NamedSecret();
 
-    [GeneratedRegex(NamePattern + """\{(?:[^}\n]|\n(?! +(?:at|--->?) ))*""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    [GeneratedRegex(NamePattern + """\{(?:[^}\n]|\n(?!(?:   at| --->|   ---) ))*""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
     private static partial Regex NamedObject();
 
     [GeneratedRegex("""(?<name>\b(?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]{8,}""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -25,6 +26,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     private readonly IPluginConfigurationStore _store;
     private readonly IStubRegistry _stubs;
     private readonly ILogger<FederatedFolderLinkChecker> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederatedFolderLinkChecker"/> class.
@@ -33,8 +35,10 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
     /// <param name="store">The configuration, with the imported libraries of each server and the single libraries.</param>
     /// <param name="stubs">The stub registry, which tells the layout of the titles.</param>
     /// <param name="logger">The logger.</param>
-    public FederatedFolderLinkChecker(ILibraryManager libraryManager, IPluginConfigurationStore store, IStubRegistry stubs, ILogger<FederatedFolderLinkChecker> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public FederatedFolderLinkChecker(ILibraryManager libraryManager, IPluginConfigurationStore store, IStubRegistry stubs, ILogger<FederatedFolderLinkChecker> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _libraryManager = libraryManager;
         _store = store;
         _stubs = stubs;
@@ -54,7 +58,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to check the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries to check the federated folder: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return FederatedFolderLinkReport.NotChecked;
         }
 

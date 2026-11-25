@@ -65,6 +65,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
 
     private readonly IPluginDatabase _database;
     private readonly ILogger<SyncHistoryStore> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _lock = new();
     private List<SyncRun> _unsaved = [];
@@ -79,8 +80,10 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     /// </summary>
     /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public SyncHistoryStore(IPluginDatabase database, ILogger<SyncHistoryStore> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public SyncHistoryStore(IPluginDatabase database, ILogger<SyncHistoryStore> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _logger = logger;
     }
@@ -333,7 +336,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogDebug("Cannot read the sync history for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogDebug("Cannot read the sync history for now: {Error}{Detail:l}", exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.Local.Of(exception) : string.Empty);
             return false;
         }
     }

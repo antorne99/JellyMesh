@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Security;
 using System.Security.Cryptography;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Security;
@@ -28,8 +29,9 @@ public sealed class FileSecretKeySource : ISecretKeySource
     /// </summary>
     /// <param name="folder">The folder of the key.</param>
     /// <param name="logger">The logger.</param>
-    public FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger)
-        : this(folder, logger, KeyFileGuards.ForThisSystem())
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger, ErrorLogLimits? errorLogs = null)
+        : this(folder, logger, KeyFileGuards.ForThisSystem(), errorLogs)
     {
     }
 
@@ -39,18 +41,19 @@ public sealed class FileSecretKeySource : ISecretKeySource
     /// <param name="folder">The folder of the key.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="guard">Keeps the file private.</param>
-    internal FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger, IKeyFileGuard guard)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    internal FileSecretKeySource(string folder, ILogger<FileSecretKeySource> logger, IKeyFileGuard guard, ErrorLogLimits? errorLogs = null)
     {
         ArgumentNullException.ThrowIfNull(folder);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(guard);
-        _key = LoadOrCreate(Path.Combine(folder, FileName), logger, guard);
+        _key = LoadOrCreate(Path.Combine(folder, FileName), logger, guard, errorLogs ?? new ErrorLogLimits());
     }
 
     /// <inheritdoc />
     public string? GetSecretKey() => _key;
 
-    private static string? LoadOrCreate(string path, ILogger logger, IKeyFileGuard guard)
+    private static string? LoadOrCreate(string path, ILogger logger, IKeyFileGuard guard, ErrorLogLimits errorLogs)
     {
         try
         {
@@ -76,7 +79,7 @@ public sealed class FileSecretKeySource : ISecretKeySource
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or SecurityException)
         {
             // The access list calls also throw the last three, for example on a volume without access lists.
-            logger.LogError("Cannot keep the credential key file: {Error}. Sync and remote playback stay suspended{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            logger.LogError("Cannot keep the credential key file: {Error}. Sync and remote playback stay suspended{Detail:l}", exception.GetType().Name, errorLogs.Local.Of(exception));
             return null;
         }
     }

@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public sealed class LocalTitleLinker : ILocalTitleLinker
 {
     private readonly StubRegistry _registry;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IFederationResolver _resolver;
     private readonly IFederationIndex _index;
     private readonly IRemoteServerRegistry _servers;
@@ -41,6 +42,7 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
     /// <param name="library">The library manager.</param>
     /// <param name="linker">What links the versions.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public LocalTitleLinker(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -49,8 +51,10 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
         IPluginConfigurationStore store,
         ILibraryManager library,
         IVersionLinker linker,
-        ILogger<LocalTitleLinker> logger)
+        ILogger<LocalTitleLinker> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _resolver = resolver;
         _index = index;
@@ -151,7 +155,7 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to link a new local title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries to link a new local title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }

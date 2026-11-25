@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,7 @@ public sealed class LibraryRenameJournal
 
     private readonly IPluginDatabase _database;
     private readonly ILogger<LibraryRenameJournal> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly Lock _lock = new();
     private List<(long Id, LibraryRenameRecord Record)>? _records;
 
@@ -50,8 +52,10 @@ public sealed class LibraryRenameJournal
     /// </summary>
     /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public LibraryRenameJournal(IPluginDatabase database, ILogger<LibraryRenameJournal> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LibraryRenameJournal(IPluginDatabase database, ILogger<LibraryRenameJournal> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _logger = logger;
     }
@@ -196,7 +200,7 @@ public sealed class LibraryRenameJournal
             }
             catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
             {
-                _logger.LogError("Cannot save the library renames: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot save the library renames: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
                 return false;
             }
         }
@@ -228,7 +232,7 @@ public sealed class LibraryRenameJournal
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogWarning("Cannot read the library renames for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot read the library renames for now: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }

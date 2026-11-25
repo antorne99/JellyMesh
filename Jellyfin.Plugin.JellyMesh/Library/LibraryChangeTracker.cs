@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -17,6 +18,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
     private readonly ILibraryManager _libraryManager;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<LibraryChangeTracker> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly object _lock = new();
     private Snapshot? _last;
 
@@ -29,8 +31,10 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
     /// <param name="libraryManager">The library manager, only read.</param>
     /// <param name="store">The configuration, which holds the federated folder.</param>
     /// <param name="logger">The logger.</param>
-    public LibraryChangeTracker(ILibraryManager libraryManager, IPluginConfigurationStore store, ILogger<LibraryChangeTracker> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LibraryChangeTracker(ILibraryManager libraryManager, IPluginConfigurationStore store, ILogger<LibraryChangeTracker> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _libraryManager = libraryManager;
         _store = store;
         _logger = logger;
@@ -125,7 +129,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to compare them with the last sync: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries to compare them with the last sync: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }
@@ -144,7 +148,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.Local.Of(exception) : string.Empty);
             return false;
         }
     }

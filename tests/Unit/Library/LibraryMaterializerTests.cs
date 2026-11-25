@@ -956,6 +956,94 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Single(_fixture.Registry.State.Stubs);
     }
 
+    [Fact]
+    public async Task ATitleOfManyBytesIsWritten()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", new string('漢', 120), 2020, "1"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s") with { Name = new string('Ж', 120) });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(2, _fixture.Files.Count(file => file.EndsWith(".strm", StringComparison.Ordinal)));
+    }
+
+    // Row 555: a version before wrote no file for such a title, but kept its path.
+    [Fact]
+    public async Task ATitleThatFailedForItsNameIsWrittenUnderAShorterOne()
+    {
+        var title = new string('漢', 120);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", title, 2020, "1"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s") with { Name = title });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
+        await _fixture.SyncAndMaterializeAsync();
+        var state = _fixture.Registry.State;
+        var series = StubFixture.In(a, "Serie", title);
+        await _fixture.Registry.SaveAsync(
+            state with
+            {
+                Stubs = state.Stubs.Select(stub => stub with
+                {
+                    RelativePath = stub.Kind == StubKind.Movie ? StubFixture.In(a, "Film", title, title + " - A.strm") : Path.Combine(series, "Season 01", "S S01E02 - A.strm"),
+                    ContentHash = null,
+                    StrmWrittenUtc = null
+                }).ToList(),
+                Series = state.Series.Select(entry => entry with { RelativePath = series, ContentHash = null, Seasons = [] }).ToList()
+            },
+            CancellationToken.None);
+        Directory.Delete(_fixture.Root, true);
+
+        var report = await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(0, report.Failed);
+        Assert.Equal(2, _fixture.Files.Count(file => file.EndsWith(".strm", StringComparison.Ordinal)));
+        Assert.Equal(state.Stubs.Select(stub => stub.Id).Order(), _fixture.Registry.State.Stubs.Select(stub => stub.Id).Order());
+        Assert.Equal(Assert.Single(state.Series).Id, Assert.Single(_fixture.Registry.State.Series).Id);
+        Assert.All(_fixture.Registry.State.Stubs, stub => Assert.True(File.Exists(_fixture.Path_(stub.RelativePath))));
+    }
+
+    // Row 555: a file system that counts characters holds it, so it keeps its place.
+    [Fact]
+    public async Task ATitleWrittenUnderALongNameKeepsItsPath()
+    {
+        var title = new string('漢', 120);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m", title, 2020, "1"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        await _fixture.SyncAndMaterializeAsync();
+        var state = _fixture.Registry.State;
+        var path = StubFixture.In(a, "Film", title, title + " - A.strm");
+        await _fixture.Registry.SaveAsync(state with { Stubs = state.Stubs.Select(stub => stub with { RelativePath = path }).ToList() }, CancellationToken.None);
+
+        await _fixture.Materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(path, Assert.Single(_fixture.Registry.State.Stubs).RelativePath);
+    }
+
+    // Row 554: the stubs that fail are all logged, the first ones whole.
+    [Fact]
+    public async Task StubsThatCannotBeWrittenStopFillingTheLog()
+    {
+        for (var film = 0; film < 25; film++)
+        {
+            _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m" + film, "Film" + film, 2020, "tmdb" + film));
+        }
+
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+        Directory.CreateDirectory(_fixture.Path_(a, "Film"));
+        for (var film = 0; film < 25; film++)
+        {
+            await File.WriteAllTextAsync(_fixture.Path_(a, "Film", $"Film{film} (2020)"), string.Empty);
+        }
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var lines = _fixture.Logger.Lines.Where(line => line.Contains("Cannot write a stub", StringComparison.Ordinal)).ToList();
+        Assert.Equal(25, lines.Count);
+        Assert.Equal(ErrorLogLimit.MaxPerMinute, lines.Count(line => line.Contains("   at ", StringComparison.Ordinal)));
+    }
+
     // Q326: a stub whose detach failed stays, with its file and registry entry, and the next round removes it.
     [Fact]
     public async Task AStubWhoseDetachFailedStaysUntilTheNextRound()

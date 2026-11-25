@@ -42,6 +42,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     private readonly IFileSystem _fileSystem;
     private readonly StubRemover _remover;
     private readonly ILogger<StubCleanupTask> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IVersionLinker? _linker;
     private readonly ILayoutMigration? _migration;
     private readonly IServerStubRenamer? _renames;
@@ -68,6 +69,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
     /// <param name="renames">The stub moves of renamed servers, if any.</param>
     /// <param name="keeper">What puts back the watch state of removed servers (row 412).</param>
     /// <param name="cleaner">What clears the watch state of the stubs that took more episodes (row 543).</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public StubCleanupTask(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -85,8 +87,10 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         ILayoutMigration? migration = null,
         IServerStubRenamer? renames = null,
         IWatchStateKeeper? keeper = null,
-        WatchStateCleaner? cleaner = null)
+        WatchStateCleaner? cleaner = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _resolver = resolver;
         _index = index;
@@ -161,7 +165,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not finish moving the stubs of a renamed server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not finish moving the stubs of a renamed server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -179,7 +183,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -197,7 +201,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not link the versions of the titles after the scan: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not link the versions of the titles after the scan: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -250,7 +254,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             // It still waits, and the next scan tries again.
-            _logger.LogError("Cannot hand over the watch state of a split title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot hand over the watch state of a split title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }
@@ -301,7 +305,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 // The stub stays, so its state is not lost, and the next scan tries again.
-                _logger.LogError("Cannot merge a stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot merge a stub: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
 
@@ -331,7 +335,7 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to merge the stubs: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries to merge the stubs: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }

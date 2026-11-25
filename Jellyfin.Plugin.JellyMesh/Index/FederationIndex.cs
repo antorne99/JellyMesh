@@ -19,6 +19,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
 {
     private readonly IPluginDatabase _database;
     private readonly ILogger<FederationIndex> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private volatile IndexSnapshot _snapshot;
 
@@ -36,8 +37,10 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     /// </summary>
     /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public FederationIndex(IPluginDatabase database, ILogger<FederationIndex> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public FederationIndex(IPluginDatabase database, ILogger<FederationIndex> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         ArgumentNullException.ThrowIfNull(database);
 
         _database = database;
@@ -226,12 +229,12 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogError("Cannot read the federation index from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the federation index from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
         catch (Exception exception) when (exception is JsonException or FormatException or ArgumentException or InvalidOperationException or OverflowException or InvalidCastException)
         {
-            _logger.LogError("The federation index in the database is damaged: {Error}. It is empty until a sync fills it again{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("The federation index in the database is damaged: {Error}. It is empty until a sync fills it again{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return new IndexTables.StoredIndex(IndexSnapshot.Empty(IndexHealth.Corrupt) with { Generation = _readGeneration }, []);
         }
     }
@@ -288,7 +291,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
                 _rows = null;
             }
 
-            _logger.LogError("Cannot save the federation index: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot save the federation index: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally

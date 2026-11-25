@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Index;
@@ -23,6 +24,7 @@ public sealed class ManualMergeService
     private readonly ILibraryMaterializer _materializer;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<ManualMergeService> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IVersionLinker? _linker;
     private readonly IMergeWatchStateCarry? _carry;
 
@@ -36,6 +38,7 @@ public sealed class ManualMergeService
     /// <param name="logger">The logger.</param>
     /// <param name="linker">The version linker, if any.</param>
     /// <param name="carry">The watch state carry of a merge, if any.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public ManualMergeService(
         IFederationResolver resolver,
         IManualMergeStore store,
@@ -43,8 +46,10 @@ public sealed class ManualMergeService
         TimeProvider timeProvider,
         ILogger<ManualMergeService> logger,
         IVersionLinker? linker = null,
-        IMergeWatchStateCarry? carry = null)
+        IMergeWatchStateCarry? carry = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _resolver = resolver;
         _store = store;
         _materializer = materializer;
@@ -205,7 +210,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot find the titles a manual merge joins: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot find the titles a manual merge joins: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return [];
         }
     }
@@ -224,7 +229,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot carry the watch state of a manual merge: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot carry the watch state of a manual merge: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -269,7 +274,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not apply the undo of a manual merge yet, a later sync or the nightly run does: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not apply the undo of a manual merge yet, a later sync or the nightly run does: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -286,7 +291,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

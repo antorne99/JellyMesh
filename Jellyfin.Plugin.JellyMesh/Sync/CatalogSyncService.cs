@@ -43,6 +43,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ICredentialVault _vault;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CatalogSyncService> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ILibraryMaterializer? _materializer;
     private readonly StubRegistry? _stubs;
     private readonly IActivityWriter? _activity;
@@ -91,6 +92,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="lastServed">The last server that served each stub, pruned after every sync (Q76).</param>
     /// <param name="gate">What tells a sync that nothing changed since the last one, so it skips its stubs and links (Q386).</param>
     /// <param name="database">The plugin database: while it is suspended, so is the sync.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
         IRemoteCatalogReader reader,
@@ -109,8 +111,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ILibraryChangeTracker? changes = null,
         ILastServedSourceStore? lastServed = null,
         IUnchangedSyncGate? gate = null,
-        IPluginDatabase? database = null)
+        IPluginDatabase? database = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _reader = reader;
         _index = index;
@@ -284,7 +288,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cleanup after removing a server stopped: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cleanup after removing a server stopped: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -362,7 +366,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Catalog sync stopped: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Catalog sync stopped: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -526,7 +530,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Could not save the sync history: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not save the sync history: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -562,13 +566,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
             var detail = ErrorText.Of(exception);
-            _logger.LogWarning("Sync of remote server {ServerName} ran out of time{Detail:l}", LogText.Clean(server.Name), detail);
+            _logger.LogWarning("Sync of remote server {ServerName} ran out of time{Detail:l}", LogText.Clean(server.Name), _errorLogs.For(server.Id).Of(detail));
             await MarkFailedAsync(server, RemoteFailure.Timeout, detail.TrimStart(), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             var detail = ErrorText.Of(exception);
-            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, detail);
+            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, _errorLogs.For(server.Id).Of(detail));
             await MarkFailedAsync(server, RemoteFailure.InvalidResponse, detail.TrimStart(), cancellationToken).ConfigureAwait(false);
         }
     }
@@ -624,7 +628,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not materialize the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not materialize the federated folder: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         if (_linker is null)
@@ -639,7 +643,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not link the versions of the titles: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not link the versions of the titles: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return (materialized, false);
         }
 
@@ -677,7 +681,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -696,7 +700,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not follow the libraries of the servers: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not follow the libraries of the servers: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }
@@ -710,7 +714,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Could not mark the check of the server libraries as skipped: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not mark the check of the server libraries as skipped: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

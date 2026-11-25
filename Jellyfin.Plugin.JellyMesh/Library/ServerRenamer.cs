@@ -23,6 +23,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     private readonly IFederatedFolderLinkChecker _links;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<ServerRenamer> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Lock _jobsLock = new();
     private readonly Dictionary<Guid, Task> _jobs = [];
@@ -38,6 +39,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     /// <param name="links">The link check of the server folders.</param>
     /// <param name="store">The configuration store, which keeps a rename that did not finish.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public ServerRenamer(
         IRemoteServerRegistry registry,
         IServerStubRenamer stubs,
@@ -46,8 +48,10 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         RetiredLibraryIds retired,
         IFederatedFolderLinkChecker links,
         IPluginConfigurationStore store,
-        ILogger<ServerRenamer> logger)
+        ILogger<ServerRenamer> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _stubs = stubs;
         _libraries = libraries;
@@ -160,7 +164,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cannot cancel the pending rename of a server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot cancel the pending rename of a server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return ServerRenameOutcome.CancelFailed;
         }
         finally
@@ -189,7 +193,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cannot rename a server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot rename a server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
         finally
         {

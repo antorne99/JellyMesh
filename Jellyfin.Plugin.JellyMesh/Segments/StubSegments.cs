@@ -33,6 +33,7 @@ public sealed class StubSegments
     private readonly IPluginConfigurationStore _store;
     private readonly TimeProvider _time;
     private readonly ILogger<StubSegments> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ConcurrentDictionary<Guid, SegmentOrigin> _origins = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _pausedUntil = new();
     private volatile IndexItemLookup? _lookup;
@@ -47,6 +48,7 @@ public sealed class StubSegments
     /// <param name="store">The configuration, for the time limit of a remote call.</param>
     /// <param name="time">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public StubSegments(
         StubLookup stubs,
         IFederationIndex index,
@@ -54,8 +56,10 @@ public sealed class StubSegments
         IRemoteSegmentClient client,
         IPluginConfigurationStore store,
         TimeProvider time,
-        ILogger<StubSegments> logger)
+        ILogger<StubSegments> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _stubs = stubs;
         _index = index;
         _registry = registry;
@@ -224,7 +228,7 @@ public sealed class StubSegments
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogDebug("Reading the media segments of a stub failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogDebug("Reading the media segments of a stub failed: {Error}{Detail:l}", exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.For(source.ServerId).Of(exception) : string.Empty);
             return RemoteResult.Fail<RemoteSegmentRead>(RemoteFailure.ServerError);
         }
     }

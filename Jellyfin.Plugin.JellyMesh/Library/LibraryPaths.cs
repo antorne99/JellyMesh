@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
@@ -18,6 +19,7 @@ public sealed class LibraryPaths : ILibraryPaths
 {
     private readonly ILibraryManager _library;
     private readonly ILogger<LibraryPaths> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly Lock _lock = new();
 
     /// <summary>
@@ -25,8 +27,10 @@ public sealed class LibraryPaths : ILibraryPaths
     /// </summary>
     /// <param name="library">The library manager.</param>
     /// <param name="logger">The logger.</param>
-    public LibraryPaths(ILibraryManager library, ILogger<LibraryPaths> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LibraryPaths(ILibraryManager library, ILogger<LibraryPaths> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _library = library;
         _logger = logger;
     }
@@ -59,7 +63,7 @@ public sealed class LibraryPaths : ILibraryPaths
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot add a folder of the federated folder to the library {Library}: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot add a folder of the federated folder to the library {Library}: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, _errorLogs.Local.Of(exception));
                 return LibraryPathOutcome.Failed;
             }
 
@@ -95,7 +99,7 @@ public sealed class LibraryPaths : ILibraryPaths
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot remove a folder of the federated folder from the library {Library}: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot remove a folder of the federated folder from the library {Library}: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, _errorLogs.Local.Of(exception));
                 return LibraryPathOutcome.Failed;
             }
 
@@ -149,7 +153,7 @@ public sealed class LibraryPaths : ILibraryPaths
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to change a folder of the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries to change a folder of the federated folder: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return (null, LibraryPathOutcome.Failed);
         }
 

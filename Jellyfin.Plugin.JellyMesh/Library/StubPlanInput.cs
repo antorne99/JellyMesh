@@ -42,6 +42,9 @@ public sealed record StubPlanInput(
     /// </summary>
     public Func<Guid, string, TypeFolder, string> PlacementOf { get; init; } = DefaultPlacement;
 
+    /// <summary>Gets the check for a relative path on the disk. Without it, no path that is kept changes.</summary>
+    public Func<string, bool> IsOnDisk { get; init; } = _ => true;
+
     /// <summary>Gives the default placement: one local library per server and type.</summary>
     /// <param name="serverId">The server.</param>
     /// <param name="libraryId">The remote library.</param>
