@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Integration 16 of the 0.6-0.7 spec (F62, row 460): a JellyMesh peer reads music, music videos, home videos and books
-# from a JellyMesh provider. Stubs, photos and libraries of federated paths only stay out; the audio, lyrics and file
-# routes keep the share and the stream limit; the change feed carries a new track and an album as its tracks. A track of a
-# library without a type, which gives films and series only, stays out.
+# from a JellyMesh provider, and photos with no place they were taken (row 560). Stubs and libraries of federated paths
+# only stay out; the audio, lyrics and file routes keep the share and the stream limit; the change feed carries a new
+# track and an album as its tracks. A track of a library without a type, which gives films and series only, stays out.
 #   remote  stock, media of remoto-standard: the provider federates its music and books, so it holds stubs of them
 #   local   the provider, media of remoto-jellymesh plus the home videos of remoto-standard and one .lrc
 #   peer    a JellyMesh consumer of local
@@ -146,7 +146,11 @@ cp "$WORK/jm-body" "$WORK/jm-tracks"
 check "only the tracks of local" "$(echo "$real_tracks" | tr -d - | paste -sd, -)" "$(jq -r '[.Items[].Id | gsub("-"; "")] | sort | join(",")' "$WORK/jm-tracks")"
 check "every track names its album" 0 "$(jq '[.Items[] | select((.AlbumId // "") == "")] | length' "$WORK/jm-tracks")"
 check "the track with a .lrc has lyrics" true "$(jq '[.Items[] | select(.Name == "Prima Traccia")][0].HasLyrics' "$WORK/jm-tracks")"
-check "photos read as empty" '200 0' "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Photo&parentId=$home") $(jq '.Items | length' "$WORK/jm-body")"
+check "photos" 200 "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Photo&parentId=$home")"
+check "every photo of local" "$(items local Photo real | count)" "$(jq '.Items | length' "$WORK/jm-body")"
+check "a photo is sent as its format alone" 0 "$(jq '[.Items[] | select((.Path // "") | test("^\\.[A-Za-z0-9]+$") | not)] | length' "$WORK/jm-body")"
+check_some "local knows where some photos were taken" true "$(get local '/Items?Recursive=true&IncludeItemTypes=Photo' | jq '[.Items[] | select(.Latitude != null)] | length > 0')"
+check "no place a photo was taken reaches the peer (row 560)" 0 "$(jq '[.Items[] | select(.Latitude != null or .Longitude != null or .Altitude != null)] | length' "$WORK/jm-body")"
 check "home videos" 200 "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=Video&parentId=$home")"
 cp "$WORK/jm-body" "$WORK/jm-videos"
 check "each home video has its parent" 0 "$(jq '[.Items[] | select((.ParentId // "") == "")] | length' "$WORK/jm-videos")"
@@ -173,12 +177,13 @@ check "the file of a stub track" 404 "$(as_jm GET "/Items/$stub_track/File")"
 check "the file of a stub book" 404 "$(as_jm GET "/Items/$stub_book/File")"
 photo_parent=$(get local "/Items/$photo" | jq -r '.ParentId // ""')
 check "the album of a photo is a photo album" PhotoAlbum "$(get local "/Items?Ids=$photo_parent" | jq -r '.Items[0].Type')"
-check "the cover of a photo album" 404 "$(as_jm GET "/Items/$photo_parent/Images/Primary")"
-check "photo albums read as empty" '200 0' "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=PhotoAlbum&parentId=$home") $(jq '.Items | length' "$WORK/jm-body")"
+check "the cover of a photo album" 200 "$(as_jm GET "/Items/$photo_parent/Images/Primary")"
+check "photo albums" 200 "$(as_jm GET "/JellyMesh/Provider/Items?includeItemTypes=PhotoAlbum&parentId=$home")"
+check "the photo albums of local" "$(items local PhotoAlbum real | count)" "$(jq '.Items | length' "$WORK/jm-body")"
 year_folder=$(get local '/Items?Recursive=true&IncludeItemTypes=Folder&Fields=Path' | jq -r '[.Items[] | select(.Path == "/media/videodomestici/2025")][0].Id // ""')
 echo "info the folder above a photo album: $(get local "/Items?Ids=$year_folder" | jq -c '.Items[0] | {Type, HasPrimary: (.ImageTags.Primary != null)}'), its cover to the peer: $(as_jm GET "/Items/$year_folder/Images/Primary")"
-check "the file of a photo" 404 "$(as_jm GET "/Items/$photo/File")"
-check "the image of a photo" 404 "$(as_jm GET "/Items/$photo/Images/Primary")"
+check "the file of a photo, which keeps its GPS (row 565)" 200 "$(as_jm GET "/Items/$photo/File")"
+check "the image of a photo" 200 "$(as_jm GET "/Items/$photo/Images/Primary")"
 check "the file of an album" 404 "$(as_jm GET "/Items/$album/File")"
 check "the cover of an album" 200 "$(as_jm GET "/Items/$album/Images/Primary")"
 check "the cover of a stub album" 404 "$(as_jm GET "/Items/$stub_album/Images/Primary")"
@@ -251,9 +256,10 @@ check "a music video" 1 "$(items peer MusicVideo stub | count)"
 check "the home videos" 3 "$(items peer Video stub | count)"
 get peer '/Items?Recursive=true&IncludeItemTypes=Video&Fields=Path' >"$WORK/peer-videos"
 check "a home video in its folders" 1 "$(jq '[.Items[] | select((.Path // "") | test("/2025/Inverno/"))] | length' "$WORK/peer-videos")"
-# A folder with photos is a photo album, held back with the photos until F60: its video lands without that folder.
-check "a home video beside photos, without their album" '1 0' "$(jq -r '"\([.Items[] | select(.Name == "Spiaggia")] | length) \([.Items[] | select((.Path // "") | test("/Estate/"))] | length)"' "$WORK/peer-videos")"
-check "no photo" 0 "$(items peer Photo stub | count)"
+# A folder with photos is a photo album, shared with the photos: its video lands in that folder.
+check "a home video beside photos, in their album" '1 1' "$(jq -r '"\([.Items[] | select(.Name == "Spiaggia")] | length) \([.Items[] | select((.Path // "") | test("/Estate/"))] | length)"' "$WORK/peer-videos")"
+check "every photo of local" "$(items local Photo real | count)" "$(items peer Photo stub | count)"
+check "no photo of the peer knows where it was taken" 0 "$(get peer '/Items?Recursive=true&IncludeItemTypes=Photo' | jq '[.Items[] | select(.Latitude != null)] | length')"
 peer_book=$(get peer '/Items?Recursive=true&IncludeItemTypes=Book&Fields=Path' | jq -r '[.Items[] | select((.Path // "") | (startswith("/federata") and endswith(".epub")))][0].Id // ""')
 check "the epub book" true "$([ -n "$peer_book" ] && echo true || echo false)"
 check "the book file through the peer" 200 "$(get peer "/Items/$peer_book/File" >/dev/null; status)"
