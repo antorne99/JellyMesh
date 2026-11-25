@@ -455,7 +455,7 @@ public static class StubPlanner
             .ToList();
     }
 
-    // The path that is kept. One that was never written because a name is too long changes if the new one fits.
+    // The path that is kept. One that was never written because a name is too long changes if the new one fits and is free.
     private static string PathOf(StubPlanInput input, string? kept, string? contentHash, Func<string> newPath)
     {
         if (kept is null)
@@ -469,7 +469,8 @@ public static class StubPlanner
         }
 
         var planned = newPath();
-        return FederatedPaths.FitsInNames(planned) ? planned : kept;
+        var isTaken = input.State.Stubs.Any(stub => string.Equals(stub.RelativePath, planned, StringComparison.OrdinalIgnoreCase));
+        return FederatedPaths.FitsInNames(planned) && !isTaken ? planned : kept;
     }
 
     private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, Func<string, string> newPath)

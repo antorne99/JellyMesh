@@ -349,6 +349,21 @@ public class ServerStubPlannerTests
     }
 
     [Fact]
+    public void AStubKeepsItsLongNameWhenTheNewOneIsOfAnotherStub()
+    {
+        var catalogs = new[] { Catalog(_serverA, SeriesItem("s"), EpisodeItem("e", "s", 1)) };
+        var first = Plan([EpisodeTitle(1, OnA("e"))], catalogs);
+        var episode = Assert.Single(first.State.Stubs);
+        var kept = Path.Combine(A, "Serie", new string('漢', 120), "Season 01", "x.strm");
+        var other = episode with { Id = "other", IdentityKey = "other", ContentHash = "hash", Sources = [] };
+        var state = first.State with { Stubs = [episode with { RelativePath = kept }, other] };
+
+        var plan = Plan([EpisodeTitle(1, OnA("e"))], catalogs, state, isOnDisk: _ => false);
+
+        Assert.Equal(kept, Assert.Single(plan.Stubs).Entry.RelativePath);
+    }
+
+    [Fact]
     public void AStubKeepsItsLongNameWhenTheNewOneIsTooLongToo()
     {
         var catalogs = new[] { Catalog(_serverA, Film("m", new string('漢', 120))) };
