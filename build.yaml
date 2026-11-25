@@ -1,7 +1,7 @@
 ---
 name: "JellyMesh"
 guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-version: "0.5.0.5"
+version: "0.5.0.6"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
@@ -20,7 +20,7 @@ image: "assets/jellymesh.png"
 artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
-  - The JellyMesh page shows the whole error of a server that can't be reached or used: the call, the status, what the server answered, and the exception with its stack trace. You can copy it from the message, from the server's card and from each part of the page that can't be read.
-  - Every JellyMesh error in the server log is whole too, with the address of the remote server. Tokens and passwords are always left out.
+  - The whole errors of the libraries, the index and the sync have a limit in the server log too: past 20 in a minute or 50 MB in a day, an error is one short line. A server that keeps failing, its logins included, takes no room in the log from the others.
+  - Films and series with a very long title in an alphabet such as Cyrillic or Chinese are added to the library: their file name could be too long to be written. Titles that are already there keep their files.
 
   Not verified: Jellyfin 12.1, 12.2 and 12.3, as it was checked live on 12.4 only.
