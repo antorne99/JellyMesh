@@ -295,7 +295,7 @@ Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its num
 
 ### Ebooks, PDFs and comics
 
-For each book JellyMesh writes a cover and a placeholder with the extension of the remote file, which holds nothing of the book. The formats are EPUB, PDF, CBZ, CBR, CB7, CBT, MOBI, AZW and AZW3; books in any other format are not imported. The placeholders of EPUB, PDF and CBZ are minimal valid files, tried on Jellyfin 12.4; those of the other formats are empty and have not been tried.
+For each book JellyMesh writes a cover and a placeholder with the extension of the remote file, which holds nothing of the book. The formats are EPUB, PDF, CBZ, CBR, CB7, CBT, MOBI, AZW and AZW3; books in any other format are not imported. The placeholders of EPUB, PDF and CBZ are minimal valid files, tried on Jellyfin 12.4; those of CBR, CB7, CBT, MOBI, AZW and AZW3 are empty and have not been tried on Jellyfin.
 
 Opening or downloading the book reads the file from the remote. If the remote is offline, the book stays in the library, and opening it fails with HTTP 503 and the text "File non disponibile: il server di origine non è raggiungibile. Riprova più tardi.", in Italian only.
 

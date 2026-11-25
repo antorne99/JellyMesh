@@ -322,6 +322,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         _fixture.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Item("t1", "/music/1.flac"), Item("t2", "/music/2.flac"), Item("t3", "/music/3.flac"));
         _fixture.Client.Add(TestLibraries.MusicVideos, RemoteItemType.MusicVideo, Item("c1", "/clips/1.mkv"), Item("c2", "/clips/2.mkv"));
         _fixture.Client.Add(TestLibraries.HomeVideos, RemoteItemType.Video, Item("h1", "/home/1.mp4"));
+        _fixture.Client.Add(TestLibraries.HomeVideos, RemoteItemType.Photo, Item("p1", "/home/1.jpg"), Item("p2", "/home/2.jpg"), Item("p3", "/home/3.jpg"), Item("p4", "/home/4.jpg"));
         _fixture.Client.Add(TestLibraries.Books, RemoteItemType.Book, Item("b1", "/books/1.epub"));
         _fixture.Client.Add(TestLibraries.Books, RemoteItemType.AudioBook, Item("a1", "/books/a/1.mp3"), Item("a2", "/books/a/2.mp3"));
         await _fixture.AddServerAsync("Friend", TestLibraries.Music, TestLibraries.MusicVideos, TestLibraries.HomeVideos, TestLibraries.Books);
@@ -329,7 +330,7 @@ public sealed class CatalogSyncServiceTests : IDisposable
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
         var server = Assert.Single(_fixture.Sync.GetStatus().Servers);
-        Assert.Equal((3, 2, 1, 1, 2), (server.Tracks, server.MusicVideos, server.HomeVideos, server.Books, server.AudiobookFiles));
+        Assert.Equal((3, 2, 1, 1, 2, 4), (server.Tracks, server.MusicVideos, server.HomeVideos, server.Books, server.AudiobookFiles, server.Photos));
         Assert.Equal((0, 0, 0), (server.Movies, server.Series, server.Episodes));
     }
 

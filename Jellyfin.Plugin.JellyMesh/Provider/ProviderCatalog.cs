@@ -34,6 +34,9 @@ public sealed class ProviderCatalog
     // The page size of a search for hidden items, which no peer sees.
     private const int SearchPageSize = 500;
 
+    /// <summary>The most item ids one query of the library is given, asked for and left out together. Each is one SQL variable.</summary>
+    internal const int MaxIdsPerQuery = 10_000;
+
     private static readonly ItemFields[] _fields =
     [
         ItemFields.ProviderIds,
@@ -233,7 +236,7 @@ public sealed class ProviderCatalog
             ForgetHidden(libraryId, kind);
         }
 
-        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, _hidden.Of(libraryId, kind), startIndex, limit));
+        var page = ReadPage(caller, libraryId, scope, kind, startIndex, limit);
         return ToResponse(caller, WithoutHidden(caller, libraryId, scope, kind, page.Items), page.TotalRecordCount);
     }
 
@@ -256,8 +259,16 @@ public sealed class ProviderCatalog
             return new ProviderCollectionsResponse([], 0);
         }
 
-        var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, _hidden.Of(libraryId, BaseItemKind.Movie), startIndex, limit);
-        query.ItemIds = [.. collections.Keys];
+        // Past one query's worth of ids, the films left out are taken off the films asked for instead.
+        var excluded = Excluded(scope, _hidden.Of(libraryId, BaseItemKind.Movie));
+        var fits = excluded.Length + collections.Count <= MaxIdsPerQuery;
+        var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, fits ? excluded : [], startIndex, limit);
+        query.ItemIds = fits ? [.. collections.Keys] : [.. collections.Keys.Except(excluded)];
+        if (query.ItemIds.Length == 0)
+        {
+            return new ProviderCollectionsResponse([], 0);
+        }
+
         var page = _library.GetItemsResult(query);
         var entries = WithoutHidden(caller, libraryId, scope, BaseItemKind.Movie, page.Items)
             .Where(item => collections.ContainsKey(item.Id))
@@ -349,21 +360,67 @@ public sealed class ProviderCatalog
     // A type no library gives reads as empty rather than refused, so that the read of the rest of the library goes on.
     private static ProviderItemsResponse Empty() => new([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
 
+    // The items a page of a library leaves out: those the scope leaves out, then those known to be hidden.
+    private static Guid[] Excluded(LibraryScope scope, IReadOnlySet<Guid> hidden) => [.. scope.ExcludeItemIds.Concat(hidden).Distinct()];
+
     // A page of a library as the peer sees it, under the scope that leaves the federated folder out and without the
-    // items known to be hidden.
-    private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlySet<Guid> hidden, int startIndex, int limit) => new(caller.User)
+    // given items.
+    private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlyCollection<Guid> excluded, int startIndex, int limit) => new(caller.User)
     {
         ParentId = libraryId,
         Recursive = true,
         IncludeItemTypes = [kind],
         IsVirtualItem = false,
         AncestorIds = scope.AncestorIds,
-        ExcludeItemIds = [.. scope.ExcludeItemIds, .. hidden],
+        ExcludeItemIds = [.. excluded],
         OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending), (ItemSortBy.SortName, SortOrder.Ascending)],
         StartIndex = startIndex,
         Limit = limit,
         EnableTotalRecordCount = true
     };
+
+    // Reads a page of a library without the items it leaves out. Past one query's worth of ids, the query leaves out the
+    // first ones and the rest are dropped while walking its ordered pages, and taken off its total by counting them in blocks.
+    private QueryResult<BaseItem> ReadPage(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, int startIndex, int limit)
+    {
+        var excluded = Excluded(scope, _hidden.Of(libraryId, kind));
+        if (excluded.Length <= MaxIdsPerQuery)
+        {
+            return _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, excluded, startIndex, limit));
+        }
+
+        var inQuery = excluded[..MaxIdsPerQuery];
+        var dropped = excluded[MaxIdsPerQuery..].ToHashSet();
+        var items = new List<BaseItem>();
+        var seen = 0;
+        var start = 0;
+        QueryResult<BaseItem> walked;
+        do
+        {
+            walked = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, inQuery, start, SearchPageSize));
+            foreach (var item in walked.Items.Where(item => !dropped.Contains(item.Id)))
+            {
+                if (seen++ >= startIndex && items.Count < limit)
+                {
+                    items.Add(item);
+                }
+            }
+
+            start += SearchPageSize;
+        }
+        while (items.Count < limit && walked.Items.Count > 0 && start < walked.TotalRecordCount);
+
+        var matched = dropped.Chunk(MaxIdsPerQuery).Sum(block => CountOf(caller, libraryId, scope, kind, block));
+        return new QueryResult<BaseItem>(startIndex, Math.Max(walked.TotalRecordCount - matched, 0), items);
+    }
+
+    // How many of the given items a page of a library would hold, were they not left out.
+    private int CountOf(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, Guid[] block)
+    {
+        var query = PageQuery(caller, libraryId, scope, kind, [], 0, 1);
+        query.ItemIds = block;
+        return _library.GetItemsResult(query).TotalRecordCount;
+    }
 
     // Drops the stubs that got past the query of a page, which comes up short: that read fails and nothing leaks. The
     // next one leaves out every hidden item of the library.
@@ -408,12 +465,15 @@ public sealed class ProviderCatalog
     // Reads a library for its hidden items, up to the most kept. The exclusion holds still, since pages are offsets.
     private void SearchHidden(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlySet<Guid> known)
     {
+        var excluded = Excluded(scope, known);
+        var inQuery = excluded.Length <= MaxIdsPerQuery ? excluded : excluded[..MaxIdsPerQuery];
+        var dropped = excluded.Skip(inQuery.Length).ToHashSet();
         var start = 0;
         QueryResult<BaseItem> page;
         do
         {
-            page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, known, start, SearchPageSize));
-            _hidden.Add(libraryId, kind, page.Items.Where(IsFederated).Select(item => item.Id).ToList());
+            page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, inQuery, start, SearchPageSize));
+            _hidden.Add(libraryId, kind, page.Items.Where(item => !dropped.Contains(item.Id) && IsFederated(item)).Select(item => item.Id).ToList());
             start += SearchPageSize;
         }
         while (page.Items.Count > 0 && start < page.TotalRecordCount && _hidden.Of(libraryId, kind).Count < HiddenItems.MaxPerType);
