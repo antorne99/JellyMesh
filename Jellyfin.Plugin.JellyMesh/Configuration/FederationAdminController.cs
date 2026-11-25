@@ -48,6 +48,7 @@ public class FederationAdminController : ControllerBase
     private readonly IServerRenamer? _renamer;
     private readonly IWatchStateKeeper? _keeper;
     private readonly IPluginDatabase? _database;
+    private readonly IStubRegistry? _stubs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -68,6 +69,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
     /// <param name="database">The plugin database, whose state the status carries.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
+    /// <param name="stubs">The stub registry, which tells whether the folder migration has ended.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -84,7 +86,8 @@ public class FederationAdminController : ControllerBase
         IServerRenamer? renamer = null,
         IWatchStateKeeper? keeper = null,
         IPluginDatabase? database = null,
-        ErrorLogLimits? errorLogs = null)
+        ErrorLogLimits? errorLogs = null,
+        IStubRegistry? stubs = null)
     {
         _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
@@ -102,6 +105,7 @@ public class FederationAdminController : ControllerBase
         _renamer = renamer;
         _keeper = keeper;
         _database = database;
+        _stubs = stubs;
     }
 
     /// <summary>
@@ -133,7 +137,8 @@ public class FederationAdminController : ControllerBase
                 .ToList()),
             HeldRemovals = _keeper?.HeldRemovals ?? [],
             Store = _database is null ? null : await StoreStatus.ReadAsync(_database, cancellationToken).ConfigureAwait(false),
-            SharedLibraries = _libraries.GetSharedState()
+            SharedLibraries = _libraries.GetSharedState(),
+            OlderLayoutInUse = OlderLayout()
         };
     }
 
@@ -600,6 +605,8 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.BeingRemoved => "This server is being removed.",
             RemoteFailure.NameTaken => "Another server already has this name.",
             RemoteFailure.RenameUnfinished => "A rename of this server has not finished. Wait for it, or save the edit without changing the name.",
+            RemoteFailure.MigrationUnfinished => "The name of a server can change after the folder migration ends. Save the edit without changing the name, or rename the server then.",
+            RemoteFailure.MigrationUnknown => "JellyMesh cannot tell yet whether the folder migration has ended, so the name cannot change now. Try again in a moment, or save the edit without changing the name.",
             _ => "The operation failed."
         };
     }
@@ -663,7 +670,8 @@ public class FederationAdminController : ControllerBase
         return failure switch
         {
             RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved
-                or RemoteFailure.NameTaken or RemoteFailure.RenameUnfinished => StatusCodes.Status409Conflict,
+                or RemoteFailure.NameTaken or RemoteFailure.RenameUnfinished or RemoteFailure.MigrationUnfinished
+                or RemoteFailure.MigrationUnknown => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
@@ -691,12 +699,13 @@ public class FederationAdminController : ControllerBase
             });
     }
 
-    // Refuses on the name a new name another server has, or one given while a rename has not finished (row 434).
     // Tells whether a server other than this one has the name, trimmed and in any case.
     private static bool NameHeldElsewhere(IReadOnlyList<RemoteServerInfo> servers, Guid serverId, string? name)
         => !string.IsNullOrWhiteSpace(name)
             && servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase));
 
+    // Refuses on the name a new name another server has, or one given while a rename or the folder migration has not
+    // finished, or while the end of the migration cannot be read (rows 434, 566).
     private ObjectResult? RefuseName(Guid serverId, string? name)
     {
         var trimmed = name?.Trim();
@@ -708,7 +717,7 @@ public class FederationAdminController : ControllerBase
 
         var failure = NameHeldElsewhere(servers, serverId, trimmed)
             ? RemoteFailure.NameTaken
-            : RenameUnfinished(serverId) ? RemoteFailure.RenameUnfinished : RemoteFailure.None;
+            : RenameUnfinished(serverId) ? RemoteFailure.RenameUnfinished : MigrationFailure();
         return failure == RemoteFailure.None
             ? null
             : EditFailed(RemoteResult.Fail(failure, new RemoteEditReport(RemoteEditField.Name)));
@@ -724,6 +733,32 @@ public class FederationAdminController : ControllerBase
 
         var state = _renamer.GetState(serverId);
         return state.Busy || state.Pending || state.Failed || _renamer.NeedsRestart;
+    }
+
+    // Refuses a new name while titles are in the older folder layouts, or while that cannot be read (row 566).
+    private RemoteFailure MigrationFailure() => OlderLayout() switch
+    {
+        false => RemoteFailure.None,
+        true => RemoteFailure.MigrationUnfinished,
+        null => RemoteFailure.MigrationUnknown
+    };
+
+    // Tells whether titles are still in the older folder layouts, null while the registry cannot tell; false without it.
+    private bool? OlderLayout()
+    {
+        if (_stubs is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return _stubs.UsesOlderLayout();
+        }
+        catch (StoreSuspendedException)
+        {
+            return null;
+        }
     }
 
     // Tells whether the last rename of the server failed, so that a save of the same name runs it again.

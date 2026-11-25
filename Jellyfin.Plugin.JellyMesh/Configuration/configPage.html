@@ -1702,6 +1702,8 @@
                 "it": {
                     "A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.": "Una libreria rinominata da JellyMesh mantiene il vecchio ID finché Jellyfin non si riavvia. Riavvia Jellyfin appena puoi.",
                     "A rename of this server has not finished. Wait for it, or save the edit without changing the name.": "Una rinomina di questo server non è finita. Attendila, oppure salva la modifica senza cambiare il nome.",
+                    "The name of a server can change after the folder migration ends. Save the edit without changing the name, or rename the server then.": "Il nome di un server si può cambiare dopo la fine della migrazione delle cartelle. Salva la modifica senza cambiare il nome, oppure rinomina il server allora.",
+                    "JellyMesh cannot tell yet whether the folder migration has ended, so the name cannot change now. Try again in a moment, or save the edit without changing the name.": "JellyMesh non riesce ancora a sapere se la migrazione delle cartelle è finita, quindi ora il nome non si può cambiare. Riprova tra poco, oppure salva la modifica senza cambiare il nome.",
                     "Another server already has this name.": "Un altro server ha già questo nome.",
                     "Another server answers at this address. To use it, remove this one and add it as a new server.": "A questo indirizzo risponde un altro server. Per usarlo, rimuovi questo e aggiungilo come nuovo server.",
                     "By remote library": "Per libreria remota",
@@ -1729,6 +1731,8 @@
                     "The library mode becomes {mode}: JellyMesh makes or adopts the libraries of this server, then scans them.": "La modalità delle librerie diventa {mode}: JellyMesh crea o adotta le librerie di questo server, poi le analizza.",
                     "The library mode changes from {from} to {to}: JellyMesh makes the new libraries first, then deletes its old ones.": "La modalità delle librerie passa da {from} a {to}: JellyMesh crea prima le nuove librerie, poi elimina le sue vecchie.",
                     "The name cannot change now. {state}": "Ora il nome non si può cambiare. {state}",
+                    "The name of a server can change after the folder migration ends.": "Il nome di un server si può cambiare dopo la fine della migrazione delle cartelle.",
+                    "JellyMesh cannot tell yet whether the folder migration has ended. Try again in a moment.": "JellyMesh non riesce ancora a sapere se la migrazione delle cartelle è finita. Riprova tra poco.",
                     "The rename of {server} that did not finish runs again.": "La rinomina di {server} che non era finita riparte.",
                     "The saved login no longer decrypts. Enter the user and the password again: JellyMesh logs in with them before saving them.": "L'accesso salvato non si decifra più. Inserisci di nuovo utente e password: JellyMesh accede con questi prima di salvarli.",
                     "The user changes, so the streams from this server stop now: {count}. The old user is logged out.": "L'utente cambia, quindi le riproduzioni da questo server si fermano ora: {count}. Il vecchio utente viene disconnesso.",
@@ -3424,14 +3428,16 @@
                     var lockNotes = create('div');
                     notes.appendChild(lockNotes);
 
-                    // An unfinished rename locks the name, with its state, again at each status read while the form is
-                    // open; a failed one runs again when the form is saved (920 Casi).
+                    // An unfinished rename, or a folder migration not ended or not known, locks the name, again at each
+                    // status read while the form is open; a failed rename runs again when the form is saved (920 Casi, 566).
                     form.jmLocks = function (current) {
                         server = current;
                         var rename = renameState(current);
                         var restart = !!(statusSection.data && statusSection.data.RenamedLibrariesNeedRestart);
-                        var locked = !!(rename.Busy || rename.Pending || rename.Failed || restart);
-                        var key = JSON.stringify([locked, rename.Pending && !rename.Busy, renameProblem(rename)]);
+                        var layout = statusSection.data ? statusSection.data.OlderLayoutInUse : null;
+                        var migrating = layout !== false;
+                        var locked = !!(rename.Busy || rename.Pending || rename.Failed || restart || migrating);
+                        var key = JSON.stringify([locked, rename.Pending && !rename.Busy, renameProblem(rename), restart, layout]);
                         if (lockNotes.jmKey === key) {
                             return;
                         }
@@ -3448,7 +3454,9 @@
                         }
 
                         addFormNote(lockNotes, t('The name cannot change now. {state}', {
-                            state: renameProblem(rename) || t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.')
+                            state: renameProblem(rename) || (restart
+                                ? t('A library JellyMesh renamed keeps its old ID until Jellyfin restarts. Restart Jellyfin when you can.')
+                                : layout === true ? t('The name of a server can change after the folder migration ends.') : t('JellyMesh cannot tell yet whether the folder migration has ended. Try again in a moment.'))
                         }), true);
                         if (rename.Pending && !rename.Busy) {
                             var cancelRow = actionRow();
