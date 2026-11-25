@@ -276,7 +276,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
 
             // Only an empty registry, as after a damage, takes back the stub files of the 0.5 layout it finds.
             KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root),
-            IgnoreRules = new ServerIgnoreRules(_library, root, _logger)
+            IgnoreRules = new ServerIgnoreRules(_library, root, _logger, _errorLogs)
         });
 
         WriteServerFolders(root, servers, plan.State, ConfiguredTypeFolders(servers));
@@ -727,7 +727,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot write a photo thumbnail: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot write a photo thumbnail: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }

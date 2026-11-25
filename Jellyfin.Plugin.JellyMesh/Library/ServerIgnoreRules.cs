@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
@@ -14,13 +15,16 @@ public sealed class ServerIgnoreRules : IServerIgnoreRules
     private readonly ILibraryManager _library;
     private readonly string _root;
     private readonly ILogger _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>Initializes a new instance of the <see cref="ServerIgnoreRules"/> class.</summary>
     /// <param name="library">The library manager.</param>
     /// <param name="root">The federated folder.</param>
     /// <param name="logger">The logger.</param>
-    public ServerIgnoreRules(ILibraryManager library, string root, ILogger logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public ServerIgnoreRules(ILibraryManager library, string root, ILogger logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _library = library;
         _root = root;
         _logger = logger;
@@ -43,7 +47,7 @@ public sealed class ServerIgnoreRules : IServerIgnoreRules
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogDebug(exception, "The server could not tell whether it ignores {Path}", path);
+            _logger.LogDebug("The server could not tell whether it ignores {Path}: {Error}{Detail:l}", path, exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.Local.Of(exception) : string.Empty);
             return false;
         }
     }

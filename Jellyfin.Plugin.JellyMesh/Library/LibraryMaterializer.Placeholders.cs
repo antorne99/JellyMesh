@@ -80,7 +80,7 @@ public sealed partial class LibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(entry.ServerId);
-            _logger.LogError("Cannot write a placeholder: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot write a placeholder: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

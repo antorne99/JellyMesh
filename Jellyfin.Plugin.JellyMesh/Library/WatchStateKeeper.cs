@@ -554,8 +554,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
             catch (Exception exception) when (exception is not OperationCanceledException and not StoreSuspendedException)
             {
-                // The type only: a message could hold a path. The rows stay for a later run.
-                _logger.LogError("Cannot put back the kept watch state of a title: {Error}", exception.GetType().Name);
+                // The rows stay for a later run.
+                _logger.LogError("Cannot put back the kept watch state of a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
 
@@ -581,8 +581,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
             catch (Exception exception) when (exception is not OperationCanceledException and not StoreSuspendedException)
             {
-                // The type only: a message could hold a path.
-                _logger.LogError("Cannot match the kept watch state of {Types}: {Error}", types, exception.GetType().Name);
+                _logger.LogError("Cannot match the kept watch state of {Types}: {Error}{Detail:l}", types, exception.GetType().Name, _errorLogs.Local.Of(exception));
                 return [];
             }
         }
