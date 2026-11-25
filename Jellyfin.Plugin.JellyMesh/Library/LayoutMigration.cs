@@ -35,6 +35,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     private readonly ILibraryMaterializer _materializer;
     private readonly IServerLibraryManager _automaticLibraries;
     private readonly ILogger<LayoutMigration> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IWatchStateKeeper? _keeper;
     private readonly IMigrationSync? _sync;
     private volatile LastRun? _lastRun;
@@ -57,6 +58,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
     /// <param name="logger">The logger.</param>
     /// <param name="keeper">What keeps the watch state of the old titles of removed servers before they go (row 412).</param>
     /// <param name="sync">The sync the automatic migration runs before its scan (§10 row 420).</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public LayoutMigration(
         StubRegistry registry,
         IPluginConfigurationStore store,
@@ -72,8 +74,10 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         IServerLibraryManager automaticLibraries,
         ILogger<LayoutMigration> logger,
         IWatchStateKeeper? keeper = null,
-        IMigrationSync? sync = null)
+        IMigrationSync? sync = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _store = store;
         _library = library;
@@ -504,7 +508,7 @@ public sealed partial class LayoutMigration : ILayoutMigration, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
 

@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaSegments;
@@ -28,6 +29,7 @@ public sealed class NewStubSegments : BackgroundService
     private readonly IStubRegistry _registry;
     private readonly StubSegments _segments;
     private readonly ILogger<NewStubSegments> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ConcurrentDictionary<Guid, byte> _awaitingRefresh = new();
     private readonly Channel<Guid> _queue = Channel.CreateBounded<Guid>(new BoundedChannelOptions(MaxPending)
     {
@@ -43,8 +45,10 @@ public sealed class NewStubSegments : BackgroundService
     /// <param name="registry">The stub registry.</param>
     /// <param name="segments">The segments of the stubs.</param>
     /// <param name="logger">The logger.</param>
-    public NewStubSegments(ILibraryManager library, IMediaSegmentManager manager, IStubRegistry registry, StubSegments segments, ILogger<NewStubSegments> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public NewStubSegments(ILibraryManager library, IMediaSegmentManager manager, IStubRegistry registry, StubSegments segments, ILogger<NewStubSegments> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _library = library;
         _manager = manager;
         _registry = registry;
@@ -128,7 +132,7 @@ public sealed class NewStubSegments : BackgroundService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Could not compute the media segments of a new stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Could not compute the media segments of a new stub: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

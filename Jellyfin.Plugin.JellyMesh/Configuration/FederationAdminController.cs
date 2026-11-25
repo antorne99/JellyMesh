@@ -41,6 +41,7 @@ public class FederationAdminController : ControllerBase
     private readonly IManualMergeStore _merges;
     private readonly IServerLibraryManager _libraries;
     private readonly ILogger<FederationAdminController> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ILayoutMigration? _migration;
     private readonly ILibraryChangeTracker? _changes;
     private readonly IServerRenamer? _renamer;
@@ -63,6 +64,7 @@ public class FederationAdminController : ControllerBase
     /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
     /// <param name="renamer">The server rename.</param>
     /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -77,8 +79,10 @@ public class FederationAdminController : ControllerBase
         ILayoutMigration? migration = null,
         ILibraryChangeTracker? changes = null,
         IServerRenamer? renamer = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _vault = vault;
         _store = store;
@@ -238,7 +242,7 @@ public class FederationAdminController : ControllerBase
             }
 
             var detail = ErrorText.Of(exception);
-            _logger.LogError("Could not remove a server: {Error}{Detail:l}", exception.GetType().Name, detail);
+            _logger.LogError("Could not remove a server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(detail));
             return Failed(stopping ? RemoteFailure.RemovalFailedPlaybackStopped : RemoteFailure.RemovalFailed, detail.TrimStart());
         }
 
@@ -271,7 +275,7 @@ public class FederationAdminController : ControllerBase
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             var detail = ErrorText.Of(exception);
-            _logger.LogError("Could not forget the missing servers: {Error}{Detail:l}", exception.GetType().Name, detail);
+            _logger.LogError("Could not forget the missing servers: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(detail));
             return Failed(RemoteFailure.ForgetFailed, detail.TrimStart());
         }
 
@@ -642,7 +646,7 @@ public class FederationAdminController : ControllerBase
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not take the removed server out of the manual merges: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not take the removed server out of the manual merges: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

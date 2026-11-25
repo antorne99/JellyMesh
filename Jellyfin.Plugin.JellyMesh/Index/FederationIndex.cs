@@ -17,6 +17,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
 {
     private readonly IndexFile _file;
     private readonly ILogger<FederationIndex> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private volatile IndexSnapshot _snapshot;
 
@@ -25,8 +26,10 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
     /// </summary>
     /// <param name="file">The index file.</param>
     /// <param name="logger">The logger.</param>
-    public FederationIndex(IndexFile file, ILogger<FederationIndex> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public FederationIndex(IndexFile file, ILogger<FederationIndex> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         ArgumentNullException.ThrowIfNull(file);
 
         _file = file;
@@ -143,7 +146,7 @@ public sealed class FederationIndex : IFederationIndex, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot save the federation index: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot save the federation index: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally

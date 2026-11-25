@@ -26,12 +26,13 @@ public sealed class AdminErrorsAttribute : ExceptionFilterAttribute
         }
 
         var detail = ErrorText.Of(context.Exception);
-        context.HttpContext.RequestServices.GetService<ILogger<AdminErrorsAttribute>>()?.LogError(
+        var services = context.HttpContext.RequestServices;
+        services.GetService<ILogger<AdminErrorsAttribute>>()?.LogError(
             "{Method} {Path} failed: {Error}{Detail:l}",
             LogText.Clean(request.Method),
             LogText.Clean(request.Path.Value ?? string.Empty),
             context.Exception.GetType().Name,
-            detail);
+            services.GetService<ErrorLogLimits>()?.Local.Of(detail) ?? detail);
         context.Result = new ObjectResult(new FailureResponse(RemoteFailure.None, FederationAdminController.FailureMessage(RemoteFailure.None)) { Detail = detail.TrimStart() })
         {
             StatusCode = StatusCodes.Status500InternalServerError

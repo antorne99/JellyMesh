@@ -2,6 +2,7 @@ using System;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Activity;
 using Microsoft.Extensions.Logging;
 
@@ -16,6 +17,7 @@ public sealed class JellyfinActivityWriter : IActivityWriter, IDisposable
 
     private readonly IActivityManager _manager;
     private readonly ILogger<JellyfinActivityWriter> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly Channel<ActivityEntry> _queue = Channel.CreateBounded<ActivityEntry>(
         new BoundedChannelOptions(Capacity) { SingleReader = true, FullMode = BoundedChannelFullMode.DropWrite });
 
@@ -26,8 +28,10 @@ public sealed class JellyfinActivityWriter : IActivityWriter, IDisposable
     /// </summary>
     /// <param name="manager">The activity manager of the server.</param>
     /// <param name="logger">The logger.</param>
-    public JellyfinActivityWriter(IActivityManager manager, ILogger<JellyfinActivityWriter> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public JellyfinActivityWriter(IActivityManager manager, ILogger<JellyfinActivityWriter> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _manager = manager;
         _logger = logger;
         _drain = Task.Run(DrainAsync);
@@ -69,7 +73,7 @@ public sealed class JellyfinActivityWriter : IActivityWriter, IDisposable
             catch (Exception exception)
             {
                 // Also a cancellation: no token is passed, so it is not the caller's.
-                _logger.LogWarning("Cannot write {Type} to the activity log: {Error}{Detail:l}", entry.Type, exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogWarning("Cannot write {Type} to the activity log: {Error}{Detail:l}", entry.Type, exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
     }

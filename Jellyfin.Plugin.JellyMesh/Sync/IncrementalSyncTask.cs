@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -20,8 +21,9 @@ public sealed class IncrementalSyncTask : SyncTask
     /// <param name="sync">The sync service.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
-    public IncrementalSyncTask(ICatalogSyncService sync, IPluginConfigurationStore store, ILogger<IncrementalSyncTask> logger)
-        : base(store, logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public IncrementalSyncTask(ICatalogSyncService sync, IPluginConfigurationStore store, ILogger<IncrementalSyncTask> logger, ErrorLogLimits? errorLogs = null)
+        : base(store, logger, errorLogs)
     {
         _sync = sync;
     }

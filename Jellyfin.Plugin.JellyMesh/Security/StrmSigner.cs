@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Security;
@@ -30,9 +31,10 @@ public sealed class StrmSigner
     /// </summary>
     /// <param name="folder">The folder of the key.</param>
     /// <param name="logger">The logger.</param>
-    public StrmSigner(string folder, ILogger<StrmSigner> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public StrmSigner(string folder, ILogger<StrmSigner> logger, ErrorLogLimits? errorLogs = null)
     {
-        _key = LoadOrCreate(Path.Combine(folder, FileName), logger);
+        _key = LoadOrCreate(Path.Combine(folder, FileName), logger, errorLogs ?? new ErrorLogLimits());
     }
 
     /// <summary>
@@ -58,7 +60,7 @@ public sealed class StrmSigner
             && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Sign(stubId)), Encoding.UTF8.GetBytes(signature));
     }
 
-    private static byte[] LoadOrCreate(string path, ILogger<StrmSigner> logger)
+    private static byte[] LoadOrCreate(string path, ILogger<StrmSigner> logger, ErrorLogLimits errorLogs)
     {
         try
         {
@@ -80,7 +82,7 @@ public sealed class StrmSigner
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             // Stubs are then signed again at each restart, which costs little, while a throw here would stop all playback.
-            logger.LogError("Cannot keep the .strm signing key: {Error}. A key for this run only is used{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            logger.LogError("Cannot keep the .strm signing key: {Error}. A key for this run only is used{Detail:l}", exception.GetType().Name, errorLogs.Local.Of(exception));
             return RandomNumberGenerator.GetBytes(KeyLength);
         }
     }

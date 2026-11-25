@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -23,6 +24,7 @@ public sealed class SyncScheduleService : BackgroundService
     private readonly ITaskManager _taskManager;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<SyncScheduleService> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ILayoutMigration? _migration;
 
     /// <summary>
@@ -32,8 +34,10 @@ public sealed class SyncScheduleService : BackgroundService
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="migration">The migration to the server folders, which may wait at start for a sync (§10 row 420).</param>
-    public SyncScheduleService(ITaskManager taskManager, IPluginConfigurationStore store, ILogger<SyncScheduleService> logger, ILayoutMigration? migration = null)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public SyncScheduleService(ITaskManager taskManager, IPluginConfigurationStore store, ILogger<SyncScheduleService> logger, ILayoutMigration? migration = null, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _taskManager = taskManager;
         _store = store;
         _logger = logger;
@@ -75,7 +79,7 @@ public sealed class SyncScheduleService : BackgroundService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // What escapes a hosted service stops the whole server, and a missed schedule is not worth that.
-            _logger.LogError("Cannot prepare the sync schedule: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot prepare the sync schedule: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -118,7 +122,7 @@ public sealed class SyncScheduleService : BackgroundService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot read the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }
@@ -146,7 +150,7 @@ public sealed class SyncScheduleService : BackgroundService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot save the schedule of {Task}: {Error}{Detail:l}", worker.Name, exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot save the schedule of {Task}: {Error}{Detail:l}", worker.Name, exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

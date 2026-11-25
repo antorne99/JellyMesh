@@ -871,6 +871,29 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Equal(2, _fixture.Files.Count(file => file.EndsWith(".strm", StringComparison.Ordinal)));
     }
 
+    // Row 554: the stubs that fail are all logged, the first ones whole.
+    [Fact]
+    public async Task StubsThatCannotBeWrittenStopFillingTheLog()
+    {
+        for (var film = 0; film < 25; film++)
+        {
+            _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m" + film, "Film" + film, 2020, "tmdb" + film));
+        }
+
+        var a = await _fixture.Sync.AddServerAsync("A", "films");
+        Directory.CreateDirectory(_fixture.Path_(a, "Film"));
+        for (var film = 0; film < 25; film++)
+        {
+            await File.WriteAllTextAsync(_fixture.Path_(a, "Film", $"Film{film} (2020)"), string.Empty);
+        }
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        var lines = _fixture.Logger.Lines.Where(line => line.Contains("Cannot write a stub", StringComparison.Ordinal)).ToList();
+        Assert.Equal(25, lines.Count);
+        Assert.Equal(ErrorLogLimit.MaxPerMinute, lines.Count(line => line.Contains("   at ", StringComparison.Ordinal)));
+    }
+
     // Q326: a stub whose detach failed stays, with its file and registry entry, and the next round removes it.
     [Fact]
     public async Task AStubWhoseDetachFailedStaysUntilTheNextRound()

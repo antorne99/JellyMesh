@@ -38,22 +38,20 @@ internal sealed class ErrorLogLimit(TimeProvider? clock = null)
     /// </summary>
     /// <param name="detail">The whole error, empty when there is none.</param>
     /// <returns>The error, or a note that says it is not written.</returns>
-    public string Of(string detail)
-    {
-        return detail.Length == 0 || MayWrite(detail.Length)
-            ? detail
-            : string.Create(
-                CultureInfo.InvariantCulture,
-                $" [not written whole: over {MaxPerMinute} errors or {MaxCharactersPerMinute} characters in a minute, or {MaxCharactersPerDay} characters in a day]");
-    }
+    public string Of(string detail) => detail.Length == 0 || MayWrite(detail.Length) ? detail : NotWritten();
 
     /// <summary>
     /// Gets a whole exception as it goes after a log line.
     /// </summary>
     /// <param name="exception">The exception.</param>
     /// <returns>The exception, or a note that says it is not written.</returns>
-    public string Of(Exception? exception) => Of(ErrorText.Of(exception));
+    public string Of(Exception? exception) => exception is not null && !MayWrite(0) ? NotWritten() : Of(ErrorText.Of(exception));
 
+    private static string NotWritten() => string.Create(
+        CultureInfo.InvariantCulture,
+        $" [not written whole: over {MaxPerMinute} errors or {MaxCharactersPerMinute} characters in a minute, or {MaxCharactersPerDay} characters in a day]");
+
+    // Counts a text if it may be written; a length of 0 only asks.
     private bool MayWrite(int length)
     {
         lock (_gate)
@@ -75,6 +73,11 @@ internal sealed class ErrorLogLimit(TimeProvider? clock = null)
             if (_minuteErrors >= MaxPerMinute || _minuteCharacters > MaxCharactersPerMinute - length || _dayCharacters > MaxCharactersPerDay - length)
             {
                 return false;
+            }
+
+            if (length == 0)
+            {
+                return true;
             }
 
             _minuteErrors++;

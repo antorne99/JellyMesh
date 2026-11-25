@@ -7,6 +7,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -30,6 +31,7 @@ public sealed class VersionLinker : IVersionLinker
     private readonly IUserDataManager _userData;
     private readonly StubItemUpdater _updater;
     private readonly ILogger<VersionLinker> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     // Up until the first full run ends, so that a refusal after a restart is not taken as final (Q324).
     private volatile bool _lastRunFailed = true;
     private volatile VersionLinkRun? _lastFullRun;
@@ -45,6 +47,7 @@ public sealed class VersionLinker : IVersionLinker
     /// <param name="userData">The user data manager.</param>
     /// <param name="updater">What saves the items.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public VersionLinker(
         StubRegistry registry,
         IFederationIndex index,
@@ -53,8 +56,10 @@ public sealed class VersionLinker : IVersionLinker
         IUserManager users,
         IUserDataManager userData,
         StubItemUpdater updater,
-        ILogger<VersionLinker> logger)
+        ILogger<VersionLinker> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _index = index;
         _store = store;
@@ -136,7 +141,7 @@ public sealed class VersionLinker : IVersionLinker
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    _logger.LogError("Cannot link the versions of a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                    _logger.LogError("Cannot link the versions of a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
                     failed = true;
                 }
 
@@ -409,7 +414,7 @@ public sealed class VersionLinker : IVersionLinker
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot detach a version from its group: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot detach a version from its group: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
                 failed.Add(stub);
             }
         }
@@ -489,7 +494,7 @@ public sealed class VersionLinker : IVersionLinker
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 collection.LinkedChildren = before;
-                _logger.LogError("Cannot move the entries of a collection to the primary version: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot move the entries of a collection to the primary version: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
     }

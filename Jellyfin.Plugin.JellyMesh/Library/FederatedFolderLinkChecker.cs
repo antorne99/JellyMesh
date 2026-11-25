@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -21,14 +22,17 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
 
     private readonly ILibraryManager _libraryManager;
     private readonly ILogger<FederatedFolderLinkChecker> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederatedFolderLinkChecker"/> class.
     /// </summary>
     /// <param name="libraryManager">The library manager.</param>
     /// <param name="logger">The logger.</param>
-    public FederatedFolderLinkChecker(ILibraryManager libraryManager, ILogger<FederatedFolderLinkChecker> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public FederatedFolderLinkChecker(ILibraryManager libraryManager, ILogger<FederatedFolderLinkChecker> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _libraryManager = libraryManager;
         _logger = logger;
     }
@@ -43,7 +47,7 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to check the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries to check the federated folder: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return FederatedFolderLinkReport.NotChecked;
         }
 

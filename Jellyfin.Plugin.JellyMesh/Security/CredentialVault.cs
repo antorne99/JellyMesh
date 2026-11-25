@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -24,6 +25,7 @@ public sealed class CredentialVault : ICredentialVault
     private readonly IPluginConfigurationStore _store;
     private readonly ILegacySecretKeySource? _legacy;
     private readonly ILogger _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CredentialVault"/> class.
@@ -32,12 +34,14 @@ public sealed class CredentialVault : ICredentialVault
     /// <param name="store">The configuration store.</param>
     /// <param name="legacy">The key of versions before 0.4, if any.</param>
     /// <param name="logger">The logger.</param>
-    public CredentialVault(ISecretKeySource keySource, IPluginConfigurationStore store, ILegacySecretKeySource? legacy = null, ILogger<CredentialVault>? logger = null)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public CredentialVault(ISecretKeySource keySource, IPluginConfigurationStore store, ILegacySecretKeySource? legacy = null, ILogger<CredentialVault>? logger = null, ErrorLogLimits? errorLogs = null)
     {
         _keySource = keySource;
         _store = store;
         _legacy = legacy;
         _logger = logger ?? NullLogger<CredentialVault>.Instance;
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
 
         // Here, before any caller can hold the configuration lock or read a wrong key that is about to be moved.
         Migrate();
@@ -193,7 +197,7 @@ public sealed class CredentialVault : ICredentialVault
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Moving the credentials to the key file failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Moving the credentials to the key file failed: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

@@ -94,7 +94,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
         if (!login.IsSuccess)
         {
-            _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(name), login.Failure, _errorLogs.Accounts.Of(login.Detail));
+            _logger.LogWarning("Login on new remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(name), login.Failure, _errorLogs.Unsaved.Of(login.Detail));
             return login.FailAs<RemoteServerInfo>();
         }
 
@@ -107,13 +107,13 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return RemoteResult.Fail(RemoteFailure.AlreadyConfigured, configured);
         }
 
-        var (capabilities, _) = await DetectCapabilitiesAsync(endpoint, login.Value!, name, cancellationToken).ConfigureAwait(false);
+        var (capabilities, _) = await DetectCapabilitiesAsync(serverId, endpoint, login.Value!, name, cancellationToken).ConfigureAwait(false);
 
         // As for new credentials (419): a login whose credentials cannot be saved is ended.
         var encrypted = _vault.Protect(serverId, credentials);
         if (encrypted is null)
         {
-            await EndUnusedLoginAsync(endpoint, login.Value!, name, refusedIsEnded: false).ConfigureAwait(false);
+            await EndUnusedLoginAsync(serverId, endpoint, login.Value!, name, refusedIsEnded: false).ConfigureAwait(false);
             return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
         }
 
@@ -174,7 +174,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             // user, so it is ended here, a refused token counting as ended.
             if (runtime.Session is not null)
             {
-                await EndUnusedLoginAsync(endpoint, login.Value!, server.Name, refusedIsEnded: true).ConfigureAwait(false);
+                await EndUnusedLoginAsync(serverId, endpoint, login.Value!, server.Name, refusedIsEnded: true).ConfigureAwait(false);
             }
             else if (!runtime.TryKeep(login.Value!) || !IsConfigured(serverId))
             {
@@ -235,7 +235,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var login = await _client.AuthenticateAsync(endpoint, credentials, cancellationToken).ConfigureAwait(false);
             if (!login.IsSuccess)
             {
-                _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}{Detail:l}", LogText.Clean(stored.Name), login.Failure, _errorLogs.Accounts.Of(login.Detail));
+                _logger.LogWarning("Login on remote server {ServerName} with new credentials failed: {Failure}{Detail:l}", LogText.Clean(stored.Name), login.Failure, LogLimitOf(serverId).Of(login.Detail));
                 return login.FailAs<RemoteServerInfo>();
             }
 
@@ -243,7 +243,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             var encrypted = _vault.Protect(serverId, credentials);
             if (encrypted is null)
             {
-                await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
+                await EndUnusedLoginAsync(serverId, endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 return RemoteResult.Fail<RemoteServerInfo>(RemoteFailure.Suspended);
             }
 
@@ -289,7 +289,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             }
             catch
             {
-                await EndUnusedLoginAsync(endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
+                await EndUnusedLoginAsync(serverId, endpoint, login.Value!, stored.Name, refusedIsEnded: false).ConfigureAwait(false);
                 throw;
             }
 
@@ -403,7 +403,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             {
                 // Capabilities first: they decide where the libraries are read from.
                 var name = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.Name) ?? string.Empty;
-                var (capabilities, error) = await DetectCapabilitiesAsync(endpoint, session, name, token).ConfigureAwait(false);
+                var (capabilities, error) = await DetectCapabilitiesAsync(serverId, endpoint, session, name, token).ConfigureAwait(false);
                 var libraries = await ReadLibrariesAsync(capabilities.Mode, endpoint, session, token).ConfigureAwait(false);
                 return libraries.IsSuccess
                     ? RemoteResult.Success<ConnectionReport>(new ConnectionReport(capabilities, libraries.Value!.Count) { Detail = error?.ToString() })
@@ -653,7 +653,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
     }
 
-    private async Task<(RemoteCapabilities Capabilities, RemoteError? Error)> DetectCapabilitiesAsync(RemoteEndpoint endpoint, RemoteSession session, string serverName, CancellationToken cancellationToken)
+    private async Task<(RemoteCapabilities Capabilities, RemoteError? Error)> DetectCapabilitiesAsync(Guid serverId, RemoteEndpoint endpoint, RemoteSession session, string serverName, CancellationToken cancellationToken)
     {
         var result = await _client.DetectCapabilitiesAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
         if (result.IsSuccess)
@@ -661,9 +661,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             return (result.Value!, null);
         }
 
-        _logger.LogWarning("Capability detection on remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(serverName), result.Failure, _errorLogs.Accounts.Of(result.Detail));
+        _logger.LogWarning("Capability detection on remote server {ServerName} failed: {Failure}{Detail:l}", LogText.Clean(serverName), result.Failure, LogLimitOf(serverId).Of(result.Detail));
         return (new RemoteCapabilities(RemoteMode.Unknown, 0), result.Error);
     }
+
+    // The limit of the errors of a server in the log.
+    private ErrorLogLimit LogLimitOf(Guid serverId) => IsConfigured(serverId) ? _errorLogs.For(serverId) : _errorLogs.Unsaved;
 
     // The configured server that stands for a remote with this Server Id, if any (decision 120).
     private RemoteServerInfo? ConfiguredAs(PluginConfiguration config, string remoteId) =>
@@ -675,7 +678,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         var result = await _client.LogoutAsync(endpoint, session, cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
-            _logger.LogInformation("Could not end an unused login on a remote server: {Failure}{Detail:l}", result.Failure, _errorLogs.Accounts.Of(result.Detail));
+            _logger.LogInformation("Could not end an unused login on a remote server: {Failure}{Detail:l}", result.Failure, _errorLogs.Unsaved.Of(result.Detail));
         }
     }
 
@@ -691,7 +694,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         else
         {
             // A logout cut by the limit may still reach the remote later.
-            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Accounts.Of(logout.Detail));
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Unsaved.Of(logout.Detail));
         }
     }
 
@@ -728,7 +731,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // The removal is saved, so it must not fail now.
-            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Error}; its JellyMesh device may stay listed there{Detail:l}", name, exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Error}; its JellyMesh device may stay listed there{Detail:l}", name, exception.GetType().Name, _errorLogs.Unsaved.Of(exception));
             return;
         }
         finally
@@ -745,7 +748,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
         else
         {
-            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Accounts.Of(logout.Detail));
+            _logger.LogWarning("Could not end the login on removed remote server {ServerName} without a live login: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Unsaved.Of(logout.Detail));
         }
     }
 
@@ -770,7 +773,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         _logger.LogInformation("Remote server {ServerName} was removed while logging in; that login is ended", name);
         foreach (var logout in await EndFreshAndKeptAsync(serverId, runtime, endpoint, fresh, freshMayBeRevoked).ConfigureAwait(false))
         {
-            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Accounts.Of(logout.Detail));
+            _logger.LogWarning("Could not end a login on removed remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Unsaved.Of(logout.Detail));
         }
     }
 
@@ -778,11 +781,11 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
     private async Task EndUnsavedAddAsync(RemoteServerConfig server, RemoteEndpoint endpoint, RemoteSession login, Exception error)
     {
         var name = LogText.Clean(server.Name);
-        _logger.LogWarning("Cannot save new remote server {ServerName}: {Error}; its login is ended{Detail:l}", name, error.GetType().Name, ErrorText.Of(error));
+        _logger.LogWarning("Cannot save new remote server {ServerName}: {Error}; its login is ended{Detail:l}", name, error.GetType().Name, _errorLogs.Unsaved.Of(error));
         var runtime = _runtimes.TryGetValue(server.Id, out var held) ? held : null;
         foreach (var logout in await EndFreshAndKeptAsync(server.Id, runtime, endpoint, login, freshMayBeRevoked: true).ConfigureAwait(false))
         {
-            _logger.LogWarning("Could not end a login on unsaved remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Accounts.Of(logout.Detail));
+            _logger.LogWarning("Could not end a login on unsaved remote server {ServerName}: {Failure}; its JellyMesh device may stay listed there{Detail:l}", name, logout.Failure, _errorLogs.Unsaved.Of(logout.Detail));
         }
     }
 
@@ -820,12 +823,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
 
     // Ends a login that is not kept, such as one whose credentials could not be saved (419), within the logout limit.
     // With refusedIsEnded, a refused token was revoked by a later login and counts as ended.
-    private async Task EndUnusedLoginAsync(RemoteEndpoint endpoint, RemoteSession session, string serverName, bool refusedIsEnded)
+    private async Task EndUnusedLoginAsync(Guid serverId, RemoteEndpoint endpoint, RemoteSession session, string serverName, bool refusedIsEnded)
     {
         var logout = await LogOutWithinLimitAsync(endpoint, session).ConfigureAwait(false);
         if (!logout.IsSuccess && !(refusedIsEnded && logout.Failure == RemoteFailure.AuthenticationFailed))
         {
-            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login{Detail:l}", LogText.Clean(serverName), logout.Failure, _errorLogs.Accounts.Of(logout.Detail));
+            _logger.LogWarning("Could not end an unused login on remote server {ServerName}: {Failure}; it may stay open there until the next login{Detail:l}", LogText.Clean(serverName), logout.Failure, LogLimitOf(serverId).Of(logout.Detail));
         }
     }
 
@@ -888,7 +891,7 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot save the Server Id of remote server {ServerName}: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, LogLimitOf(server.Id).Of(exception));
         }
     }
 

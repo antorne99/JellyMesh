@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -40,6 +41,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
 
     private readonly string _path;
     private readonly ILogger<LastServedSourceStore> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), Guid> _servers = new();
     private readonly ITimer _timer;
@@ -53,8 +55,10 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
     /// <param name="folder">The folder of the file.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="timeProvider">The clock of the deferred write.</param>
-    public LastServedSourceStore(string folder, ILogger<LastServedSourceStore> logger, TimeProvider? timeProvider = null)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LastServedSourceStore(string folder, ILogger<LastServedSourceStore> logger, TimeProvider? timeProvider = null, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _path = Path.Combine(folder, FileName);
         _logger = logger;
         foreach (var entry in Load())
@@ -131,7 +135,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _unsaved = true;
-            _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
         catch
         {
@@ -192,7 +196,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
         catch (Exception exception) when (exception is not ObjectDisposedException)
         {
-            _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
     }
 
@@ -244,7 +248,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the last servers that served each title: {Error}. It is set aside{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the file of the last servers that served each title: {Error}. It is set aside{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
 
         KeepDamagedCopy();
@@ -259,7 +263,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the last servers: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot keep a copy of the damaged file of the last servers: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
     }
 

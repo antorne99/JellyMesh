@@ -40,6 +40,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly StubUrlBuilder _urls;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<LibraryMaterializer> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ILocalRefreshRequester? _refresher;
     private readonly IVersionLinker? _linker;
     private readonly IWatchStateKeeper? _keeper;
@@ -64,6 +65,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
     /// <param name="linker">What detaches a stub from its versions before it is removed.</param>
     /// <param name="keeper">What keeps the watch state of removed servers and puts it back (row 412).</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public LibraryMaterializer(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -80,8 +82,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         ILogger<LibraryMaterializer> logger,
         ILocalRefreshRequester? refresher = null,
         IVersionLinker? linker = null,
-        IWatchStateKeeper? keeper = null)
+        IWatchStateKeeper? keeper = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _resolver = resolver;
         _index = index;
@@ -353,7 +357,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(entry.ServerId);
-            _logger.LogError("Cannot write a stub series: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot write a stub series: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -386,7 +390,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(serverId);
-            _logger.LogError("Cannot write a stub season: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot write a stub season: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         return entry;
@@ -458,7 +462,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(entry.ServerId);
-            _logger.LogError("Cannot write a stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot write a stub: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -478,7 +482,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             run.Fail(stub.ServerId);
-            _logger.LogError("Cannot sign a stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot sign a stub: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -689,7 +693,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         run.Failed += removal.Failures.Count;
         foreach (var failure in removal.Failures)
         {
-            _logger.LogError("Cannot remove a stub: {Error}{Detail:l}", failure.GetType().Name, ErrorText.Of(failure));
+            _logger.LogError("Cannot remove a stub: {Error}{Detail:l}", failure.GetType().Name, _errorLogs.Local.Of(failure));
         }
 
         // A stub still in the registry was not removed. The totals count the failures themselves.
@@ -712,7 +716,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         run.FoldersPending += removal.Failures.Count;
         foreach (var failure in removal.Failures)
         {
-            _logger.LogError("Cannot remove the folder of a removed server: {Error}{Detail:l}", failure.GetType().Name, ErrorText.Of(failure));
+            _logger.LogError("Cannot remove the folder of a removed server: {Error}{Detail:l}", failure.GetType().Name, _errorLogs.Local.Of(failure));
         }
 
         if (removal.Removed > 0)

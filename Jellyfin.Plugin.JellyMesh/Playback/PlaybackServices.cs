@@ -28,7 +28,8 @@ public static class PlaybackServices
         services.AddSingleton(provider => new LastServedSourceStore(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
             provider.GetRequiredService<ILogger<LastServedSourceStore>>(),
-            provider.GetRequiredService<TimeProvider>()));
+            provider.GetRequiredService<TimeProvider>(),
+            provider.GetRequiredService<ErrorLogLimits>()));
         services.AddSingleton<ILastServedSourceStore>(provider => provider.GetRequiredService<LastServedSourceStore>());
         services.AddHostedService(provider => provider.GetRequiredService<LastServedSourceStore>());
         services.AddSingleton<PlaybackCoordinator>();
