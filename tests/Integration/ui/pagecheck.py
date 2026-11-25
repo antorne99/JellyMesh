@@ -2696,9 +2696,10 @@ def half_done(status):
 
 
 def no_cases(merges):
-    """Leaves no doubtful films or series."""
+    """Leaves no doubtful films, series or music videos."""
     merges["Cases"] = []
     merges["SeriesCases"] = []
+    merges["MusicVideoCases"] = []
 
 
 def overview_well(s, width):
@@ -2728,7 +2729,7 @@ def overview_well(s, width):
     name = width + " overview duplicates"
     page = s.open("fresh", width, route=lambda context: fake(context, "Status", linked))
     found = u.api("fresh", "GET", "/JellyMesh/Admin/Merges")[1]
-    cases = len(found["Cases"]) + len(found["SeriesCases"])
+    cases = len(found["Cases"]) + len(found["SeriesCases"]) + len(found["MusicVideoCases"])
     check(name + " count", fact_value(page, "Duplicates to review") == str(cases), fact_value(page, "Duplicates to review"))
     check(name + " are no problem", text(page, u.STATUS) == "Active. All is well." and alarms(page) == [], text(page, u.STATUS))
     opens(page, name, u.fact(page, "Duplicates").locator(u.TAB_LINK), "catalog")
@@ -3872,6 +3873,155 @@ def store_notices(s, width):
     u.close(page)
 
 
+MUSIC_VIDEO = "JM Video Musicale"
+ALBUM_NOTE = "an album that is on several servers shows once per server, with separate plays and favourites"
+FETCHERS_NOTE = "the metadata settings of your Jellyfin apply, with all the fetchers of tracks, audiobooks, videos and photos"
+# Each new type as a remote library gives it: the folder, the words of a library to import, of a folder and of a warning.
+NEW_TYPES = [("music", "Musica", "music", "Music library", "music"),
+             ("musicvideos", "Video musicali", "music videos", "Music video library", "music video"),
+             ("homevideos", "Video domestici", "home videos and photos", "Home video and photo library", "home video and photo"),
+             ("books", "Libri", "books", "Book library", "book")]
+
+
+def music_video_list(data):
+    """Adds a doubtful pair and a merge of music videos to a merge list, made from its doubtful films."""
+    case = json.loads(json.dumps(next(case for case in data["Cases"] if any(PAIR in copy["Copy"]["Title"] for title in case["Titles"] for copy in title["Copies"]))))
+    case.update(ContentKind="MusicVideo", Kind="PossibleDuplicate")
+    for title in case["Titles"]:
+        title["WorkKey"] = "musicvideo|" + title["WorkKey"]
+        for copy in title["Copies"]:
+            copy["Copy"].update(Kind="MusicVideo", Title=MUSIC_VIDEO)
+    merged = json.loads(json.dumps([title["Copies"][0] for title in case["Titles"]]))
+    for copy in merged:
+        copy["Copy"].update(Title=MUSIC_VIDEO + " Unito")
+    data["MusicVideoCases"] = [case]
+    data["Merges"] = [{"Id": "5e71e500-0000-4000-8000-000000000002", "CreatedUtc": "2026-11-01T10:00:00Z", "IsInEffect": True, "Copies": merged}]
+
+
+def music_video_merges(s, width):
+    """Doubtful and merged music videos have their own sections, words and count, apart from films and series (D64)."""
+    name = width + " music videos"
+    state = {"local": False}
+
+    def listed(data):
+        music_video_list(data)
+        for title in data["MusicVideoCases"][0]["Titles"]:
+            title["HasLocalCopy"] = state["local"]
+
+    page = s.open("fresh", width, tab="catalog", route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, listed)))
+    case = page.locator("#jmMusicVideoCases " + u.MERGE_CASE)
+    merge = page.locator("#jmMusicVideoMerges " + u.MERGE)
+    check(name + " lists the doubtful pair in its section", until(page, lambda: case.count() == 1), page.locator("#jmMusicVideoCases").inner_text())
+    check(name + " says why in words of music videos", "nothing confirms they are one music video" in case.inner_text(), case.inner_text())
+    check(name + " lists the merge in its section", merge.count() == 1 and MUSIC_VIDEO + " Unito" in merge.inner_text(), page.locator("#jmMusicVideoMerges").inner_text())
+    check(name + " can undo the merge", u.button(merge, "undo").is_visible())
+    check(name + " compares the quality as for a film", "Resolution" in case.inner_text(), case.inner_text())
+    for other in ["#jmMergeCases", "#jmMerges", "#jmSeriesCases", "#jmSeriesMerges"]:
+        check(f"{name} stay out of {other}", MUSIC_VIDEO not in text(page, other), text(page, other))
+    page.route("**/JellyMesh/Admin/Merges/Preview", lambda route: route.fulfill(status=200, json={"Copy": None, "Version": None, "IsCertain": False}))
+    select(case, 2)
+    check(name + " forecast what would play", "cannot be known" in result(case), result(case))
+    case.scroll_into_view_if_needed()
+    u.shot(page, f"music-videos-{width}")
+    healthy(page, name)
+    u.close(page)
+
+    state["local"] = True
+    page = s.open("fresh", width, tab="catalog", route=lambda context: context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, listed)))
+    case = page.locator("#jmMusicVideoCases " + u.MERGE_CASE)
+    until(page, lambda: case.count() == 1)
+    select(case, 2)
+    check(name + " two local ones say why they cannot merge", "two local music videos" in result(case) and u.button(case, "merge").is_hidden(), result(case))
+    u.close(page)
+
+    page = s.open("fresh", width, route=lambda context: (fake(context, "Status", linked), fake(context, "Merges", lambda data: (music_video_list(data), data.update(Cases=[], SeriesCases=[])))))
+    check(name + " count among the duplicates", fact_value(page, "Duplicates to review") == "1", fact_value(page, "Duplicates to review"))
+    note = u.fact(page, "Duplicates").inner_text()
+    check(name + " are named in the review", "one music video" in note and "one film" not in note, note)
+    u.close(page)
+
+
+def new_types(s, width):
+    """The new types in the edit form, the folders, the cards and the notes of section 3.17, in both languages."""
+    name = width + " new types"
+    libraries = [{"Id": "jm-" + kind, "Name": "Remote " + kind, "CollectionType": kind, "Selected": False} for kind in [each[0] for each in NEW_TYPES] + ["mixed"]]
+    state = {"link": "NotLinked", "libraries": [], "overall": "NotLinked", "counts": dict(Tracks=12, MusicVideos=1, HomeVideos=2, Books=1, AudiobookFiles=3)}
+
+    def folders(data):
+        linked(data)
+        data["FederatedFolder"]["Link"] = state["overall"]
+        stock = of_server(data["FederatedFolder"], "stock")
+        for kind, folder, *_ in NEW_TYPES:
+            stock["Folders"].append({"Path": f"/federata/a/{kind}/{folder}", "LibraryType": kind, "RemoteLibrary": "Remote " + kind,
+                                     "Link": {"Link": state["link"], "Libraries": list(state["libraries"])}})
+
+    def routes(context):
+        fake(context, "Servers/*/Edit/Check", lambda data: data["Libraries"].extend(libraries), "POST")
+        fake(context, "Status", folders)
+        fake(context, "Sync", lambda data: of_server(data, "stock").update(state["counts"]))
+
+    page = s.open("fresh", width, route=routes)
+    note = u.fact(page, "Federated folder").locator(u.ALARM)
+    shown = " ".join(note.all_inner_texts())
+    for kind, _, _, _, words in NEW_TYPES:
+        check(f"{name} the overview names the {kind} path", f"The {words} path is not linked" in shown, shown)
+    check(name + " the overview leaves the linked films out", "film path" not in shown and "peer" not in shown, shown)
+
+    u.show_tab(page, "servers")
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    shown = form.inner_text()
+    for kind, _, words, _, _ in NEW_TYPES:
+        check(f"{name} the form names a library of {kind}", f"Remote {kind} ({words})" in shown, shown)
+    check(name + " the form names a library with no type", "Remote mixed (films and series)" in shown, shown)
+    mode = form.get_by_label(u.MODE_LABEL, exact=True)
+    check(name + " mode None has no fetchers note", FETCHERS_NOTE not in form.inner_text(), form.inner_text())
+    for value in ["ByType", "ByRemoteLibrary"]:
+        mode.select_option(value)
+        check(f"{name} mode {value} says which fetchers apply", FETCHERS_NOTE in form.inner_text(), form.inner_text())
+    mode.select_option("ByType")
+    check(name + " mode ByType speaks of every type", "for each type imported" in form.inner_text(), form.inner_text())
+    u.shot(page, f"new-types-form-{width}")
+    u.button(stock, "close").click()
+    counted = u.card_fact(stock, "Catalog")
+    check(name + " the card counts them", counted.endswith(", 12 tracks, 1 music video, 2 home videos, 1 book, 3 audiobook files"), counted)
+    other = u.server_row(page, "peer").locator(u.FACT_VALUE % "Catalog").text_content()
+    check(name + " a card with none of them keeps films and series only", other.endswith(("episode", "episodes")), other)
+    healthy(page, name)
+
+    u.show_tab(page, "settings")
+    block = u.server_folder(page, "stock")
+    for kind, _, _, label, _ in NEW_TYPES:
+        check(f"{name} the folder of {kind} has its label", f"{label} from Remote {kind}" in block.inner_text(), block.inner_text())
+    check(name + " the folders are said not linked", block.inner_text().count("is not linked to a library yet") == len(NEW_TYPES), block.inner_text())
+    check(name + " an album on several servers is explained beside the single library", ALBUM_NOTE in text(page, u.SHARED_GROUP), text(page, u.SHARED_GROUP))
+    check(name + " and at the folders of a server linked later", ALBUM_NOTE in text(page, "#jmNewServers"), text(page, "#jmNewServers"))
+    check(name + " the fetchers are explained beside the single library", FETCHERS_NOTE in text(page, u.SHARED_GROUP), text(page, u.SHARED_GROUP))
+    u.shot(page, f"new-types-settings-{width}")
+    state.update(link="WrongLibraryType", libraries=["Mia"])
+    check(name + " a wrong library is named by its type", until(page, lambda: "which is not a music video library" in block.inner_text(), 20), block.inner_text())
+    state.update(link="Linked", libraries=["Musica"], overall="Linked", counts=dict(Tracks=0, MusicVideos=0, HomeVideos=0, Books=0, AudiobookFiles=0))
+    check(name + " linked folders warn of nothing", until(page, lambda: block.locator(".jmFolderWarning").count() == 0, 20), block.inner_text())
+    healthy(page, name + " once linked")
+    u.close(page)
+
+    name = width + " new types in Italian"
+    state.update(link="WrongLibraryType", libraries=["Mia"], overall="NotLinked", counts=dict(Tracks=1, MusicVideos=2, HomeVideos=1, Books=2, AudiobookFiles=1))
+    page = s.open("fresh", width, language="it", route=lambda context: (routes(context), context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, music_video_list))))
+    shown = " ".join(u.fact(page, "Cartella federata").locator(u.ALARM).all_inner_texts())
+    check(name + " the overview speaks of the type", "Il percorso di video musicali è collegato a Mia, che non è una libreria di video musicali" in shown, shown)
+    counted = u.server_row(page, "stock").locator(u.FACT_VALUE % "Catalogo").inner_text()
+    check(name + " the card counts them", counted.endswith(", 1 traccia, 2 video musicali, 1 video domestico, 2 libri, 1 file di audiolibro"), counted)
+    check(name + " the sections are named", "Video musicali duplicati" in page.locator(u.PAGE).text_content() and "Video musicali uniti" in page.locator(u.PAGE).text_content())
+    check(name + " a merge is dated", "Uniti il" in page.locator("#jmMusicVideoMerges").text_content(), page.locator("#jmMusicVideoMerges").text_content())
+    check(name + " the album note is there", "con ascolti e preferiti separati" in page.locator(u.SHARED_GROUP).text_content(), page.locator(u.SHARED_GROUP).text_content())
+    check(name + " has no context mark left", "|" not in page.locator(u.PAGE).inner_text(), page.locator(u.PAGE).inner_text())
+    healthy(page, name)
+    u.shot(page, f"new-types-italian-{width}")
+    u.close(page)
+
+
 SCENARIOS = {
     "tabs": (tabs, WIDTHS),
     "overview": (overview, WIDTHS),
@@ -3927,6 +4077,8 @@ SCENARIOS = {
     "server-notes": (server_notes, WIDTHS),
     "new-library-mode": (new_library_mode, WIDTHS),
     "store": (store_notices, WIDTHS),
+    "music-videos": (music_video_merges, WIDTHS),
+    "new-types": (new_types, WIDTHS),
 }
 
 with u.Session() as session:

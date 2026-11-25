@@ -320,7 +320,12 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             Count(IndexedItemKind.Series),
             Count(IndexedItemKind.Episode))
         {
-            Detail = catalog?.LastFailure is null ? null : _failureDetails.GetValueOrDefault(server.Id)
+            Detail = catalog?.LastFailure is null ? null : _failureDetails.GetValueOrDefault(server.Id),
+            Tracks = Count(IndexedItemKind.Audio),
+            MusicVideos = Count(IndexedItemKind.MusicVideo),
+            HomeVideos = Count(IndexedItemKind.Video),
+            Books = Count(IndexedItemKind.Book),
+            AudiobookFiles = Count(IndexedItemKind.AudioBook)
         };
     }
 

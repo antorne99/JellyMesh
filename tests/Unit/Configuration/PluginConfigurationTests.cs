@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -256,15 +257,45 @@ public class PluginConfigurationTests
         Assert.Contains("renderCases(el('#jmSeriesCases'), list.SeriesCases, mergeKinds.series)", render, StringComparison.Ordinal);
     }
 
+    // Decision D64: the music videos to merge and merged have sections of their own too, with their own words.
+    [Fact]
+    public void MusicVideosToMergeHaveTheirOwnSection()
+    {
+        var page = ConfigPage();
+        var section = Slice(page, "<h3 class=\"sectionTitle\">Duplicate music videos</h3>", "<h3 class=\"sectionTitle\">Sync history</h3>");
+        var render = Slice(page, "function renderMerges(list)", "function formatDuration(milliseconds)");
+        var kinds = Slice(page, "musicVideos: {", "function copyTitle(copy)");
+
+        Assert.Contains("id=\"jmMusicVideoCases\"", section, StringComparison.Ordinal);
+        Assert.Contains("<h3 class=\"sectionTitle\">Merged music videos</h3>", section, StringComparison.Ordinal);
+        Assert.Contains("id=\"jmMusicVideoMerges\"", section, StringComparison.Ordinal);
+        Assert.Contains("renderCases(el('#jmMusicVideoCases'), list.MusicVideoCases, mergeKinds.musicVideos)", render, StringComparison.Ordinal);
+        Assert.Contains("two local music videos cannot be merged", kinds, StringComparison.Ordinal);
+        Assert.DoesNotContain("film", kinds, StringComparison.Ordinal);
+    }
+
+    // Every type a server can give is named in the page, as a library to import and as a folder to link.
+    [Fact]
+    public void EveryTypeHasItsWordsInThePage()
+    {
+        var page = ConfigPage();
+        var libraries = Slice(page, "var libraryKinds = {", "};");
+        var folders = Slice(page, "var folderKinds = {", "};");
+
+        Assert.All(TypeFolder.All, type => Assert.Contains(type.LibraryType + ": ", libraries, StringComparison.Ordinal));
+        Assert.All(TypeFolder.All, type => Assert.Contains(type.LibraryType + ": {", folders, StringComparison.Ordinal));
+        Assert.Contains("mixed: ", libraries, StringComparison.Ordinal);
+    }
+
     // The merges come in one list, so each goes to the section of its kind, as the server names it.
     [Fact]
     public void EachMergeIsShownWithItsKind()
     {
         var render = Slice(ConfigPage(), "function renderMerges(list)", "function formatDuration(milliseconds)");
 
-        Assert.Contains("return copy.Copy.Kind !== 'Movie';", render, StringComparison.Ordinal);
-        Assert.Contains("renderMergeList(el('#jmMerges'), films, mergeKinds.films)", render, StringComparison.Ordinal);
-        Assert.Contains("renderMergeList(el('#jmSeriesMerges'), series, mergeKinds.series)", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmMerges'), mergesOf(list, 'Movie'), mergeKinds.films)", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmSeriesMerges'), mergesOf(list, 'Episode'), mergeKinds.series)", render, StringComparison.Ordinal);
+        Assert.Contains("renderMergeList(el('#jmMusicVideoMerges'), mergesOf(list, 'MusicVideo'), mergeKinds.musicVideos)", render, StringComparison.Ordinal);
     }
 
     // A series is compared by what it holds, since its quality is decided per episode.

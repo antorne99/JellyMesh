@@ -22,11 +22,11 @@ public sealed record FederatedFolderLinkReport(IReadOnlyList<ServerFolderLink> S
     public bool IsChecked { get; init; } = true;
 
     /// <summary>
-    /// Gets the overall state: linked only when there are servers and both folders of each are linked.
+    /// Gets the overall state: linked only when there are servers and every type folder of each is linked.
     /// </summary>
     public FederatedFolderLinkState State => !IsChecked
         ? FederatedFolderLinkState.NotChecked
-        : Servers.Count > 0 && Servers.All(server => server.Movies.Link == FederatedPathLink.Linked && server.Series.Link == FederatedPathLink.Linked)
+        : Servers.Count > 0 && Servers.All(server => server.Folders.All(folder => folder.Link.Link == FederatedPathLink.Linked))
             ? FederatedFolderLinkState.Linked
             : FederatedFolderLinkState.NotLinked;
 }

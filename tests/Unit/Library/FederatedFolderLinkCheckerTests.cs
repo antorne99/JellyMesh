@@ -439,6 +439,25 @@ public sealed class FederatedFolderLinkCheckerTests
         Assert.All(LinkOfA(report).Folders, folder => Assert.Equal(FederatedPathLink.Linked, folder.Link.Link));
     }
 
+    [Theory]
+    [InlineData("music", "Musica", CollectionTypeOptions.music)]
+    [InlineData("musicvideos", "Video musicali", CollectionTypeOptions.musicvideos)]
+    [InlineData("homevideos", "Video domestici", CollectionTypeOptions.homevideos)]
+    [InlineData("books", "Libri", CollectionTypeOptions.books)]
+    public void ATypeFolderOfANewTypeCountsInTheOverallState(string kind, string folderName, CollectionTypeOptions type)
+    {
+        const string Other = "a4000000000000000000000000000001";
+        var folder = $"/federata/{_a:D}/{Other}/{folderName}";
+        var server = ServerA((FilmsA, "Film", "movies"), (Other, "Altro", kind));
+
+        var left = CheckTypeFolders(server, Movies(_aFilms));
+        var linked = CheckTypeFolders(server, Movies(_aFilms), Library("Altro", type, false, folder));
+
+        Assert.Equal(FederatedFolderLinkState.NotLinked, left.State);
+        Assert.Equal(FederatedPathLink.NotLinked, LinkOfA(left).Folders.Single(link => link.Path == folder).Link.Link);
+        Assert.Equal(FederatedFolderLinkState.Linked, linked.State);
+    }
+
     [Fact]
     public void OneTypeFolderLeftOutLeavesItsKindNotLinked()
     {

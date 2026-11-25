@@ -33,4 +33,19 @@ public sealed record ServerSyncReport(
     /// Gets the whole story of the failure, null when there is none or it was before a restart.
     /// </summary>
     public string? Detail { get; init; }
+
+    /// <summary>Gets the music tracks in the index.</summary>
+    public int Tracks { get; init; }
+
+    /// <summary>Gets the music videos in the index.</summary>
+    public int MusicVideos { get; init; }
+
+    /// <summary>Gets the home videos in the index.</summary>
+    public int HomeVideos { get; init; }
+
+    /// <summary>Gets the ebooks in the index.</summary>
+    public int Books { get; init; }
+
+    /// <summary>Gets the audiobook files in the index, where a book in several files has one entry per file.</summary>
+    public int AudiobookFiles { get; init; }
 }
