@@ -793,6 +793,7 @@ public class ProviderCatalogTests
     [InlineData("")]
     [InlineData(null)]
     [InlineData("00000000000000000000000000000000")]
+    [InlineData("5d1f1c1e9a2b4c3d8e7f6a5b4c3d2e1f")]
     public void A_source_whose_id_cannot_be_checked_is_cleared(string? id)
     {
         const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";

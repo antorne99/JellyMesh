@@ -566,7 +566,8 @@ public sealed class ProviderCatalog
             || source.IsRemote
             || !Guid.TryParse(source.Id, out var id)
             || id.Equals(Guid.Empty)
-            || IsStrmFile(caller, id);
+            || _library.GetItemById<BaseItem>(id, caller.User) is not { } item
+            || IsStrm(item.Path);
     }
 
     // A file next to the main one of an item, with no library of its own, is seen with that item.
