@@ -787,6 +787,36 @@ public class ProviderCatalogTests
         Assert.Null(Assert.Single(sent.MediaAttachments).DeliveryUrl);
     }
 
+    // A file source whose id cannot be looked up may be a .strm: its fields are cleared all the same.
+    [Theory]
+    [InlineData("not-a-guid")]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("00000000000000000000000000000000")]
+    public void A_source_whose_id_cannot_be_checked_is_cleared(string? id)
+    {
+        const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
+        var source = new MediaSourceInfo
+        {
+            Id = id,
+            Protocol = MediaProtocol.File,
+            Path = Secret,
+            EncoderPath = Secret,
+            RequiredHttpHeaders = new() { ["Authorization"] = Secret },
+            MediaStreams = [new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = Secret, DeliveryUrl = Secret }],
+            MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = Secret }]
+        };
+
+        _fixture.Catalog.ClearUrlFields(_fixture.PeerCaller, source);
+
+        Assert.Null(source.Path);
+        Assert.Null(source.EncoderPath);
+        Assert.Empty(source.RequiredHttpHeaders);
+        Assert.Null(source.MediaStreams[0].Path);
+        Assert.Null(source.MediaStreams[0].DeliveryUrl);
+        Assert.Null(source.MediaAttachments[0].DeliveryUrl);
+    }
+
     [Fact]
     public void A_file_of_this_server_keeps_its_headers_and_delivery_urls_in_the_catalog()
     {

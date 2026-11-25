@@ -559,11 +559,14 @@ public sealed class ProviderCatalog
     }
 
     // Tells whether a source reads an admin's .strm, or anything but a file of this server: its path is then a URL.
+    // A source whose id names no item cannot be checked for a .strm, so it counts as one.
     private bool IsUrlSource(PeerCaller caller, MediaSourceInfo source)
     {
         return source.Protocol != MediaProtocol.File
             || source.IsRemote
-            || (Guid.TryParse(source.Id, out var id) && IsStrmFile(caller, id));
+            || !Guid.TryParse(source.Id, out var id)
+            || id.Equals(Guid.Empty)
+            || IsStrmFile(caller, id);
     }
 
     // A file next to the main one of an item, with no library of its own, is seen with that item.
