@@ -3,21 +3,24 @@
 #   peer     jm-dedup-j  18423  media of remoto-jellymesh  plugin, shares its libraries
 #   fresh    jm-dedup-f  18421  media of locale            plugin, consumer of both, from an empty folder
 #   upgrade  jm-dedup-u  18424  media of locale            plugin, consumer of both, first with the old build
-# They share the network jm-dedup-net. Never touches the jellymesh-test stack.
+# They share the network jm-dedup-net. Never touches the jellymesh-test stack. PREFIX (default jm-dedup) and PORT (default
+# 18421, the port of fresh; stock, peer and upgrade take the next three) move it all elsewhere.
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 MEDIA=${MEDIA:-$WT/tests/Integration/media}
 WORK=${WORK:-${TMPDIR:-/tmp}/jm-dedup-work}
 IMAGE=$(awk '/image:/ {print $2; exit}' "$WT/tests/Integration/docker-compose.yml")
-NETWORK=jm-dedup-net
+PREFIX=${PREFIX:-jm-dedup}
+PORT=${PORT:-18421}
+NETWORK=$PREFIX-net
 PLUGIN=28c43ea1-fb5a-4b3a-8e6e-30aa3245c653
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshDedup", Device="dedup", DeviceId="jm-dedup-admin", Version="0.1"'
 DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mkv,mp4,webm","VideoCodec":"h264,hevc,av1,vp9","AudioCodec":"aac,ac3,eac3,mp3,opus,flac,vorbis"}],"TranscodingProfiles":[]}}'
 mkdir -p "$WORK"
 
-port_of() { case $1 in fresh) echo 18421 ;; stock) echo 18422 ;; peer) echo 18423 ;; upgrade) echo 18424 ;; esac; }
-container_of() { case $1 in fresh) echo jm-dedup-f ;; stock) echo jm-dedup-s ;; peer) echo jm-dedup-j ;; upgrade) echo jm-dedup-u ;; esac; }
+port_of() { case $1 in fresh) echo "$PORT" ;; stock) echo $((PORT + 1)) ;; peer) echo $((PORT + 2)) ;; upgrade) echo $((PORT + 3)) ;; esac; }
+container_of() { case $1 in fresh) echo "$PREFIX-f" ;; stock) echo "$PREFIX-s" ;; peer) echo "$PREFIX-j" ;; upgrade) echo "$PREFIX-u" ;; esac; }
 media_of() { case $1 in fresh | upgrade) echo locale ;; stock) echo remoto-standard ;; peer) echo remoto-jellymesh ;; esac; }
 token_of() { cat "$WORK/token-$1" 2>/dev/null || true; }
 

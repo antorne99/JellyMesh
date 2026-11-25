@@ -4,7 +4,7 @@
 D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$D/lib.sh"
 set_folder true
-A=$(add_server JellyMeshRemote http://host.docker.internal:8098)
+A=$(add_server JellyMeshRemote "$JELLYMESH_URL")
 sync_and_scan
 echo "### after first remote"; stub_files | grep Serie; series_view
 echo "NeedsRefresh left: $(docker exec "$NAME" sh -c 'cat /config/plugins/configurations/*/federated-stubs.json /config/data/plugins/*/federated-stubs.json 2>/dev/null' | jq -c '[.Series[]|.NeedsRefresh]')"
@@ -16,7 +16,7 @@ echo "E05 id=$EP5 film=$FILM $FILM_PATH"
 post "/UserPlayedItems/$FILM?userId=$USER_ID" >/dev/null
 echo "film state before: $(user_data "$FILM")"
 echo "### add Standard: E04 arrives later"
-B=$(add_server Standard http://host.docker.internal:8097)
+B=$(add_server Standard "$STANDARD_URL")
 sync_and_scan
 stub_files | grep -E "Serie|Sonda"
 series_view

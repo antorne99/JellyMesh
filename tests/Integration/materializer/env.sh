@@ -1,14 +1,17 @@
-# Helpers for the private instance jm-mat. Source this file.
+# Helpers for the private instance jm-mat. Source this file. NAME and PORT move it, STANDARD_URL and JELLYMESH_URL name
+# the two remotes (by default remoto-standard and remoto-jellymesh of the shared stack).
 set -euo pipefail
-NAME=jm-mat
-PORT=18310
+NAME=${NAME:-jm-mat}
+PORT=${PORT:-18310}
+STANDARD_URL=${STANDARD_URL:-http://host.docker.internal:8097}
+JELLYMESH_URL=${JELLYMESH_URL:-http://host.docker.internal:8098}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 WT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 MEDIA=${MEDIA:-$WT/tests/Integration/media}  # gitignored: in a worktree, point it at the main checkout
 BASE=http://127.0.0.1:$PORT
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshMat", Device="mat", DeviceId="jm-mat-e2e", Version="0.1"'
-TOKEN_FILE=${TMPDIR:-/tmp}/jm-mat-token
+TOKEN_FILE=${TMPDIR:-/tmp}/$NAME-token
 TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null || true)
 auth_header() {
   if [ -n "$TOKEN" ]; then printf 'Authorization: %s, Token="%s"' "$AUTH" "$TOKEN"
@@ -64,7 +67,7 @@ sync_full() {
 }
 applog() { docker exec "$NAME" sh -c 'cat /config/log/log_*.log'; }
 sql_raw() {
-  local d=${TMPDIR:-/tmp}/jm-mat-db f
+  local d=${TMPDIR:-/tmp}/$NAME-db f
   mkdir -p "$d"
   for f in jellyfin.db jellyfin.db-wal jellyfin.db-shm; do
     docker cp "$NAME:/config/data/$f" "$d/$f" 2>/dev/null || rm -f "$d/$f"

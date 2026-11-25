@@ -3,8 +3,8 @@
 D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$D/lib.sh"
 set_folder false
-A=$(add_server Standard http://host.docker.internal:8097)
-B=$(add_server JellyMeshRemote http://host.docker.internal:8098)
+A=$(add_server Standard "$STANDARD_URL")
+B=$(add_server JellyMeshRemote "$JELLYMESH_URL")
 sync_and_scan
 docker exec "$NAME" sh -c 'cat "/federata/Film/Tears of Steel (2012)/movie.nfo"; echo; cat "/federata/Serie/JM Serie Divisa (2026)/tvshow.nfo"; echo; cat "/federata/Serie/JM Serie Divisa (2026)/Season 01/JM Serie Divisa S01E04.nfo"; echo'
 series_view

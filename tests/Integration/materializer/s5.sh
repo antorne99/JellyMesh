@@ -3,8 +3,8 @@
 D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$D/lib.sh"
 set_folder true
-A=$(add_server Standard http://host.docker.internal:8097)
-B=$(add_server JellyMeshRemote http://host.docker.internal:8098)
+A=$(add_server Standard "$STANDARD_URL")
+B=$(add_server JellyMeshRemote "$JELLYMESH_URL")
 sync_and_scan
 I=$(film_id "JM Audio e Sottotitoli")
 show() { post "/Items/$I/PlaybackInfo?userId=$USER_ID" '{}' | jq -c '[.MediaSources[0].MediaStreams[]|{I:.Index,T:.Type,E:.IsExternal,P:.Path}]'; }
