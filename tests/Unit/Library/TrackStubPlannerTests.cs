@@ -379,13 +379,18 @@ public class TrackStubPlannerTests
         Assert.Empty(second.Removals);
     }
 
-    // A folder name that only looks like "name [id8]" is the whole name of its artist.
+    // A folder name that only looks like "name [id8]" is the whole name of its artist. Names lose their brackets, so the
+    // folder is written into the state by hand.
     [Fact]
     public void AnArtistFolderWhoseNameEndsInEightOtherCharactersInBracketsStaysTheFolderOfItsOwnArtist()
     {
-        var first = Plan([Track("t1", "One", 1, albumArtists: ["Band [Explicit]"])]);
+        var first = Plan([Track("t1", "One", 1, albumArtists: ["Band Explicit"])]);
+        var state = first.State with
+        {
+            Stubs = first.State.Stubs.Select(stub => stub with { RelativePath = stub.RelativePath.Replace("Band Explicit", "Band [Explicit]", StringComparison.Ordinal) }).ToList()
+        };
 
-        var second = Plan([Track("t1", "One", 1, albumArtists: ["Band [Explicit]"]), Track("t2", "Two", 1, album: "Other", albumId: "album2", albumArtists: ["Band"])], first.State);
+        var second = Plan([Track("t1", "One", 1, albumArtists: ["Band Explicit"]), Track("t2", "Two", 1, album: "Other", albumId: "album2", albumArtists: ["Band"])], state);
 
         Assert.Equal("Band [Explicit]", ArtistOf(second, "t1"));
         Assert.Equal(PathIn("Band", "Other", "01 - Two.strm"), WorkOf(second, "t2").Entry.RelativePath);
