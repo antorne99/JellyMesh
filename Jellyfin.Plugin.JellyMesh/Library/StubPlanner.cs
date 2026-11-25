@@ -193,7 +193,9 @@ public static partial class StubPlanner
             // Tracks come only in the new layout (Q49), from the index: the dedup has no track identity yet.
             if (!legacy)
             {
-                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, StubKind.Track, input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList(), (folder, artist, _) => Path.Combine(folder, artist));
+                var ownTracks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList();
+                var artists = new PathAllocator(ownTracks, [], input.IgnoreRules);
+                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, StubKind.Track, ownTracks, artists.ArtistFolder);
                 tracks.AddRange(serverTracks);
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
@@ -1206,9 +1208,9 @@ public static partial class StubPlanner
                 {
                     _taken.Add(SeriesFolderOf(stub));
                 }
-                else if (stub.Kind == StubKind.AudioBook)
+                else if (stub.Kind is StubKind.AudioBook or StubKind.Track)
                 {
-                    // An author folder answers to its whole name first, then to the name it has without an id.
+                    // An author or artist folder answers to its whole name first, then to the name it has without an id.
                     var author = Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!;
                     _taken.Add(author);
                     _authors[author] = author;
@@ -1253,13 +1255,14 @@ public static partial class StubPlanner
             return unique;
         }
 
-        // The relative folder of an author, one for all the audiobooks of that name and never the folder of a book.
-        public string AuthorFolder(string typeFolder, string name, string id)
+        // The relative folder of an author or artist, one for all the albums or audiobooks of that name and never the folder of
+        // a book, with the id when the server would skip a new one (row 568).
+        public string ArtistFolder(string typeFolder, string name, string id)
         {
             var key = Path.Combine(typeFolder, name);
             if (!_authors.TryGetValue(key, out var folder))
             {
-                folder = Path.Combine(typeFolder, Unique(typeFolder, name, id));
+                folder = Path.Combine(typeFolder, Unique(typeFolder, name, id, IsSkippedFolder(_rules, typeFolder, name)));
                 _authors[key] = folder;
             }
 
@@ -1267,8 +1270,14 @@ public static partial class StubPlanner
         }
 
         // A folder without the id Unique put after its name.
+        // Only 8 lowercase hex characters count as an id, as the planner writes them, so "Band [Explicit]" keeps its whole name.
         private static string WithoutId(string folder)
-            => folder.Length > IdSuffixLength && folder.EndsWith(']') && folder.AsSpan(folder.Length - IdSuffixLength).StartsWith(" [") ? folder[..^IdSuffixLength] : folder;
+            => folder.Length > IdSuffixLength
+                && folder.EndsWith(']')
+                && folder.AsSpan(folder.Length - IdSuffixLength).StartsWith(" [")
+                && folder[^(IdSuffixLength - 2)..^1].All(char.IsAsciiHexDigitLower)
+                ? folder[..^IdSuffixLength]
+                : folder;
 
         private string Unique(string typeFolder, string name, string id, bool hidden = false)
         {
