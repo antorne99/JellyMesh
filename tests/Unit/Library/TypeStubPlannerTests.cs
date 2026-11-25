@@ -284,6 +284,32 @@ public class TypeStubPlannerTests
         Assert.Equal(In(HomeVideos, "Video domestici", "sample [f1]", "Beach day.strm"), work.Entry.RelativePath);
     }
 
+    // Row 560: 12.4 hides a home video whose name ends in ".sample", even with the id after it.
+    [Theory]
+    [InlineData("Beach.sample", "Beach sample")]
+    [InlineData("a.b.SAMPLE", "a b SAMPLE")]
+    public void AHomeVideoWhoseNameEndsInSampleGetsSpacesInPlaceOfItsDots(string name, string expected)
+    {
+        var work = Assert.Single(Plan(Catalog(HomeVideo("v1", name, HomeVideos))).Stubs);
+
+        var file = Path.GetFileNameWithoutExtension(work.Entry.RelativePath);
+        Assert.StartsWith(expected, file, StringComparison.Ordinal);
+        Assert.DoesNotContain(".sample", file, StringComparison.OrdinalIgnoreCase);
+        Assert.False(JellyfinNaming.IsExtra(work.Entry.RelativePath));
+    }
+
+    [Fact]
+    public void AHomeVideoWhoseNameEndsInSampleKeepsThePathItHas()
+    {
+        var first = Plan(Catalog(HomeVideo("v1", "Beach day", HomeVideos)));
+        var old = In(HomeVideos, "Video domestici", "Beach.sample [abcdef12].strm");
+        var state = first.State with { Stubs = [first.State.Stubs[0] with { RelativePath = old }] };
+
+        var second = Plan(Catalog(HomeVideo("v1", "Beach.sample", HomeVideos)), state);
+
+        Assert.Equal(old, Assert.Single(second.Stubs).Entry.RelativePath);
+    }
+
     [Fact]
     public void AHomeVideoTheServerWouldIgnoreGetsItsId()
     {

@@ -152,6 +152,13 @@ public static partial class StubPlanner
     {
         var folder = FolderOf(catalog, serverId, item, typeFolder, rules);
         var name = FederatedPaths.Sanitize(item.Name);
+
+        // The server hides a video whose name ends in ".sample", also with the id after it (row 560).
+        if (name.EndsWith(".sample", StringComparison.OrdinalIgnoreCase))
+        {
+            name = name.Replace('.', ' ');
+        }
+
         var stem = Path.Combine(folder, name);
         if (IsTaken(taken, stem) || IsReadAsExtra(stem + ".strm") || rules.Ignores(folder, name + ".strm", false) || names.StartsAPhoto(folder, name))
         {
