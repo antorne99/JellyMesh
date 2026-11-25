@@ -185,8 +185,8 @@ public sealed class ProviderCatalog
         => string.Equals(Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Clears every field of a version that can hold the URL it reads, stream and attachment delivery URLs included, when it
-    /// is not a file of this server: an admin's .strm, another protocol or a remote source. Used by PlaybackInfo and the catalog (rows 566, 567).
+    /// Clears the paths of a version and of its streams, keeping only the extension of a file of this server for the
+    /// consumer's container, and every field that can hold the URL a version reads. For PlaybackInfo and the catalog (rows 566-569).
     /// </summary>
     /// <param name="caller">The peer.</param>
     /// <param name="source">The version, cleared in place.</param>
@@ -195,17 +195,22 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(source);
 
-        if (!IsUrlSource(caller, source))
+        var isUrl = IsUrlSource(caller, source);
+        source.Path = isUrl ? null : ExtensionOf(source.Path);
+        source.EncoderPath = null;
+        foreach (var stream in source.MediaStreams ?? [])
+        {
+            stream.Path = null;
+        }
+
+        if (!isUrl)
         {
             return;
         }
 
-        source.Path = null;
-        source.EncoderPath = null;
         source.RequiredHttpHeaders = [];
         foreach (var stream in source.MediaStreams ?? [])
         {
-            stream.Path = null;
             stream.DeliveryUrl = null;
         }
 
@@ -542,7 +547,8 @@ public sealed class ProviderCatalog
         }
     }
 
-    // The consumer needs only the format of a book or a photo for its placeholder (D47), so no name or folder of this server leaves.
+    // The consumer needs only the format of a book or a photo for its placeholder (D47), or of a file for its container
+    // (row 569), so no name or folder of this server leaves.
     private static string? ExtensionOf(string? path)
     {
         var extension = Path.GetExtension(path);
@@ -600,11 +606,6 @@ public sealed class ProviderCatalog
 
             // The consumer has no use for where files are on this server, nor for the URL a source reads.
             ClearUrlFields(caller, source);
-            source.Path = null;
-            foreach (var stream in source.MediaStreams ?? [])
-            {
-                stream.Path = null;
-            }
         }
 
         // Watch state stays on this server (decision 41), even if a DTO came back with it. No place a photo was taken

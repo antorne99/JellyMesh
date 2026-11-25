@@ -1350,6 +1350,67 @@ public class PeerGuardFilterTests
         Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
+    // Row 568: an item of the query may be what stock acts on in place of the route's.
+    [Theory]
+    [InlineData("?itemId=40000000000000000000000000000000")]
+    [InlineData("?itemId=60000000-0000-0000-0000-000000000000")]
+    [InlineData("?itemId=30000000000000000000000000000000&itemId=40000000000000000000000000000000")]
+    [InlineData("?ItemId=40000000-0000-0000-0000-000000000000")]
+    [InlineData("?ITEMID=60000000000000000000000000000000")]
+    [InlineData("?itemId=not-a-guid")]
+    [InlineData("?itemId=%20")]
+    [InlineData("?itemId=00000000000000000000000000000000")]
+    public async Task An_item_of_the_query_that_is_not_the_route_item_does_not_exist_for_a_peer(string query)
+    {
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Subtitle", "GetSubtitleWithTicks"), "GET", ProviderFixture.SharedItem, query);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("Image", "GetItemImage", "")]
+    [InlineData("MediaSegments", "GetItemSegments", "")]
+    [InlineData("MediaInfo", "GetPostedPlaybackInfo", "")]
+    [InlineData("Videos", "GetVideoStream", "")]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist", "&PlaySessionId=play")]
+    [InlineData("Audio", "GetAudioStream", "")]
+    [InlineData("Lyrics", "GetLyrics", "")]
+    [InlineData("Library", "GetFile", "")]
+    public async Task On_every_route_an_item_of_the_query_outside_the_share_does_not_exist_for_a_peer(string controller, string action, string rest)
+    {
+        var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", ProviderFixture.SharedItem, "?itemId=" + Route(ProviderFixture.PrivateItem) + rest);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.Equal(0, Slots);
+    }
+
+    // A query sent as one encoded key reaches stock as keys that differ by case, and each one is read.
+    [Fact]
+    public async Task An_item_of_the_query_under_a_key_of_another_case_is_read_too()
+    {
+        var decoded = Decoded(("itemId", Route(ProviderFixture.SharedItem)), ("ITEMID", Route(ProviderFixture.PrivateItem)));
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Subtitle", "GetSubtitleWithTicks"), "GET", ProviderFixture.SharedItem, decoded: decoded);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("Subtitle", "GetSubtitleWithTicks", "?itemId=30000000000000000000000000000000")]
+    [InlineData("Subtitle", "GetSubtitleWithTicks", "?ItemId=30000000-0000-0000-0000-000000000000&itemId=30000000000000000000000000000000")]
+    [InlineData("Subtitle", "GetSubtitleWithTicks", "?itemId=")]
+    [InlineData("MediaInfo", "GetPostedPlaybackInfo", "?itemId=30000000-0000-0000-0000-000000000000")]
+    public async Task An_item_of_the_query_that_is_the_route_item_goes_on(string controller, string action, string query)
+    {
+        var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", ProviderFixture.SharedItem, query);
+
+        Assert.True(ran);
+        Assert.Null(context.Result);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("?static=false")]

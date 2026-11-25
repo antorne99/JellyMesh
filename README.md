@@ -304,6 +304,8 @@ Opening or downloading the book reads the file from the remote. If the remote is
 
 Each audio file of an audiobook on the remote is one item, in `Libri/<author>/<book>/`, with its own cover and chapters, so an audiobook in several files shows as several items. It plays as a track does.
 
+A `.m4b` audiobook on a remote downloads as `.m4a`: Jellyfin serves it as `audio/mp4`, the same format, and this is a limit of Jellyfin.
+
 A library scan does not put back a field you change by hand on an audiobook. Replacing all metadata of the item does, and so does a change on the remote.
 
 ### Photos and GPS
