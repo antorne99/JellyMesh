@@ -56,8 +56,10 @@ scan_settle() {
   done
   echo "scan did not settle" >&2; return 1
 }
+# Waits for a running sync (saving a server starts one, and a second is refused with 409), then runs a full one.
 sync_full() {
   local i
+  for i in $(seq 1 180); do [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && break; sleep 1; done
   post /JellyMesh/Admin/Sync >/dev/null
   for i in $(seq 1 180); do
     [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && return

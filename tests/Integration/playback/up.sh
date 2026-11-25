@@ -35,4 +35,5 @@ add() { # name url
 }
 add standard "http://host.docker.internal:${GATE_STANDARD:-18321}"
 add jellymesh "http://host.docker.internal:${GATE_JELLYMESH:-18322}"
+for i in $(seq 1 180); do [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && break; sleep 1; done
 post /JellyMesh/Admin/Sync

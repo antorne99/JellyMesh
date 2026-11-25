@@ -79,8 +79,10 @@ settle() {
   return 1
 }
 
+# Waits for a running sync (saving a server starts one, and a second is refused with 409), then runs one.
 sync_now() {
   local s=$1 i
+  for i in $(seq 1 180); do [ "$(get "$s" /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && break; sleep 1; done
   post "$s" /JellyMesh/Admin/Sync >/dev/null
   for i in $(seq 1 180); do
     [ "$(get "$s" /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && return 0
