@@ -70,6 +70,7 @@ public partial class PlaybackFiltersTests
         var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
+        _stubs.Setup(stubs => stubs.FindCopies(It.IsAny<string>())).Returns([]);
         _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], []));
         SignedIn();
