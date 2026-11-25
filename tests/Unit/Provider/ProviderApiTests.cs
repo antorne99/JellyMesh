@@ -773,6 +773,7 @@ public class ProviderCatalogTests
         source.Path = Secret;
         source.EncoderPath = Secret;
         source.RequiredHttpHeaders = new() { ["Authorization"] = Secret };
+        source.MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = Secret }];
         _fixture.WithDtos(dto);
 
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
@@ -783,6 +784,7 @@ public class ProviderCatalogTests
         Assert.Empty(sent.RequiredHttpHeaders);
         Assert.All(sent.MediaStreams, stream => Assert.Null(stream.Path));
         Assert.All(sent.MediaStreams, stream => Assert.Null(stream.DeliveryUrl));
+        Assert.Null(Assert.Single(sent.MediaAttachments).DeliveryUrl);
     }
 
     [Fact]
@@ -791,6 +793,7 @@ public class ProviderCatalogTests
         const string Subtitle = "/Videos/a/a/Subtitles/1/0/Stream.vtt";
         var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = "/media/secret.srt", DeliveryUrl = Subtitle });
         dto.MediaSources[0].RequiredHttpHeaders = new() { ["X-Kept"] = "kept" };
+        dto.MediaSources[0].MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = "/Videos/a/a/Attachments/7" }];
         _fixture.WithDtos(dto);
 
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
@@ -800,6 +803,7 @@ public class ProviderCatalogTests
         Assert.Null(sent.MediaStreams[0].Path);
         Assert.Equal("kept", sent.RequiredHttpHeaders["X-Kept"]);
         Assert.Equal(Subtitle, sent.MediaStreams[0].DeliveryUrl);
+        Assert.Equal("/Videos/a/a/Attachments/7", sent.MediaAttachments[0].DeliveryUrl);
     }
 }
 

@@ -185,8 +185,8 @@ public sealed class ProviderCatalog
         => string.Equals(Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Clears every field of a version that can hold the URL it reads, stream delivery URLs included, when it is not a file
-    /// of this server: an admin's .strm, another protocol or a remote source. Used by PlaybackInfo and the catalog (row 566).
+    /// Clears every field of a version that can hold the URL it reads, stream and attachment delivery URLs included, when it
+    /// is not a file of this server: an admin's .strm, another protocol or a remote source. Used by PlaybackInfo and the catalog (rows 566, 567).
     /// </summary>
     /// <param name="caller">The peer.</param>
     /// <param name="source">The version, cleared in place.</param>
@@ -207,6 +207,11 @@ public sealed class ProviderCatalog
         {
             stream.Path = null;
             stream.DeliveryUrl = null;
+        }
+
+        foreach (var attachment in source.MediaAttachments ?? [])
+        {
+            attachment.DeliveryUrl = null;
         }
     }
 
