@@ -135,29 +135,9 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
-        foreach (var source in response.MediaSources.Where(source => IsUrlSource(caller, source)))
+        foreach (var source in response.MediaSources)
         {
-            WithoutUrl(source);
-        }
-    }
-
-    // Tells whether a source reads an admin's .strm, or anything but a file of this server: its path is then a URL.
-    private bool IsUrlSource(PeerCaller caller, MediaSourceInfo source)
-    {
-        return source.Protocol != MediaProtocol.File
-            || source.IsRemote
-            || (Guid.TryParse(source.Id, out var id) && _catalog.IsStrmFile(caller, id));
-    }
-
-    // Clears every field of a source that can hold the URL it reads (row 565).
-    private static void WithoutUrl(MediaSourceInfo source)
-    {
-        source.Path = null;
-        source.EncoderPath = null;
-        source.RequiredHttpHeaders = [];
-        foreach (var stream in source.MediaStreams ?? [])
-        {
-            stream.Path = null;
+            _catalog.ClearUrlFields(caller, source);
         }
     }
 

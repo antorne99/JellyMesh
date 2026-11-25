@@ -17,6 +17,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.MediaInfo;
 using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -752,6 +753,88 @@ public class ProviderCatalogTests
         Assert.Null(dto.MediaSources[0].MediaStreams[0].Path);
         Assert.Null(dto.Chapters[0].ImagePath);
         Assert.Equal("Intro", dto.Chapters[0].Name);
+    }
+
+    // Row 566: the catalog clears the same fields as PlaybackInfo for a source that is not a file of this server.
+    [Theory]
+    [InlineData(MediaProtocol.Http, false, false)]
+    [InlineData(MediaProtocol.File, true, false)]
+    [InlineData(MediaProtocol.File, false, true)]
+    public void No_url_of_a_source_that_is_not_a_file_reaches_a_peer(MediaProtocol protocol, bool isRemote, bool isStrm)
+    {
+        const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
+        var strm = Guid.Parse("60000000-0000-0000-0000-00000000000b");
+        _fixture.AddItem(strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Video, Path = Secret }, new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = Secret, DeliveryUrl = Secret });
+        var source = dto.MediaSources[0];
+        source.Id = (isStrm ? strm : ProviderFixture.SharedItem).ToString("N");
+        source.Protocol = protocol;
+        source.IsRemote = isRemote;
+        source.Path = Secret;
+        source.EncoderPath = Secret;
+        source.RequiredHttpHeaders = new() { ["Authorization"] = Secret };
+        source.MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = Secret }];
+        _fixture.WithDtos(dto);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        var sent = Assert.Single(dto.MediaSources);
+        Assert.Null(sent.Path);
+        Assert.Null(sent.EncoderPath);
+        Assert.Empty(sent.RequiredHttpHeaders);
+        Assert.All(sent.MediaStreams, stream => Assert.Null(stream.Path));
+        Assert.All(sent.MediaStreams, stream => Assert.Null(stream.DeliveryUrl));
+        Assert.Null(Assert.Single(sent.MediaAttachments).DeliveryUrl);
+    }
+
+    // A file source whose id cannot be looked up may be a .strm: its fields are cleared all the same.
+    [Theory]
+    [InlineData("not-a-guid")]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("00000000000000000000000000000000")]
+    [InlineData("5d1f1c1e9a2b4c3d8e7f6a5b4c3d2e1f")]
+    public void A_source_whose_id_cannot_be_checked_is_cleared(string? id)
+    {
+        const string Secret = "http://origin.invalid/film.mkv?api_key=strm-secret";
+        var source = new MediaSourceInfo
+        {
+            Id = id,
+            Protocol = MediaProtocol.File,
+            Path = Secret,
+            EncoderPath = Secret,
+            RequiredHttpHeaders = new() { ["Authorization"] = Secret },
+            MediaStreams = [new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = Secret, DeliveryUrl = Secret }],
+            MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = Secret }]
+        };
+
+        _fixture.Catalog.ClearUrlFields(_fixture.PeerCaller, source);
+
+        Assert.Null(source.Path);
+        Assert.Null(source.EncoderPath);
+        Assert.Empty(source.RequiredHttpHeaders);
+        Assert.Null(source.MediaStreams[0].Path);
+        Assert.Null(source.MediaStreams[0].DeliveryUrl);
+        Assert.Null(source.MediaAttachments[0].DeliveryUrl);
+    }
+
+    [Fact]
+    public void A_file_of_this_server_keeps_its_headers_and_delivery_urls_in_the_catalog()
+    {
+        const string Subtitle = "/Videos/a/a/Subtitles/1/0/Stream.vtt";
+        var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = "/media/secret.srt", DeliveryUrl = Subtitle });
+        dto.MediaSources[0].RequiredHttpHeaders = new() { ["X-Kept"] = "kept" };
+        dto.MediaSources[0].MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = "/Videos/a/a/Attachments/7" }];
+        _fixture.WithDtos(dto);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        var sent = Assert.Single(dto.MediaSources);
+        Assert.Null(sent.Path);
+        Assert.Null(sent.MediaStreams[0].Path);
+        Assert.Equal("kept", sent.RequiredHttpHeaders["X-Kept"]);
+        Assert.Equal(Subtitle, sent.MediaStreams[0].DeliveryUrl);
+        Assert.Equal("/Videos/a/a/Attachments/7", sent.MediaAttachments[0].DeliveryUrl);
     }
 }
 
