@@ -41,6 +41,11 @@ public sealed class ProviderPagingTests : IDisposable
         _provider.Store.Configuration.FederatedFolderPath = "/nuova";
         _provider.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>())).Returns<InternalItemsQuery>(query =>
         {
+            if (query.ItemIds.Length + query.ExcludeItemIds.Length > ProviderCatalog.MaxIdsPerQuery)
+            {
+                throw new InvalidOperationException("too many SQL variables");
+            }
+
             var found = Find(query);
             return new QueryResult<BaseItem>(query.StartIndex, found.Count, found.Skip(query.StartIndex ?? 0).Take(query.Limit ?? int.MaxValue).ToList());
         });
@@ -385,6 +390,80 @@ public sealed class ProviderPagingTests : IDisposable
         Assert.Equal(1, next.TotalRecordCount);
     }
 
+    [Fact]
+    public async Task More_items_left_out_than_one_query_holds_are_left_out_in_blocks_and_the_full_read_is_whole()
+    {
+        const string Root = "/media/nuova";
+        _provider.Store.Configuration.FederatedFolderPath = Root;
+        WithLocations("/media");
+        _folders[_provider.WithFolder(Root).Id] = Root;
+        for (var i = 0; i < 33_000; i++)
+        {
+            Add(Root + "/Film/" + i + "/" + i + " - Server.strm");
+            if (i % 50 == 0)
+            {
+                Add(Real + "/" + i + ".mkv");
+            }
+
+            if (i % 1000 == 0)
+            {
+                Add(Hidden + "/" + i + "/" + i + ".mkv");
+            }
+        }
+
+        var read = await ReadAsync();
+
+        Assert.Equal(RemoteFailure.None, read.Failure);
+        Assert.Equal(RealIds(), read.Value!.Select(item => item.ItemId).Order());
+        Assert.Equal(RealIds().Count(), ReadPage().TotalRecordCount);
+    }
+
+    [Fact]
+    public void A_page_past_one_query_of_items_left_out_starts_where_the_page_before_ended()
+    {
+        const string Root = "/media/nuova";
+        _provider.Store.Configuration.FederatedFolderPath = Root;
+        WithLocations("/media");
+        _folders[_provider.WithFolder(Root).Id] = Root;
+        for (var i = 0; i < ProviderCatalog.MaxIdsPerQuery * 2; i++)
+        {
+            Add(Root + "/Film/" + i + "/" + i + " - Server.strm");
+            if (i % 100 == 0)
+            {
+                Add(Real + "/" + i + ".mkv");
+            }
+        }
+
+        var first = _provider.Catalog.ReadLibrary(_provider.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 150);
+        var second = _provider.Catalog.ReadLibrary(_provider.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 150, 150);
+
+        var real = _items.Where(item => item.Path.StartsWith(Real + "/", StringComparison.Ordinal)).Select(item => item.Id).ToList();
+        Assert.Equal(real.Take(150), first.Items.Select(item => item.Id));
+        Assert.Equal(real.Skip(150).Take(150), second.Items.Select(item => item.Id));
+        Assert.Equal(real.Count, first.TotalRecordCount);
+        Assert.Equal(real.Count, second.TotalRecordCount);
+    }
+
+    [Fact]
+    public void A_page_of_collections_past_one_query_of_items_left_out_sends_only_real_films()
+    {
+        const string Root = "/media/nuova";
+        _provider.Store.Configuration.FederatedFolderPath = Root;
+        WithLocations("/media");
+        _folders[_provider.WithFolder(Root).Id] = Root;
+        var stubs = Enumerable.Range(0, ProviderCatalog.MaxIdsPerQuery).Select(i => Add(Root + "/Film/" + i + "/" + i + " - Server.strm")).ToList();
+        var real = Add(Real + "/A.mkv");
+        _provider.Library.Setup(manager => manager.GetItemList(It.Is<InternalItemsQuery>(query => query.IncludeItemTypes.Contains(BaseItemKind.BoxSet)))).Returns(
+        [
+            new BoxSet { Name = "Saga", LinkedChildren = [new LinkedChild { ItemId = real.Id }, new LinkedChild { ItemId = stubs[0].Id }] }
+        ]);
+
+        var page = _provider.Catalog.ReadCollections(_provider.PeerCaller, ProviderFixture.SharedLibrary, 0, 10);
+
+        Assert.Equal([real.Id.ToString("N")], page.Items.Select(entry => entry.Id));
+        Assert.Equal(1, page.TotalRecordCount);
+    }
+
     private ProviderItemsResponse ReadPage() =>
         _provider.Catalog.ReadLibrary(_provider.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, RemoteCatalogReader.PageSize);
 
@@ -427,10 +506,15 @@ public sealed class ProviderPagingTests : IDisposable
     private IEnumerable<string> RealIds() =>
         _items.Where(item => item.Path.StartsWith(Real + "/", StringComparison.Ordinal)).Select(item => item.Id.ToString("N")).Order();
 
-    private List<BaseItem> Find(InternalItemsQuery query) => _items
-        .Where(item => query.IncludeItemTypes.Length == 0 || query.IncludeItemTypes.Contains(item.GetBaseItemKind()))
-        .Where(item => query.ItemIds.Length == 0 || query.ItemIds.Contains(item.Id))
-        .Where(item => !query.ExcludeItemIds.Contains(item.Id))
-        .Where(item => query.AncestorIds.Length == 0 || query.AncestorIds.Any(id => item.Path.StartsWith(_folders[id] + "/", StringComparison.Ordinal)))
-        .ToList();
+    private List<BaseItem> Find(InternalItemsQuery query)
+    {
+        var asked = query.ItemIds.ToHashSet();
+        var excluded = query.ExcludeItemIds.ToHashSet();
+        return _items
+            .Where(item => query.IncludeItemTypes.Length == 0 || query.IncludeItemTypes.Contains(item.GetBaseItemKind()))
+            .Where(item => asked.Count == 0 || asked.Contains(item.Id))
+            .Where(item => !excluded.Contains(item.Id))
+            .Where(item => query.AncestorIds.Length == 0 || query.AncestorIds.Any(id => item.Path.StartsWith(_folders[id] + "/", StringComparison.Ordinal)))
+            .ToList();
+    }
 }
