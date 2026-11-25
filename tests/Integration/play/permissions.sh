@@ -10,17 +10,21 @@ MEDIA=${MEDIA:-unused}
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 [ "${KEEP:-0}" = 1 ] || trap down EXIT
 
-# install: builds the plugin of this worktree in the SDK container of the project and installs it, then restarts.
+# install: builds the plugin of this worktree in the SDK container of the project (or takes JM_PLUGIN_DLL) and installs
+# it, then restarts.
 install() {
   local main src out version target
   main=$(git -C "$WT" worktree list | head -1 | awk '{print $1}')
   src=/src${WT#"$main"}
   out=/tmp/$PREFIX-build
   version=$(sed -n 's/^version: "\(.*\)"$/\1/p' "$WT/build.yaml")
-  docker exec -w "$src" jellymesh-sdk sh -c "rm -rf $out && dotnet build Jellyfin.Plugin.JellyMesh/Jellyfin.Plugin.JellyMesh.csproj -c Release -o $out --nologo -v quiet" >/dev/null
+  if [ -z "${JM_PLUGIN_DLL:-}" ]; then
+    docker exec -w "$src" jellymesh-sdk sh -c "rm -rf $out && dotnet build Jellyfin.Plugin.JellyMesh/Jellyfin.Plugin.JellyMesh.csproj -c Release -o $out --nologo -v quiet" >/dev/null
+  fi
   jq -n --arg v "$version" '{guid: "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653", name: "JellyMesh", version: $v, targetAbi: "12.1.0.0",
     status: "Active", autoUpdate: false, assemblies: ["Jellyfin.Plugin.JellyMesh.dll"]}' >"$WORK/meta.json"
-  docker cp "jellymesh-sdk:$out/Jellyfin.Plugin.JellyMesh.dll" "$WORK/Jellyfin.Plugin.JellyMesh.dll"
+  if [ -n "${JM_PLUGIN_DLL:-}" ]; then cp "$JM_PLUGIN_DLL" "$WORK/Jellyfin.Plugin.JellyMesh.dll"
+  else docker cp "jellymesh-sdk:$out/Jellyfin.Plugin.JellyMesh.dll" "$WORK/Jellyfin.Plugin.JellyMesh.dll"; fi
   target=/config/plugins/JellyMesh_$version
   docker exec "$PREFIX-local" sh -c 'rm -rf /config/plugins/JellyMesh_* && mkdir -p "$1"' sh "$target"
   docker cp "$WORK/Jellyfin.Plugin.JellyMesh.dll" "$PREFIX-local:$target/"
