@@ -792,32 +792,65 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
 
     // The stubs to remove this round: one that could not leave its version group, also at the old path of a pending server
     // rename, stays, counted as failed, for the next round (Q326, Q351).
-    // The titles of removed servers keep their watch state before they go (row 412); while it cannot be saved they stay.
+    // The titles of removed servers (row 412) and the stubs of two copies joined again (row 565) keep their watch state
+    // before they go; while it cannot be saved they stay.
     private async Task<(IReadOnlyList<StubEntry> Stubs, bool Kept)> KeepRemovedAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
     {
+        if (_keeper is null)
+        {
+            return (plan.Removals, true);
+        }
+
         var removed = plan.State.RemovedServers.ToHashSet();
-        if (_keeper is null || removed.Count == 0)
+        var held = new HashSet<string>(StringComparer.Ordinal);
+        var kept = true;
+        if (removed.Count > 0)
         {
-            return (plan.Removals, true);
+            var stubs = plan.Removals.Where(stub => IsOfRemoved(stub, removed)).ToList();
+            var series = run.State.Series.Where(entry => entry.ServerId is { } serverId && removed.Contains(serverId)).ToList();
+            if (!await _keeper.KeepAsync(run.Root, stubs, series, cancellationToken).ConfigureAwait(false))
+            {
+                Hold(stubs);
+                kept = false;
+            }
         }
 
-        var stubs = plan.Removals
-            .Where(stub => stub.ServerId is { } serverId ? removed.Contains(serverId) : stub.Sources.Count > 0 && stub.Sources.All(source => removed.Contains(source.ServerId)))
+        var joined = JoinedOf(plan, removed);
+        if (joined.Count > 0 && !await _keeper.KeepJoinedAsync(run.Root, joined, cancellationToken).ConfigureAwait(false))
+        {
+            Hold(joined);
+        }
+
+        return (held.Count == 0 ? plan.Removals : plan.Removals.Where(stub => !held.Contains(stub.Id)).ToList(), kept);
+
+        void Hold(List<StubEntry> stubs)
+        {
+            run.Failed += stubs.Count;
+            foreach (var serverId in stubs.Select(stub => stub.ServerId).OfType<Guid>())
+            {
+                run.CountServer(serverId, failed: 1);
+            }
+
+            held.UnionWith(stubs.Select(stub => stub.Id));
+        }
+    }
+
+    private static bool IsOfRemoved(StubEntry stub, HashSet<Guid> removed)
+        => stub.ServerId is { } serverId ? removed.Contains(serverId) : stub.Sources.Count > 0 && stub.Sources.All(source => removed.Contains(source.ServerId));
+
+    // The stubs that go while another stub of their server and kind keeps one of their remote items: two copies of a
+    // title joined again (row 565).
+    private static List<StubEntry> JoinedOf(StubPlan plan, HashSet<Guid> removed)
+    {
+        var going = plan.Removals.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        var staying = plan.State.Stubs
+            .Where(stub => stub.ServerId is not null && !going.Contains(stub.Id))
+            .SelectMany(stub => stub.Sources.Select(source => (stub.Kind, source.ServerId, source.ItemId)))
+            .ToHashSet();
+        return plan.Removals
+            .Where(stub => stub.ServerId is { } serverId && !removed.Contains(serverId)
+                && stub.Sources.Any(source => source.ServerId == serverId && staying.Contains((stub.Kind, source.ServerId, source.ItemId))))
             .ToList();
-        var series = run.State.Series.Where(entry => entry.ServerId is { } serverId && removed.Contains(serverId)).ToList();
-        if (await _keeper.KeepAsync(run.Root, stubs, series, cancellationToken).ConfigureAwait(false))
-        {
-            return (plan.Removals, true);
-        }
-
-        run.Failed += stubs.Count;
-        foreach (var serverId in stubs.Select(stub => stub.ServerId).OfType<Guid>())
-        {
-            run.CountServer(serverId, failed: 1);
-        }
-
-        var held = stubs.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
-        return (plan.Removals.Where(stub => !held.Contains(stub.Id)).ToList(), false);
     }
 
     private async Task<IReadOnlyList<StubEntry>> DetachRemovalsAsync(Run run, IReadOnlyList<StubEntry> removals, CancellationToken cancellationToken)

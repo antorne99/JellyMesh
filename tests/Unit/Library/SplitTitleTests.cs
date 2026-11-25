@@ -420,6 +420,29 @@ public sealed class SplitTitleTests : IDisposable
         Assert.Empty(_fixture.Registry.State.Groups);
     }
 
+    // Row 565: a music video that joins is merged into the stub left, like a film, and hands its state over.
+    [Fact]
+    public async Task AMusicVideoThatJoinsHandsTheStateOverAndKeepsOneStub()
+    {
+        var type = TypeFolder.Of(StubKind.MusicVideo);
+        var (first, second) = await AddTitleAsync(StubKind.MusicVideo);
+        Apart(type, first, second);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var (left, right) = (StubIn(first), StubIn(second));
+        Give(_anna, PathOf(left), Full());
+        Give(_bruno, PathOf(right), new UserItemData { Key = "k", IsFavorite = true });
+        Together(type, first, second);
+
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        var kept = Assert.Single(Stubs, stub => stub.Kind == StubKind.MusicVideo);
+        AssertFull(Row(_anna, PathOf(kept)));
+        Assert.True(Row(_bruno, PathOf(kept)).IsFavorite);
+        Assert.False(File.Exists(PathOf(kept.Id == left.Id ? right : left)));
+    }
+
     [Fact]
     public async Task ASeriesThatJoinsKeepsOneSeriesWithTheFavoriteAndTheEpisodesOfBoth()
     {

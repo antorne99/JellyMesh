@@ -33,6 +33,10 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     // The most copies a kept title is put back on (row 542).
     private const int MaxCopies = 100;
 
+    // Which titles a save is of, as the log names them.
+    private const string RemovedTitles = "of removed servers";
+    private const string JoinedTitles = "joined to another copy";
+
     // How long a record nobody used is kept (row 412).
     private static readonly TimeSpan _keptFor = TimeSpan.FromDays(90);
 
@@ -123,7 +127,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         // State still to clear is not of the episodes of its stub (§10 row 543).
-        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, cancellationToken).ConfigureAwait(false);
+        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, RemovedTitles, cancellationToken).ConfigureAwait(false);
         foreach (var serverId in ServersOf(stubs, series))
         {
             if (kept)
@@ -137,6 +141,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         return kept;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> KeepJoinedAsync(string root, IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stubs);
+        var alone = stubs.Where(stub => stub.StateOfOneUntil is null).ToList();
+        return alone.Count == 0 || await SaveAsync(root, alone, [], JoinedTitles, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -771,8 +783,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         };
     }
 
-    // Saves the state of the titles, or says why not in the log; false when they must stay.
-    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken)
+    // Saves the state of the titles, or says why not in the log, naming which titles they are; false when they must stay.
+    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, string which, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -781,14 +793,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             var users = _users.GetUsers().ToList();
             if (users.Count == 0)
             {
-                _logger.LogWarning("The users cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                _logger.LogWarning("The users cannot be read for now: {Count} titles {Which:l} are kept until their watch state is saved", stubs.Count + series.Count, which);
                 return false;
             }
 
             // Without the merges a kept title would miss the copies that find it (D33): the titles stay until they read.
             if (_merges.IsDamaged)
             {
-                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles {Which:l} are kept until their watch state is saved", stubs.Count + series.Count, which);
                 return false;
             }
 
@@ -829,14 +841,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             await _kept.SaveAsync(titles, cancellationToken).ConfigureAwait(false);
             if (titles.Count > 0)
             {
-                _logger.LogInformation("Kept the watch state of {Count} titles of removed servers", titles.Count);
+                _logger.LogInformation("Kept the watch state of {Count} titles {Which:l}", titles.Count, which);
             }
 
             return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            _logger.LogError("Cannot keep the watch state of the titles {Which:l}, so they stay for now: {Error}{Detail:l}", which, exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally

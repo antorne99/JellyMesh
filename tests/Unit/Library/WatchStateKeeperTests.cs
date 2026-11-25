@@ -334,7 +334,14 @@ public sealed class WatchStateKeeperTests : IDisposable
     // A remote title of a type with a kept kind of its own, by the name, year and number all of them share.
     private void AddRemote(StubKind kind, string? id = null, int copies = 1)
     {
-        var (library, type, item) = kind switch
+        var (library, type, item) = RemoteOf(kind, id);
+        _fixture.Sync.Client.Libraries.Add(library);
+        _fixture.Sync.Client.Add(library.Id, type, item);
+        _fixture.Sync.Client.Add(library.Id, type, [.. Enumerable.Range(1, copies - 1).Select(copy => item with { Id = item.Id + "c" + copy })]);
+    }
+
+    private static (RemoteLibrary Library, RemoteItemType Type, RemoteItem Item) RemoteOf(StubKind kind, string? id = null)
+        => kind switch
         {
             StubKind.Track => (new RemoteLibrary(TestLibraries.Music, "Dischi", "music"), RemoteItemType.Audio, Sound("t1") with
             {
@@ -369,10 +376,6 @@ public sealed class WatchStateKeeperTests : IDisposable
             }),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
-        _fixture.Sync.Client.Libraries.Add(library);
-        _fixture.Sync.Client.Add(library.Id, type, item);
-        _fixture.Sync.Client.Add(library.Id, type, [.. Enumerable.Range(1, copies - 1).Select(copy => item with { Id = item.Id + "c" + copy })]);
-    }
 
     private static RemoteItem Sound(string id) => new()
     {
@@ -590,6 +593,95 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.False(Row(_anna, book).Played);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
+
+    // Row 565: when the two local libraries of one title become one, the stub that goes gives its state to the one left.
+    [Theory]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.AudioBook)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.HomeVideo)]
+    [InlineData(StubKind.Photo)]
+    public async Task ATitleOfATypeOfItsOwnThatJoinsKeepsTheStateOfBothStubsOnTheOneLeft(StubKind kind)
+    {
+        var (folders, items) = await ApartAsync(kind);
+        var stubs = _fixture.Registry.State.Stubs.Where(stub => stub.Kind == kind).ToList();
+        Watch(_anna, items[stubs[0].Id]);
+        Resume(_bruno, items[stubs[1].Id], 9_000_000_000);
+        folders.Join();
+
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+
+        var left = items[Assert.Single(_fixture.Registry.State.Stubs, stub => stub.Kind == kind).Id];
+        Assert.True(Row(_anna, left).Played);
+        Assert.Equal(9_000_000_000, Row(_bruno, left).PlaybackPositionTicks);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+        Assert.Contains(_logger.Lines, line => line.Contains("titles joined to another copy", StringComparison.Ordinal));
+    }
+
+    // A joined stub whose state cannot be saved stays, counted as failed, until it can.
+    [Fact]
+    public async Task AJoinedStubWhoseStateCannotBeSavedStaysUntilItCan()
+    {
+        var (folders, items) = await ApartAsync(StubKind.Track);
+        var stubs = _fixture.Registry.State.Stubs.Where(stub => stub.Kind == StubKind.Track).ToList();
+        Watch(_anna, items[stubs[0].Id]);
+        Resume(_bruno, items[stubs[1].Id], 9_000_000_000);
+        folders.Join();
+        _everyone = [];
+
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+
+        Assert.Equal(2, _fixture.Registry.State.Stubs.Count(stub => stub.Kind == StubKind.Track));
+        Assert.Contains(_logger.Lines, line => line.Contains("titles joined to another copy are kept until their watch state is saved", StringComparison.Ordinal));
+        Assert.Empty(_keeper.HeldRemovals);
+
+        _everyone = [_anna, _bruno];
+        await _materializer.MaterializeAsync(CancellationToken.None);
+
+        var left = items[Assert.Single(_fixture.Registry.State.Stubs, stub => stub.Kind == StubKind.Track).Id];
+        Assert.True(Row(_anna, left).Played);
+        Assert.Equal(9_000_000_000, Row(_bruno, left).PlaybackPositionTicks);
+    }
+
+    // One title of a kind as the same item in two remote libraries of one server, in two local libraries, with the
+    // library item of each of its stubs.
+    private async Task<(LocalFolders Folders, Dictionary<string, BaseItem> Items)> ApartAsync(StubKind kind)
+    {
+        var (library, type, item) = RemoteOf(kind);
+        var second = library with { Id = SecondLibraryOf(kind), Name = "Due" };
+        foreach (var remote in new[] { library, second })
+        {
+            _fixture.Sync.Client.Libraries.Add(remote);
+            _fixture.Sync.Client.Add(remote.Id, type, item);
+        }
+
+        var server = await _fixture.Sync.AddServerAsync("A", library.Id, second.Id);
+        var folders = new LocalFolders(_fixture.Root, server.Id, TypeFolder.Of(kind), library.Id, second.Id);
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(() => folders.Current);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var stubs = _fixture.Registry.State.Stubs.Where(stub => stub.Kind == kind).ToList();
+        Assert.Equal(2, stubs.Count);
+        var items = stubs.ToDictionary(stub => stub.Id, stub =>
+        {
+            var made = NewItem(kind);
+            made.Id = Guid.NewGuid();
+            made.Path = FederatedPaths.Resolve(_fixture.Root, stub.RelativePath);
+            Add(made);
+            return made;
+        });
+        return (folders, items);
+    }
+
+    // The second remote library of a type.
+    private static string SecondLibraryOf(StubKind kind) => kind switch
+    {
+        StubKind.Track => "a0d1000000000000000000000000000b",
+        StubKind.HomeVideo or StubKind.Photo => "40e0000000000000000000000000000b",
+        _ => "b00c000000000000000000000000000b"
+    };
 
     [Theory]
     [InlineData(StubKind.AudioBook)]
@@ -1581,5 +1673,24 @@ public sealed class WatchStateKeeperTests : IDisposable
         Add(series);
         Add(episode);
         return (series, episode);
+    }
+
+    // The local libraries that hold the folders of two remote libraries: one each, or both in one.
+    private sealed class LocalFolders(string root, Guid serverId, TypeFolder type, string first, string second)
+    {
+        private bool _isJoined;
+
+        public List<VirtualFolderInfo> Current => _isJoined
+            ? [Local("Tutti", first, second)]
+            : [Local("Uno", first), Local("Due", second)];
+
+        public void Join() => _isJoined = true;
+
+        private VirtualFolderInfo Local(string name, params string[] libraries) => new()
+        {
+            Name = name,
+            ItemId = name,
+            Locations = libraries.Select(library => FederatedFolderLayout.TypeFolderPath(root, serverId, library, type)).ToArray()
+        };
     }
 }
