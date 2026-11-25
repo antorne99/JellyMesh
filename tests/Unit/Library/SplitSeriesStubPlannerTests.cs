@@ -463,6 +463,29 @@ public class SplitSeriesStubPlannerTests
         Assert.All(third.Series, work => Assert.Equal(work.Entry.ContentHash, work.ContentHash));
     }
 
+    // A stub with no work, in no series folder, names no row once its own is gone (§10 row 562).
+    [Fact]
+    public void AWaitingStubWhoseRowIsGoneNamesNone()
+    {
+        RemoteItem[] series = [Series("s1")];
+        var first = Sync(StubState.Empty, series, [Episode("s1", 1), Episode("s1", 2)]);
+        var sources = Assert.Single(first.Stubs, stub => stub.EpisodeNumber == 1).Sources;
+        var waiting = Assert.Single(first.Stubs, stub => stub.EpisodeNumber == 2) with
+        {
+            IdentityKey = "old",
+            Sources = sources,
+            SeriesStubId = "gone"
+        };
+        waiting = waiting with { RelativePath = waiting.RelativePath.Replace(Path.Combine("Serie", "Show (2020)"), "Serie", StringComparison.Ordinal) };
+        var old = first with { Stubs = first.Stubs.Select(stub => stub.Id == waiting.Id ? waiting : stub).ToList() };
+
+        var next = Sync(old, series, [Episode("s1", 1)]);
+
+        var kept = Assert.Single(next.Stubs, stub => stub.Id == waiting.Id);
+        Assert.Equal(waiting.RelativePath, kept.RelativePath);
+        Assert.Null(kept.SeriesStubId);
+    }
+
     private static void AssertInTheirFolder(StubState state)
         => Assert.All(state.Stubs, stub => Assert.Equal(FolderOf(stub), Assert.Single(state.Series, entry => entry.Id == stub.SeriesStubId).RelativePath));
 
