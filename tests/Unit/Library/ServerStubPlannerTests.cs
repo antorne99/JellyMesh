@@ -171,18 +171,30 @@ public class ServerStubPlannerTests
         Assert.Equal(count * 2, plan.Stubs.Count);
     }
 
-    // The processor time the test process spends on a run, which other processes on the machine do not add to.
+    // The processor time the current thread spends on a run, which other threads and processes do not add to.
     private static TimeSpan ProcessorTime(Action run)
     {
-        using var process = System.Diagnostics.Process.GetCurrentProcess();
-        var before = process.TotalProcessorTime;
+        var before = ThreadProcessorTime();
         run();
-        process.Refresh();
-        return process.TotalProcessorTime - before;
+        return ThreadProcessorTime() - before;
     }
 
-    // Planning 8000 series takes under 30 times the least processor time of 1000 (measured 9 to 12, and 44 to 60 when
-    // each series reads every content as before c1934e3).
+    // The time the current thread has run on a processor, from Linux's schedstat in nanoseconds; elsewhere the process's.
+    private static TimeSpan ThreadProcessorTime()
+    {
+        const string Schedstat = "/proc/thread-self/schedstat";
+        if (File.Exists(Schedstat))
+        {
+            var nanoseconds = long.Parse(File.ReadAllText(Schedstat).Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
+            return TimeSpan.FromTicks(nanoseconds / 100);
+        }
+
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return process.TotalProcessorTime;
+    }
+
+    // Planning 8000 series takes under 30 times the least processor time of 1000, measured on the planning thread only
+    // (row 564).
     [Fact]
     public void PlanningEightTimesTheSeriesTakesAboutEightTimesAsLong()
     {
