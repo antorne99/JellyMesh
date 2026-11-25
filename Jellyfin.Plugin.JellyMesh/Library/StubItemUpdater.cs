@@ -203,10 +203,10 @@ public sealed class StubItemUpdater
     }
 
     /// <summary>
-    /// Writes the fields of a track and its lock. Stock Jellyfin reads nothing from a track stub, so they are written with
-    /// or without protection (D60). Nothing is saved.
+    /// Writes the fields of a track, or of an audiobook part with its plot, and its lock. Stock Jellyfin reads nothing from
+    /// their stubs, so they are written with or without protection (D60, D69). Nothing is saved.
     /// </summary>
-    /// <param name="audio">The track.</param>
+    /// <param name="audio">The track or part.</param>
     /// <param name="metadata">The metadata.</param>
     /// <returns>Whether a field changed.</returns>
     public static bool WriteTrack(Audio audio, StubMetadata metadata)
@@ -225,6 +225,11 @@ public sealed class StubItemUpdater
         audio.ParentIndexNumber = metadata.DiscNumber;
         audio.Genres = metadata.Genres.ToArray();
         audio.IsLocked = metadata.IsProtected;
+        if (audio is AudioBook)
+        {
+            audio.Overview = metadata.Overview;
+        }
+
         return !string.Equals(before, TrackFieldsOf(audio), StringComparison.Ordinal);
     }
 
@@ -337,7 +342,8 @@ public sealed class StubItemUpdater
         audio.IndexNumber,
         audio.ParentIndexNumber,
         audio.Genres,
-        audio.IsLocked
+        audio.IsLocked,
+        Plot = audio is AudioBook ? audio.Overview : null
     });
 
     private static string BookFieldsOf(Book book) => JsonSerializer.Serialize(new

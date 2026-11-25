@@ -200,6 +200,27 @@ public sealed class StubRemoverTests : IDisposable
         Assert.False(Directory.Exists(Path.GetDirectoryName(album)));
     }
 
+    [Fact]
+    public void TheLastPartOfAnAudiobookTakesItsFoldersButNotTheBooksFolder()
+    {
+        var server = Guid.NewGuid();
+        var first = Part(server, "b1", "01 - One", "Author", "Book");
+        var second = Part(server, "b2", "02 - Two", "Author", "Book");
+        var other = Part(server, "b3", "01 - One", "Author", "Other");
+        var book = Path.Combine(_root, Path.GetDirectoryName(first.RelativePath)!);
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [first, second, other] }, [first, second]);
+
+        Assert.Equal(other, Assert.Single(removal.State.Stubs));
+        Assert.Equal(2, removal.Removed);
+        Assert.False(Directory.Exists(book));
+        Assert.True(File.Exists(Path.Combine(_root, other.RelativePath)));
+
+        _remover.RemoveAll(_root, removal.State, [other]);
+
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_root, FederatedPaths.TypeFolderOf(server, MusicLibrary, TypeFolder.Books))));
+    }
+
     // On a disk that ignores case "Artist" and "artist" are one folder, so a track left in either keeps it.
     [Fact]
     public void AnArtistFolderHeldUnderAnotherCaseStays()
@@ -394,6 +415,15 @@ public sealed class StubRemoverTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
         File.WriteAllText(full, "url");
         return new StubEntry { Id = id, ServerId = server, Kind = StubKind.Track, RelativePath = path, IdentityKey = id, Sources = [] };
+    }
+
+    private StubEntry Part(Guid server, string id, string name, params string[] folders)
+    {
+        var path = Path.Combine(FederatedPaths.TypeFolderOf(server, MusicLibrary, TypeFolder.Books), Path.Combine(folders), name + ".strm");
+        var full = Path.Combine(_root, path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, "url");
+        return new StubEntry { Id = id, ServerId = server, Kind = StubKind.AudioBook, RelativePath = path, IdentityKey = id, Sources = [] };
     }
 
     private SeriesStub Series(string id, string folder)

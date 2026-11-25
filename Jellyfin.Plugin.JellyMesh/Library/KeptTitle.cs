@@ -19,40 +19,58 @@ public sealed record KeptTitle
     /// <summary>Gets the kind of title.</summary>
     public required KeptTitleKind Kind { get; init; }
 
-    /// <summary>Gets the film's, music video's or series' name; an episode's series name.</summary>
+    /// <summary>Gets the name of the title; an episode's series name.</summary>
     public string? Title { get; init; }
 
-    /// <summary>Gets the film's or series' year; an episode's series year.</summary>
+    /// <summary>Gets the year of the title; an episode's series year.</summary>
     public int? Year { get; init; }
 
-    /// <summary>Gets the provider IDs of the film or series; an episode's series IDs.</summary>
+    /// <summary>Gets the provider IDs of the film, music video or series; an episode's series IDs.</summary>
     public ContentIds Ids { get; init; } = ContentIds.None;
 
-    /// <summary>Gets the original title of a film.</summary>
+    /// <summary>Gets the original title of a film or book.</summary>
     public string? OriginalTitle { get; init; }
 
-    /// <summary>Gets the duration of a film.</summary>
+    /// <summary>Gets the duration of a film, track, audiobook file or home video.</summary>
     public long? RunTimeTicks { get; init; }
 
-    /// <summary>Gets the plot of a film.</summary>
+    /// <summary>Gets the plot of a film or book.</summary>
     public string? Overview { get; init; }
 
-    /// <summary>Gets the genres of a film.</summary>
+    /// <summary>Gets the genres of a film or book.</summary>
     public IReadOnlyList<string> Genres { get; init; } = [];
 
-    /// <summary>Gets the studios of a film.</summary>
+    /// <summary>Gets the studios of a film or book.</summary>
     public IReadOnlyList<string> Studios { get; init; } = [];
 
-    /// <summary>Gets the cast and crew of a film without IDs.</summary>
+    /// <summary>Gets the cast and crew of a film without IDs, or the people of a book.</summary>
     public IReadOnlyList<string> People { get; init; } = [];
 
-    /// <summary>Gets the artists of a music video.</summary>
+    /// <summary>Gets the artists of a music video, track or audiobook file.</summary>
     public IReadOnlyList<string> Artists { get; init; } = [];
 
-    /// <summary>Gets the season of an episode.</summary>
+    /// <summary>Gets the album artists of a track or audiobook file.</summary>
+    public IReadOnlyList<string> AlbumArtists { get; init; } = [];
+
+    /// <summary>Gets the album of a track or audiobook file.</summary>
+    public string? Album { get; init; }
+
+    /// <summary>Gets the series of a book.</summary>
+    public string? SeriesName { get; init; }
+
+    /// <summary>Gets every provider ID of a track, audiobook file, book or home video, without the mark of the plugin.</summary>
+    public IReadOnlyDictionary<string, string> ProviderIds { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>Gets the path of a track, audiobook file, book or home video below its type folder, with <c>/</c>.</summary>
+    public string? Place { get; init; }
+
+    /// <summary>Gets a value indicating whether an audiobook file was the only one of its book.</summary>
+    public bool IsOnlyFile { get; init; }
+
+    /// <summary>Gets the season of an episode, or the disc of a track or audiobook file.</summary>
     public int? SeasonNumber { get; init; }
 
-    /// <summary>Gets the number of an episode.</summary>
+    /// <summary>Gets the number of an episode, track, audiobook file or book.</summary>
     public int? EpisodeNumber { get; init; }
 
     /// <summary>Gets the last episode of a file that holds several.</summary>

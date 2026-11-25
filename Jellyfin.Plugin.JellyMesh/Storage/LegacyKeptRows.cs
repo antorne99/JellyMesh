@@ -83,7 +83,8 @@ internal static class LegacyKeptRows
             while (reader.Read())
             {
                 var kind = reader.GetInt32(2);
-                if (!Enum.IsDefined((KeptTitleKind)kind))
+                // The old versions knew only these three kinds.
+                if (kind is < (int)KeptTitleKind.Movie or > (int)KeptTitleKind.Series)
                 {
                     throw new FormatException("A kept title has an unknown kind.");
                 }

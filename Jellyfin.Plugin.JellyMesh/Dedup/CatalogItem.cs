@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// returns empty <c>ProviderIds</c> and no <c>ProductionYear</c> on episodes, so the mapper has to read them from the
 /// Series item.
 /// </remarks>
-public sealed record CatalogItem
+public sealed record CatalogItem : IServerItem
 {
     /// <summary>
     /// Gets the plugin's ID for the server holding the item. Item IDs are not unique across servers, so this is part of

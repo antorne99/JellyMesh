@@ -175,7 +175,7 @@ public sealed class StubTechnicalData
     }
 
     /// <summary>
-    /// Writes the fields of a track from the index, with its lock (D60). Nothing is saved on the item itself.
+    /// Writes the fields of a track or audiobook part from the index, with its lock (D60, D69). Nothing is saved on the item.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <param name="stub">The stub.</param>

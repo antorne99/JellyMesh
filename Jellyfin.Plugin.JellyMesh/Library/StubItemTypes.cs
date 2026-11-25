@@ -23,6 +23,7 @@ public static class StubItemTypes
         StubKind.HomeVideo => typeof(Video),
         StubKind.Book => typeof(Book),
         StubKind.Photo => typeof(Photo),
+        StubKind.AudioBook => typeof(AudioBook),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }

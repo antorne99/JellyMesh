@@ -143,8 +143,9 @@ public static partial class StubPlanner
         {
             // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
             var contents = ServerContents(input.View, input.Snapshot, catalog, server).Where(content => !legacy || content.Identity.Kind != ContentKind.MusicVideo).ToList();
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book) && !IsUntitledVideo(stub.Kind, legacy) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book or StubKind.AudioBook) && !IsUntitledVideo(stub.Kind, legacy) && (legacy || IsCurrent(stub.RelativePath))).ToList();
             var ownBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Book).ToList();
+            var ownAudioBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.AudioBook).ToList();
             var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsUntitledVideo(stub.Kind, legacy)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
@@ -192,7 +193,7 @@ public static partial class StubPlanner
             // Tracks come only in the new layout (Q49), from the index: the dedup has no track identity yet.
             if (!legacy)
             {
-                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList());
+                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, StubKind.Track, input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList(), (folder, artist, _) => Path.Combine(folder, artist));
                 tracks.AddRange(serverTracks);
                 claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
             }
@@ -206,7 +207,9 @@ public static partial class StubPlanner
                 videoWorks.AddRange(VideoWorks(input, catalog, server, ownVideos, claimed, unplaceable));
             }
 
-            books.AddRange(BookWorks(input, server.Id, ownBooks, legacy, claimed, unplaceable));
+            var bookNames = new PathAllocator(ownBooks.Concat(ownAudioBooks), [], input.IgnoreRules);
+            books.AddRange(BookWorks(input, server.Id, ownBooks, bookNames, legacy, claimed, unplaceable));
+            books.AddRange(AudioBookWorks(input, catalog, server.Id, ownAudioBooks, bookNames, legacy, claimed));
         }
 
         works.AddRange(tracks);
@@ -1023,7 +1026,7 @@ public static partial class StubPlanner
         return tag.ToString();
     }
 
-    private static void AddRemote(List<StubImage> images, IndexedItem item, Guid serverId, ImageType type, string stem)
+    internal static void AddRemote(List<StubImage> images, IndexedItem item, Guid serverId, ImageType type, string stem)
     {
         if (TagOf(item, type) is not null)
         {
@@ -1032,7 +1035,7 @@ public static partial class StubPlanner
     }
 
     // The images an earlier tag lists, hence written by the plugin, whose type the remote row no longer has (Q235).
-    private static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
+    internal static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
     {
         if (string.IsNullOrEmpty(writtenTag))
         {
@@ -1053,7 +1056,7 @@ public static partial class StubPlanner
             : item.ImageTags.GetValueOrDefault(type.ToString());
     }
 
-    private static string ImageTagOf(IndexedItem item, List<StubImage> images)
+    internal static string ImageTagOf(IndexedItem item, List<StubImage> images)
     {
         return string.Concat(images.Select(image => string.Create(CultureInfo.InvariantCulture, $"{image.Type}={TagOf(item, image.Type)};")));
     }
@@ -1150,7 +1153,11 @@ public static partial class StubPlanner
     /// </summary>
     private sealed class PathAllocator
     {
+        // " [" + 8 characters of the id + "]".
+        private const int IdSuffixLength = 11;
+
         private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _authors = new(StringComparer.OrdinalIgnoreCase);
         private readonly IServerIgnoreRules _rules;
 
         public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series, IServerIgnoreRules rules)
@@ -1163,6 +1170,14 @@ public static partial class StubPlanner
                 if (stub.Kind == StubKind.Episode)
                 {
                     _taken.Add(SeriesFolderOf(stub));
+                }
+                else if (stub.Kind == StubKind.AudioBook)
+                {
+                    // An author folder answers to its whole name first, then to the name it has without an id.
+                    var author = Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!;
+                    _taken.Add(author);
+                    _authors[author] = author;
+                    _authors.TryAdd(WithoutId(author), author);
                 }
             }
 
@@ -1202,6 +1217,23 @@ public static partial class StubPlanner
             _taken.Add(unique);
             return unique;
         }
+
+        // The relative folder of an author, one for all the audiobooks of that name and never the folder of a book.
+        public string AuthorFolder(string typeFolder, string name, string id)
+        {
+            var key = Path.Combine(typeFolder, name);
+            if (!_authors.TryGetValue(key, out var folder))
+            {
+                folder = Path.Combine(typeFolder, Unique(typeFolder, name, id));
+                _authors[key] = folder;
+            }
+
+            return folder;
+        }
+
+        // A folder without the id Unique put after its name.
+        private static string WithoutId(string folder)
+            => folder.Length > IdSuffixLength && folder.EndsWith(']') && folder.AsSpan(folder.Length - IdSuffixLength).StartsWith(" [") ? folder[..^IdSuffixLength] : folder;
 
         private string Unique(string typeFolder, string name, string id, bool hidden = false)
         {

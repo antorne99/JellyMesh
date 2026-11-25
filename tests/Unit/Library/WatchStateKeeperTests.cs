@@ -331,6 +331,452 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // A remote title of a type with a kept kind of its own, by the name, year and number all of them share.
+    private void AddRemote(StubKind kind, string? id = null, int copies = 1)
+    {
+        var (library, type, item) = kind switch
+        {
+            StubKind.Track => (new RemoteLibrary(TestLibraries.Music, "Dischi", "music"), RemoteItemType.Audio, Sound("t1") with
+            {
+                ProviderIds = id is null ? null : new Dictionary<string, string?> { ["MusicBrainzRecording"] = id }
+            }),
+            StubKind.AudioBook => (new RemoteLibrary(TestLibraries.Books, "Libri", "books"), RemoteItemType.AudioBook, Sound("p1")),
+            StubKind.Book => (new RemoteLibrary(TestLibraries.Books, "Libri", "books"), RemoteItemType.Book, new RemoteItem
+            {
+                Id = "b1",
+                Name = "Song",
+                ProductionYear = 2019,
+                SeriesName = "Saga",
+                Path = "/books/Song/Song.epub",
+                ProviderIds = id is null ? null : new Dictionary<string, string?> { ["ISBN"] = id }
+            }),
+            StubKind.HomeVideo => (new RemoteLibrary(TestLibraries.HomeVideos, "Casa", "homevideos"), RemoteItemType.Video, new RemoteItem
+            {
+                Id = "v1",
+                Name = "Song",
+                ProductionYear = 2019,
+                ParentId = TestLibraries.HomeVideos,
+                RunTimeTicks = 180 * TimeSpan.TicksPerSecond,
+                MediaSources = [TestItems.Source("v1", 1080, 5_000_000)]
+            }),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        _fixture.Sync.Client.Libraries.Add(library);
+        _fixture.Sync.Client.Add(library.Id, type, item);
+        _fixture.Sync.Client.Add(library.Id, type, [.. Enumerable.Range(1, copies - 1).Select(copy => item with { Id = item.Id + "c" + copy })]);
+    }
+
+    private static RemoteItem Sound(string id) => new()
+    {
+        Id = id,
+        Name = "Song",
+        ProductionYear = 2019,
+        Album = "Album",
+        AlbumId = "al1",
+        Artists = ["Singer"],
+        AlbumArtists = [new RemoteNamedItem("Singer")],
+        ParentIndexNumber = 2,
+        IndexNumber = 3,
+        RunTimeTicks = 180 * TimeSpan.TicksPerSecond,
+        MediaSources = [new RemoteMediaSource { Id = id, Container = "mp3", MediaStreams = [new RemoteStreamInfo("Audio", "mp3", null, null, 320_000, null, null, true) { Index = 0 }] }]
+    };
+
+    private static string LibraryOf(StubKind kind) => kind switch
+    {
+        StubKind.Track => TestLibraries.Music,
+        StubKind.HomeVideo => TestLibraries.HomeVideos,
+        _ => TestLibraries.Books
+    };
+
+    // The library item a scan makes of the only stub of a kind, with the name, year and numbers all of them share.
+    private BaseItem ItemOf(RemoteServerInfo server, StubKind kind) => Place(NewItem(kind), server, kind);
+
+    private static BaseItem NewItem(StubKind kind)
+    {
+        BaseItem item = kind switch
+        {
+            StubKind.Track => new MediaBrowser.Controller.Entities.Audio.Audio { Artists = ["Singer"], AlbumArtists = ["Singer"], Album = "Album" },
+            StubKind.AudioBook => new AudioBook { Artists = ["Singer"], AlbumArtists = ["Singer"], Album = "Album" },
+            StubKind.Book => new Book { SeriesName = "Saga" },
+            _ => new Video()
+        };
+        item.Name = "Song";
+        item.ProductionYear = 2019;
+        item.ParentIndexNumber = 2;
+        item.IndexNumber = 3;
+        item.RunTimeTicks = 181 * TimeSpan.TicksPerSecond;
+        return item;
+    }
+
+    private BaseItem Place(BaseItem item, RemoteServerInfo server, StubKind kind)
+    {
+        item.Id = Guid.NewGuid();
+        item.Path = FederatedPaths.Resolve(_fixture.Root, _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Kind == kind).RelativePath);
+        Add(item);
+        return item;
+    }
+
+    [Theory]
+    [InlineData(StubKind.Movie, KeptTitleKind.Movie)]
+    [InlineData(StubKind.Episode, KeptTitleKind.Episode)]
+    [InlineData(StubKind.MusicVideo, KeptTitleKind.MusicVideo)]
+    [InlineData(StubKind.Track, KeptTitleKind.Track)]
+    [InlineData(StubKind.AudioBook, KeptTitleKind.AudioBook)]
+    [InlineData(StubKind.Book, KeptTitleKind.Book)]
+    [InlineData(StubKind.HomeVideo, KeptTitleKind.HomeVideo)]
+    public void EachKindOfStubIsKeptUnderAKindOfItsOwn(StubKind kind, KeptTitleKind kept) => Assert.Equal(kept, WatchStateKeeper.KeptKindOf(kind));
+
+    [Fact]
+    public void EveryKindOfStubHasAKindToBeKeptUnder()
+    {
+        var kinds = Enum.GetValues<StubKind>();
+
+        Assert.Equal(kinds.Length, kinds.Select(WatchStateKeeper.KeptKindOf).Distinct().Count());
+        Assert.Throws<ArgumentOutOfRangeException>(() => WatchStateKeeper.KeptKindOf((StubKind)(-1)));
+    }
+
+    // Row 532: never as a film, with everything a rule of identity may read and no mark of the plugin.
+    [Theory]
+    [InlineData(StubKind.Track, KeptTitleKind.Track, "Singer/Album/2-03 - Song.strm")]
+    [InlineData(StubKind.AudioBook, KeptTitleKind.AudioBook, "Singer/Album/2-03 - Song.strm")]
+    [InlineData(StubKind.Book, KeptTitleKind.Book, "Song (2019)/Song (2019).epub")]
+    [InlineData(StubKind.HomeVideo, KeptTitleKind.HomeVideo, "Song.strm")]
+    public async Task ATitleOfATypeOfItsOwnIsKeptUnderItsKindWithItsData(StubKind kind, KeptTitleKind expected, string place)
+    {
+        AddRemote(kind);
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
+        var item = ItemOf(a, kind);
+        item.ProviderIds = new Dictionary<string, string> { ["Isbn"] = "978", ["JellyMesh"] = "stub" };
+        Watch(_anna, item);
+
+        await RemoveAsync(a);
+
+        var kept = Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+        Assert.Equal((expected, "Song", 2019, 2, 3), (kept.Kind, kept.Title, kept.Year, kept.SeasonNumber, kept.EpisodeNumber));
+        Assert.Equal(181 * TimeSpan.TicksPerSecond, kept.RunTimeTicks);
+        Assert.Equal(new Dictionary<string, string> { ["Isbn"] = "978" }, kept.ProviderIds);
+        Assert.Equal(place, kept.Place);
+        Assert.Equal(kind == StubKind.Book ? "Saga" : null, kept.SeriesName);
+        var isSound = kind is StubKind.Track or StubKind.AudioBook;
+        Assert.Equal(isSound ? "Album" : null, kept.Album);
+        Assert.Equal(isSound ? ["Singer"] : [], kept.Artists);
+        Assert.Equal(isSound ? ["Singer"] : [], kept.AlbumArtists);
+        Assert.Equal((_anna.Id, 2), (Assert.Single(kept.Users).UserId, kept.Users[0].PlayCount));
+    }
+
+    // The library the admin put a server folder in decides the type of the item, not what it is.
+    [Fact]
+    public async Task AHomeVideoReadAsAFilmIsKeptAsAHomeVideoAndAFilmReadAsAMusicVideoAsAFilm()
+    {
+        AddRemote(StubKind.HomeVideo);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("film", "Film", 2019));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.HomeVideos, TestLibraries.Films);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        Watch(_anna, Place(new Movie { Name = "Song" }, a, StubKind.HomeVideo));
+        Watch(_anna, Place(new MusicVideo { Name = "Film" }, a, StubKind.Movie));
+
+        await RemoveAsync(a);
+
+        var kept = await _kept.ReadAsync(CancellationToken.None);
+        Assert.Equal([("Film", KeptTitleKind.Movie), ("Song", KeptTitleKind.HomeVideo)], kept.Select(title => (title.Title!, title.Kind)).Order());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ATrackGetsItsStateBackByItsRecordingOrItsPlaceInTheAlbum(bool byRecording)
+    {
+        AddRemote(StubKind.Track, byRecording ? "rec-1" : null);
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Music);
+        var old = ItemOf(a, StubKind.Track);
+        if (byRecording)
+        {
+            old.Name = "Other name";
+            old.ProviderIds = new Dictionary<string, string> { ["musicbrainzrecording"] = "REC-1" };
+        }
+
+        Watch(_anna, old);
+        Resume(_bruno, old, 900_000_000);
+        await RemoveAsync(a);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+
+        var fresh = ItemOf(await AddAndMaterializeAsync("A", TestLibraries.Music), StubKind.Track);
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.Equal((true, 2), (Row(_anna, fresh).Played, Row(_anna, fresh).PlayCount));
+        Assert.Equal((900_000_000, true), (Row(_bruno, fresh).PlaybackPositionTicks, Row(_bruno, fresh).IsFavorite));
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task EveryServerThatHasTheTrackGetsItsState()
+    {
+        AddRemote(StubKind.Track);
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Music);
+        var b = ItemOf(await AddAndMaterializeAsync("B", TestLibraries.Music), StubKind.Track);
+        var c = ItemOf(await AddAndMaterializeAsync("C", TestLibraries.Music), StubKind.Track);
+        Watch(_anna, ItemOf(a, StubKind.Track));
+
+        await RemoveAsync(a);
+
+        Assert.True(Row(_anna, b).Played);
+        Assert.True(Row(_anna, c).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AnotherRecordingOfATrackGetsNothing()
+    {
+        AddRemote(StubKind.Track, "rec-2");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Music);
+        var old = ItemOf(a, StubKind.Track);
+        old.ProviderIds = new Dictionary<string, string> { ["MusicBrainzRecording"] = "rec-1" };
+        Watch(_anna, old);
+        await RemoveAsync(a);
+
+        var fresh = ItemOf(await AddAndMaterializeAsync("B", TestLibraries.Music), StubKind.Track);
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.False(Row(_anna, fresh).Played);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Row 535: an audiobook as a track, a book by its ID or its data, a home video by its data.
+    [Theory]
+    [InlineData(StubKind.AudioBook)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.HomeVideo)]
+    public async Task AnAudioBookABookAndAHomeVideoGetTheirStateBack(StubKind kind)
+    {
+        AddRemote(kind);
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
+        var b = ItemOf(await AddAndMaterializeAsync("B", LibraryOf(kind)), kind);
+        var old = ItemOf(a, kind);
+        Watch(_anna, old);
+        await RemoveAsync(a);
+        Assert.True(Row(_anna, b).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(StubKind.AudioBook)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.HomeVideo)]
+    public async Task AnAudioBookABookAndAHomeVideoThatAreNotTheSameGetNothing(StubKind kind)
+    {
+        AddRemote(kind);
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
+        var b = ItemOf(await AddAndMaterializeAsync("B", LibraryOf(kind)), kind);
+        var old = ItemOf(a, kind);
+        old.Name = "Another";
+        Watch(_anna, old);
+
+        await RemoveAsync(a);
+
+        Assert.False(Row(_anna, b).Played);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Row 542: a title with more copies than the most keeps its state, one line says so, and the others get theirs.
+    [Theory]
+    [InlineData(StubKind.Movie, 100, true)]
+    [InlineData(StubKind.Movie, 101, false)]
+    [InlineData(StubKind.AudioBook, 100, true)]
+    [InlineData(StubKind.AudioBook, 101, false)]
+    [InlineData(StubKind.Book, 101, false)]
+    [InlineData(StubKind.HomeVideo, 101, false)]
+    public async Task ATitleWithMoreCopiesThanTheMostKeepsItsState(StubKind kind, int copies, bool isPutBack)
+    {
+        var film = kind == StubKind.Movie;
+        if (film)
+        {
+            _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, [.. Enumerable.Range(1, copies).Select(copy => TestItems.Movie("film" + copy, "Song", 2019) with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } })]);
+        }
+        else
+        {
+            AddRemote(kind, copies: copies);
+        }
+
+        var b = await AddAndMaterializeAsync("B", film ? TestLibraries.Films : LibraryOf(kind));
+        var placed = _fixture.Registry.State.Stubs.Where(stub => stub.ServerId == b.Id && stub.Kind == kind).Select(stub =>
+        {
+            var item = film ? new Movie { Name = "Song", ProductionYear = 2019 } : NewItem(kind);
+            item.Id = Guid.NewGuid();
+            item.Path = FederatedPaths.Resolve(_fixture.Root, stub.RelativePath);
+            Add(item);
+            return item;
+        }).ToList();
+        await _kept.SaveAsync([KeptOf(kind)], CancellationToken.None);
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.Equal(isPutBack, placed.Exists(item => Row(_anna, item).Played));
+        Assert.Equal(isPutBack ? 0 : 1, (await _kept.ReadAsync(CancellationToken.None)).Count);
+        Assert.Equal(isPutBack ? 0 : 1, _logger.Lines.Count(line => line.Contains("more than 100 current or kept copies", StringComparison.Ordinal)));
+    }
+
+    // A rule that fails leaves the titles of its type for a later run and stops no other.
+    [Fact]
+    public async Task TheFailureOfOneRuleDoesNotStopTheOthers()
+    {
+        AddRemote(StubKind.Track);
+        AddRemote(StubKind.Book);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("film", "Song", 2019) with { ProviderIds = new Dictionary<string, string?> { ["Imdb"] = "tt1" } });
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films, TestLibraries.Music, TestLibraries.Books);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (film, track, book) = (Place(new Movie { Name = "Song", ProductionYear = 2019 }, b, StubKind.Movie), ItemOf(b, StubKind.Track), ItemOf(b, StubKind.Book));
+        await _kept.SaveAsync([KeptOf(StubKind.Movie), KeptOf(StubKind.Track), KeptOf(StubKind.Book)], CancellationToken.None);
+        var broken = new Mock<IManualMergeStore>();
+        broken.Setup(merges => merges.Merges).Throws(new InvalidOperationException("/secret"));
+        using var keeper = Keeper(_kept, broken.Object);
+
+        await keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, track).Played);
+        Assert.True(Row(_anna, book).Played);
+        Assert.False(Row(_anna, film).Played);
+        Assert.Equal(KeptTitleKind.Movie, Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Kind);
+        Assert.Contains("InvalidOperationException", Assert.Single(_logger.Lines, line => line.Contains("Cannot match", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    // A title that cannot be found for an error waits for a later run and stops no other.
+    [Fact]
+    public async Task TheFailureOfOneTitleDoesNotStopTheOthers()
+    {
+        AddRemote(StubKind.Track);
+        AddRemote(StubKind.Book);
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Music, TestLibraries.Books);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (track, book) = (ItemOf(b, StubKind.Track), ItemOf(b, StubKind.Book));
+        await _kept.SaveAsync([KeptOf(StubKind.Track), KeptOf(StubKind.Book)], CancellationToken.None);
+        _fixture.Library.Setup(manager => manager.FindByPath(track.Path, It.IsAny<bool?>())).Throws(new IOException("/secret"));
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, book).Played);
+        Assert.Equal(KeptTitleKind.Track, Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Kind);
+        Assert.Contains("IOException", Assert.Single(_logger.Lines, line => line.Contains("Cannot put back", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+    }
+
+    // A kept title as the keeper saves the item of a stub of a kind, seen by Anna.
+    private KeptTitle KeptOf(StubKind kind) => new()
+    {
+        OldItemId = Guid.NewGuid(),
+        Kind = WatchStateKeeper.KeptKindOf(kind),
+        Title = "Song",
+        Year = 2019,
+        Ids = kind == StubKind.Movie ? new ContentIds { Imdb = "tt1" } : new ContentIds(),
+        AlbumArtists = ["Singer"],
+        Album = "Album",
+        SeriesName = kind == StubKind.Book ? "Saga" : null,
+        Place = kind == StubKind.Book ? "Song.epub" : "Song.strm",
+        SeasonNumber = 2,
+        EpisodeNumber = 3,
+        RunTimeTicks = 180 * TimeSpan.TicksPerSecond,
+        Users = [new KeptUserState(_anna.Id, true, 2, 0, _watched, false, null)],
+        SavedUtc = _fixture.Sync.Clock.Now.UtcDateTime
+    };
+
+    [Fact]
+    public async Task ABookWithTheSameIdGetsTheStateWhateverItsTitle()
+    {
+        AddRemote(StubKind.Book, "978");
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Books);
+        var b = ItemOf(await AddAndMaterializeAsync("B", TestLibraries.Books), StubKind.Book);
+        var old = ItemOf(a, StubKind.Book);
+        old.Name = "Another";
+        old.ProviderIds = new Dictionary<string, string> { ["ISBN"] = "978", ["JellyMesh"] = "one" };
+        Watch(_anna, old);
+
+        await RemoveAsync(a);
+
+        Assert.True(Row(_anna, b).Played);
+    }
+
+    // The only file of a book needs no number; a file of a longer book does.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task AnAudioBookWithNoNumberGetsItsStateBackOnlyWhenItIsOneFile(bool isLonger, bool isRestored)
+    {
+        AddRemote(StubKind.AudioBook);
+        if (isLonger)
+        {
+            _fixture.Sync.Client.Add(TestLibraries.Books, RemoteItemType.AudioBook, Sound("p2") with { Name = "Second", IndexNumber = 4 });
+        }
+
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Books);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Books);
+        BaseItem First(RemoteServerInfo server)
+        {
+            var item = new AudioBook { Id = Guid.NewGuid(), Name = "Song", Artists = ["Singer"], AlbumArtists = ["Singer"], Album = "Album", ParentIndexNumber = 2, RunTimeTicks = 181 * TimeSpan.TicksPerSecond };
+            item.Path = FederatedPaths.Resolve(_fixture.Root, _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Sources[0].ItemId == "p1").RelativePath);
+            Add(item);
+            return item;
+        }
+
+        var other = First(b);
+        Watch(_anna, First(a));
+        await RemoveAsync(a);
+
+        Assert.Equal(isRestored, Row(_anna, other).Played);
+    }
+
+    // An audiobook and a track with the same data are not one another.
+    [Theory]
+    [InlineData(StubKind.Track, StubKind.AudioBook)]
+    [InlineData(StubKind.AudioBook, StubKind.Track)]
+    public async Task ATrackAndAnAudioBookNeverShareTheirState(StubKind kept, StubKind other)
+    {
+        AddRemote(kept);
+        AddRemote(other);
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kept));
+        var b = ItemOf(await AddAndMaterializeAsync("B", LibraryOf(other)), other);
+        Watch(_anna, ItemOf(a, kept));
+
+        await RemoveAsync(a);
+
+        Assert.False(Row(_anna, b).Played);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.AudioBook)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.HomeVideo)]
+    public async Task ATitleOfATypeOfItsOwnGivesNothingToAFilmAnEpisodeOrASeriesOfTheSameName(StubKind kind)
+    {
+        var ids = new Dictionary<string, string?> { ["Imdb"] = "tt1" };
+        AddRemote(kind);
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("film", "Song", 2019) with { ProviderIds = ids });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Song", 2019) with { ProviderIds = ids });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss2", "s", 2));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 2, 3, "Song") with { SeasonId = "ss2" });
+        var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
+        var old = ItemOf(a, kind);
+        old.ProviderIds = new Dictionary<string, string> { ["Imdb"] = "tt1" };
+        Watch(_anna, old);
+        await RemoveAsync(a);
+
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films, TestLibraries.Shows);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var film = Place(new Movie { Name = "Song", ProductionYear = 2019 }, b, StubKind.Movie);
+        var series = new Series { Id = Guid.NewGuid(), Path = FederatedPaths.Resolve(_fixture.Root, Assert.Single(_fixture.Registry.State.Series).RelativePath), Name = "Song", ProductionYear = 2019 };
+        Add(series);
+        var episode = Place(new Episode { SeriesId = series.Id, ParentIndexNumber = 2, IndexNumber = 3 }, b, StubKind.Episode);
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.All([film, series, episode], item => Assert.False(Row(_anna, item).Played));
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task TheStateGoesRightAwayToAServerThatAlreadyHasTheContent()
     {

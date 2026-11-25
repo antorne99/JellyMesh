@@ -1996,6 +1996,136 @@ public partial class PlaybackFiltersTests
         Assert.Equal("bytes=0-4", asked?.Range);
     }
 
+    // A track or an audiobook part, with the name its .strm has.
+    private InMemoryConfigurationStore AudioStub(StubKind kind)
+    {
+        var store = TrackStub();
+        var name = kind == StubKind.AudioBook ? "Libri/Author/Story/01 - Café 1.5.strm" : "Musica/Artist/Album/01 - Song.strm";
+        _stubs.Setup(stubs => stubs.FindByPath(It.IsAny<string>())).Returns(_stub with { Kind = kind, RelativePath = "server/library/" + name });
+        return store;
+    }
+
+    private void RemoteServesType(string? contentType)
+    {
+        _fixture.Client.Open = (request, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            System.Net.HttpStatusCode.OK,
+            new RemoteContentHeaders(contentType, _remoteBytes.Length, null, "bytes"),
+            new MemoryStream(_remoteBytes))));
+    }
+
+    // Rows 532 and 542: the type of the answer gives the extension from a fixed list, and any other type a neutral one.
+    [Theory]
+    [InlineData(StubKind.Track, "audio/mpeg", "01 - Song.mp3")]
+    [InlineData(StubKind.Track, "AUDIO/FLAC; charset=binary", "01 - Song.flac")]
+    [InlineData(StubKind.Track, "audio/ogg", "01 - Song.ogg")]
+    [InlineData(StubKind.Track, " audio/mpeg ;q=1", "01 - Song.mp3")]
+    [InlineData(StubKind.Track, "video/mp4", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "text/html", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "text/plain", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "audio/mpeg.exe", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "", "01 - Song.bin")]
+    [InlineData(StubKind.Track, null, "01 - Song.bin")]
+    [InlineData(StubKind.AudioBook, "audio/mp4", "01 - Café 1.5.m4a")]
+    [InlineData(StubKind.AudioBook, "audio/unknown", "01 - Café 1.5.bin")]
+    public async Task Download_of_an_audio_stub_is_an_attachment_named_as_its_stub_with_the_extension_of_the_remote_file(StubKind kind, string? contentType, string name)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServesType(contentType);
+        var context = FileRequest("GetDownload");
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(kind)), context));
+
+        var headers = context.HttpContext.Response.Headers;
+        var disposition = Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(headers.ContentDisposition.ToString());
+        Assert.Equal("attachment", disposition.DispositionType.ToString());
+        Assert.Equal(name, disposition.FileNameStar.ToString());
+        Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
+        Assert.Equal(name.EndsWith(".bin", StringComparison.Ordinal) ? "application/octet-stream" : contentType, context.HttpContext.Response.ContentType);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    // No part of a title passes for the type of the file (row 542).
+    [Theory]
+    [InlineData("01 - Invoice.exe", "application/octet-stream", "01 - Invoice.exe.bin")]
+    [InlineData("01 - Invoice.exe", "application/x-msdownload", "01 - Invoice.exe.bin")]
+    [InlineData("01 - Invoice.exe", "audio/mpeg", "01 - Invoice.exe.mp3")]
+    [InlineData("01 - Song.mp3", null, "01 - Song.mp3.bin")]
+    public async Task The_title_of_an_audio_stub_never_gives_the_extension_of_its_download(string title, string? contentType, string name)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServesType(contentType);
+        var store = AudioStub(StubKind.Track);
+        _stubs.Setup(stubs => stubs.FindByPath(It.IsAny<string>())).Returns(_stub with { Kind = StubKind.Track, RelativePath = "server/library/Musica/Artist/Album/" + title + ".strm" });
+        var context = FileRequest("GetDownload");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+
+        Assert.Equal(name, Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(context.HttpContext.Response.Headers.ContentDisposition.ToString()).FileNameStar.ToString());
+    }
+
+    // Only a download is bytes: a player opens the file with the type the remote gives.
+    [Fact]
+    public async Task File_of_an_audio_stub_of_an_unlisted_type_keeps_its_audio_type()
+    {
+        CanSeeItem();
+        RemoteServesType("audio/unknown");
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(StubKind.Track)), context));
+
+        Assert.Equal("audio/unknown", context.HttpContext.Response.ContentType);
+    }
+
+    [Theory]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.AudioBook)]
+    public async Task File_of_an_audio_stub_is_not_sniffed_and_is_not_an_attachment(StubKind kind)
+    {
+        CanSeeItem();
+        RemoteServesType("audio/mpeg");
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(kind)), context));
+
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(context.HttpContext.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("audio/mpeg", context.HttpContext.Response.ContentType);
+    }
+
+    [Theory]
+    [InlineData("HEAD", null)]
+    [InlineData("GET", "bytes=0-4")]
+    public async Task Head_and_a_range_of_an_audio_download_carry_the_same_headers(string method, string? range)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServesType("audio/mpeg");
+        var context = FileRequest("GetDownload", range);
+        context.HttpContext.Request.Method = method;
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(StubKind.AudioBook)), context));
+
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.StartsWith("attachment", context.HttpContext.Response.Headers.ContentDisposition.ToString(), StringComparison.Ordinal);
+    }
+
+    // A static stream is the file itself, so it is not sniffed, and a player opens it without an attachment.
+    [Fact]
+    public async Task A_static_stream_of_an_audio_stub_is_not_sniffed_and_is_not_an_attachment()
+    {
+        CanSeeItem();
+        RemoteServesType("audio/mpeg");
+        var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(StubKind.Track)), context));
+
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(context.HttpContext.Response.Headers.ContentDisposition.ToString());
+    }
+
     [Fact]
     public async Task PlaybackInfo_of_a_visible_track_stub_comes_from_the_remote()
     {

@@ -178,6 +178,43 @@ public sealed class PluginDatabaseTests : IDisposable
         Assert.Empty(title.Artists);
     }
 
+    // A title kept before the types of its own reads with none of their data (row 532).
+    [Fact]
+    public async Task ATitleKeptBeforeTheTypesOfTheirOwnHasNoneOfTheirData()
+    {
+        using (var older = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Where(step => step.Version < SchemaMigrations.KeptTypesVersion).ToList(), 1))
+        {
+            await older.WriteAsync(
+                (connection, transaction) => Scalar(
+                    connection,
+                    "INSERT INTO kept_titles (old_item_id, kind, title, genres, studios, people, saved_utc) VALUES ('" + Guid.NewGuid().ToString("N") + "', 'MusicVideo', 'Song', '[]', '[]', '[]', 0);"
+                        + "INSERT INTO kept_user_states (title_id, user_id, played, play_count, playback_position_ticks, is_favorite) VALUES (1, '" + Guid.NewGuid().ToString("N") + "', 1, 1, 0, 0);",
+                    transaction),
+                CancellationToken.None);
+        }
+
+        var title = Assert.Single(await new KeptWatchStateStore(Open()).ReadAsync(CancellationToken.None));
+
+        Assert.Equal("Song", title.Title);
+        Assert.Equal((null, null, null), (title.Album, title.SeriesName, title.Place));
+        Assert.Empty(title.AlbumArtists);
+        Assert.Empty(title.ProviderIds);
+    }
+
+    // A build that does not know these kinds would fail to read their rows.
+    [Fact]
+    public void ABuildFromBeforeTheKeptTypesOfTheirOwnLeavesTheDatabaseAlone()
+    {
+        using (var current = new PluginDatabase(Folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1))
+        {
+            Assert.Equal(StoreState.Healthy, current.Health.State);
+        }
+
+        var older = Open(migrations: SchemaMigrations.All.Where(step => step.Version < SchemaMigrations.KeptTypesVersion).ToList());
+
+        Assert.Equal(StoreState.NewerSchema, older.Health.State);
+    }
+
     // The one file set aside as damaged, without its logs.
     private string SetAside() => Assert.Single(Directory.GetFiles(Folder, PluginDatabase.FileName + ".damaged-*"), file => !file.EndsWith("-wal", StringComparison.Ordinal));
 

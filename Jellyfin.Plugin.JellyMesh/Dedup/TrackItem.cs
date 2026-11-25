@@ -6,7 +6,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// <summary>
 /// A music track of a remote catalog, with what its identity and quality are read from (row 453).
 /// </summary>
-public sealed record TrackItem
+public sealed record TrackItem : IServerItem
 {
     /// <summary>Gets the plugin's ID for the server holding the track.</summary>
     public required string ServerId { get; init; }
@@ -31,6 +31,9 @@ public sealed record TrackItem
 
     /// <summary>Gets the track number, <c>IndexNumber</c>.</summary>
     public int? TrackNumber { get; init; }
+
+    /// <summary>Gets a value indicating whether this is the only file of an audiobook, whose number is not compared (row 535).</summary>
+    public bool IsOnlyFile { get; init; }
 
     /// <summary>Gets the duration.</summary>
     public long? RunTimeTicks { get; init; }

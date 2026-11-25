@@ -39,12 +39,14 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     // Every field, lists and users included, in a form records compare by value.
     private static string Describe(KeptTitle title) => string.Join(
         '\n',
-        (title with { Genres = [], Studios = [], People = [], Artists = [], Users = [], Copies = [] }).ToString(),
+        (title with { Genres = [], Studios = [], People = [], Artists = [], AlbumArtists = [], ProviderIds = new Dictionary<string, string>(), Users = [], Copies = [] }).ToString(),
         string.Join(',', title.Copies),
         string.Join(',', title.Genres),
         string.Join(',', title.Studios),
         string.Join(',', title.People),
         string.Join(',', title.Artists),
+        string.Join(',', title.AlbumArtists),
+        string.Join(',', title.ProviderIds.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key + "=" + pair.Value)),
         string.Join('\n', title.Users.OrderBy(user => user.UserId).Select(user => user + " " + user.LastPlayedUtc?.Ticks)));
 
     [Fact]
@@ -104,6 +106,40 @@ public sealed class KeptWatchStateStoreTests : IDisposable
 
         Assert.Equal(KeptTitleKind.MusicVideo, read.Kind);
         Assert.Equal(["Singer", "Guest"], read.Artists);
+    }
+
+    // Row 532: each kind of its own, with everything a rule of identity may read.
+    [Theory]
+    [InlineData(KeptTitleKind.Track)]
+    [InlineData(KeptTitleKind.AudioBook)]
+    [InlineData(KeptTitleKind.Book)]
+    [InlineData(KeptTitleKind.HomeVideo)]
+    public async Task ATitleOfATypeOfItsOwnComesBackWithItsData(KeptTitleKind kind)
+    {
+        var kept = new KeptTitle
+        {
+            OldItemId = Guid.NewGuid(),
+            Kind = kind,
+            Title = "Song",
+            Year = 2019,
+            RunTimeTicks = 1_800_000_000,
+            Artists = ["Singer", "Guest"],
+            AlbumArtists = ["Band \"One\"", "Band, Two"],
+            Album = "L'album",
+            SeriesName = "Saga",
+            ProviderIds = new Dictionary<string, string> { ["MusicBrainzRecording"] = "rec-1", ["ISBN"] = "978" },
+            Place = "Band/Album/01 - Song.strm",
+            IsOnlyFile = kind == KeptTitleKind.AudioBook,
+            SeasonNumber = 2,
+            EpisodeNumber = 3,
+            SavedUtc = _saved,
+            Users = [Watched(_anna)]
+        };
+
+        await Store().SaveAsync([kept], CancellationToken.None);
+        var read = Assert.Single(await Store().ReadAsync(CancellationToken.None));
+
+        Assert.Equal(Describe(kept with { Id = read.Id }), Describe(read));
     }
 
     [Fact]

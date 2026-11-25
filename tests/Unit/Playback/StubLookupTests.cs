@@ -285,4 +285,44 @@ public class StubLookupTests
         Assert.False(Lookup().IsPlaceholder(local.Id));
         Assert.Null(Lookup().Find(local.Id));
     }
+
+    // An audiobook part is an Audio item to Jellyfin, so it takes the audio routes of tracks (F56, F58).
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnAudiobookStrmIsAnAudioStubFoundForPlaybackAlsoThroughALink(bool linkedRoot)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-real-").FullName;
+        try
+        {
+            var real = Path.Combine(temp, "federata");
+            var book = Path.Combine(real, "S", "L", "Libri", "A", "B");
+            Directory.CreateDirectory(book);
+            File.WriteAllText(Path.Combine(book, "01 - X.strm"), "http://127.0.0.1/strm");
+            var alias = Path.Combine(temp, "alias");
+            Directory.CreateSymbolicLink(alias, real);
+            var outside = Path.Combine(temp, "books");
+            Directory.CreateDirectory(outside);
+            File.WriteAllText(Path.Combine(outside, "X.strm"), "http://books.example/x");
+
+            _store.Configuration.FederatedFolderPath = linkedRoot ? alias : real;
+            var stub = new StubEntry { Id = "part", Kind = StubKind.AudioBook, IdentityKey = "AudioBook|item:s:b", Sources = [], RelativePath = "S/L/Libri/A/B/01 - X.strm" };
+            var part = new AudioBook { Id = Guid.NewGuid(), Path = Path.Combine(linkedRoot ? real : alias, "S", "L", "Libri", "A", "B", "01 - X.strm") };
+            var local = new AudioBook { Id = Guid.NewGuid(), Path = Path.Combine(outside, "X.strm") };
+            _library.Setup(library => library.GetItemById(part.Id)).Returns(part);
+            _library.Setup(library => library.GetItemById(local.Id)).Returns(local);
+            var underRoot = Path.Combine(_store.Configuration.FederatedFolderPath, "S", "L", "Libri", "A", "B", "01 - X.strm");
+            _stubs.Setup(stubs => stubs.FindByPath(underRoot)).Returns(stub);
+
+            Assert.True(Lookup().IsAudioStub(part.Id));
+            Assert.True(Lookup().IsStub(part.Id));
+            Assert.Same(stub, Lookup().ResolvePlayable(part.Id, out _));
+            Assert.False(Lookup().IsAudioStub(local.Id));
+            Assert.Null(Lookup().ResolvePlayable(local.Id, out _));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
 }

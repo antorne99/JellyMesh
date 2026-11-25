@@ -24,5 +24,8 @@ public enum StubKind
     Book,
 
     /// <summary>A photo: a 1x1 placeholder image with the real extension, among the home videos (D7, D45).</summary>
-    Photo
+    Photo,
+
+    /// <summary>One file of an audiobook, a <c>.strm</c> with no <c>.nfo</c>.</summary>
+    AudioBook
 }

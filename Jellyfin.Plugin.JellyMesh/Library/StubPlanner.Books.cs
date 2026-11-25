@@ -9,14 +9,14 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The book part of the plan: one placeholder per remote ebook, PDF or comic and local library, with no dedup (927-Q7).
+/// The book part of the plan: one placeholder per remote ebook, PDF or comic and one <c>.strm</c> per audiobook part, for each
+/// local library, with no dedup (927-Q7).
 /// </summary>
 public static partial class StubPlanner
 {
     // Plans the books of one server from its index: a stub stays while its item, file format and local library do.
-    private static List<StubWork> BookWorks(StubPlanInput input, Guid serverId, List<StubEntry> own, bool legacy, HashSet<string> claimed, HashSet<string> unplaceable)
+    private static List<StubWork> BookWorks(StubPlanInput input, Guid serverId, List<StubEntry> stubs, PathAllocator paths, bool legacy, HashSet<string> claimed, HashSet<string> unplaceable)
     {
-        var stubs = own.Where(stub => stub.Kind == StubKind.Book).ToList();
         if (legacy)
         {
             // Books came after the remote library layout: in an older one the existing are kept as they are.
@@ -30,7 +30,6 @@ public static partial class StubPlanner
         }
 
         string? KeyOf(string path) => FederatedPaths.RemoteLibraryOf(path) is { } library ? input.PlacementOf(serverId, library, TypeFolder.Books) : null;
-        var paths = new PathAllocator(stubs, [], input.IgnoreRules);
         var byItem = stubs.SelectMany(stub => stub.Sources.Select(source => (source.ItemId, Stub: stub))).ToLookup(pair => pair.ItemId, pair => pair.Stub, StringComparer.Ordinal);
         var works = new List<StubWork>();
         foreach (var book in catalog.Items.Where(item => item.Kind == IndexedItemKind.Book && item.Extension is not null).OrderBy(item => item.ItemId, StringComparer.Ordinal))
@@ -58,6 +57,15 @@ public static partial class StubPlanner
             }
         }
 
+        return works;
+    }
+
+    // Plans the audiobooks of one server from its index, as tracks: their stubs too are kept in an older layout. Their author
+    // folders share the names of the books, because the folder of a book goes whole with it.
+    private static List<StubWork> AudioBookWorks(StubPlanInput input, IndexItemLookup catalog, Guid serverId, List<StubEntry> stubs, PathAllocator paths, bool legacy, HashSet<string> claimed)
+    {
+        var works = legacy ? [] : TrackStubPlanner.Plan(input, catalog, serverId, StubKind.AudioBook, stubs, paths.AuthorFolder);
+        claimed.UnionWith(legacy ? stubs.Select(stub => stub.Id) : works.Select(work => work.Entry.Id));
         return works;
     }
 
