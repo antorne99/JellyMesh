@@ -179,7 +179,7 @@ public class ServerStubPlannerTests
         return process.TotalProcessorTime - before;
     }
 
-    // Planning 8000 series takes under 30 times the least processor time of 1000 (measured 9 to 15, and 60 to 160 when
+    // Planning 8000 series takes under 30 times the least processor time of 1000 (measured 9 to 12, and 44 to 60 when
     // each series reads every content as before c1934e3).
     [Fact]
     public void PlanningEightTimesTheSeriesTakesAboutEightTimesAsLong()
