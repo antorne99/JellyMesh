@@ -310,11 +310,12 @@ public class PlaybackCoordinatorTests
         var fixture = new CoordinatorFixture();
         var leaving = PlaybackValues.Source("leaving");
         var request = new RemoteStreamRequest(HttpMethod.Get, "/Videos/leaving/stream", null);
+        var session = new PlaybackSession(PlaybackValues.Identity(), leaving, null, PlaybackStreamKind.Hls, "/master.m3u8", fixture.Clock.GetUtcNow());
 
         await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
 
         Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.OpenAsync(leaving.ServerId, request, CancellationToken.None)).Failure);
-        Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.ReadPlaylistAsync(leaving.ServerId, "/master.m3u8", CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.ReadPlaylistAsync(session, "/master.m3u8", CancellationToken.None)).Failure);
         Assert.NotEqual(PlaybackOutcomeKind.Remote, (await fixture.OpenAsync(PlaybackValues.Stub(leaving))).Kind);
         Assert.Empty(fixture.Client.Opened);
         Assert.Empty(fixture.Client.Requests);
@@ -1183,7 +1184,7 @@ public class PlaybackCoordinatorTests
     {
         var logger = new CapturingLogger<PlaybackCoordinator>();
         var fixture = new CoordinatorFixture();
-        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.LastServed, fixture.Clock, fixture.Database.Object, logger);
+        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.LastServed, fixture.Clock, fixture.Database.Object, logger, fixture.Hasher);
         fixture.Client.Policy = new RemoteTranscodePolicy("qsv\r\nforged line", true, true, true);
         var stub = PlaybackValues.Stub(PlaybackValues.Source());
 

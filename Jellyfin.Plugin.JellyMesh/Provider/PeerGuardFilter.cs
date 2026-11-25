@@ -7,6 +7,7 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common;
+using MediaBrowser.Controller.Entities.Audio;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -29,6 +30,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private const string LiveStreamParameter = "liveStreamId";
     private const string VersionParameter = "mediaSourceId";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
+    private const string StreamDevice = "JellyMesh.StreamDevice";
 
     private static readonly string[] _itemRouteValues = ["itemId", "routeItemId"];
     private static readonly string[] _versionRouteValues = [VersionParameter, "routeMediaSourceId"];
@@ -81,6 +83,30 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         ArgumentNullException.ThrowIfNull(context);
 
         context.Items[ConfirmedPlaySession] = playSessionId;
+    }
+
+    /// <summary>
+    /// Notes the device a <c>PlaybackInfo</c> of audio names, for the filter that takes its slot.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <param name="device">The device, null if it names none.</param>
+    public static void NoteDevice(HttpContext context, string? device)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        context.Items[StreamDevice] = device;
+    }
+
+    /// <summary>
+    /// Reads the device noted on a <c>PlaybackInfo</c>.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <returns>The device, null if none was noted.</returns>
+    public static string? NotedDevice(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        return context.Items[StreamDevice] as string;
     }
 
     /// <inheritdoc />
@@ -140,8 +166,10 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
+        var device = item is Audio ? DeviceOf(http) : null;
         if (kind == PeerRouteKind.PlaybackInfo)
         {
+            NoteDevice(http, device);
             await PlaybackInfoAsync(caller, context, next).ConfigureAwait(false);
             return;
         }
@@ -170,7 +198,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        using var request = await EnterAsync(caller, hasSession ? playSession : null, itemId, http).ConfigureAwait(false);
+        using var request = await EnterAsync(caller, hasSession ? playSession : null, itemId, device, http).ConfigureAwait(false);
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);
@@ -194,16 +222,23 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     }
 
     // Takes a slot for a stream. At the limit it first closes what waits to be closed, whose slot that frees, and tries once more.
-    private async Task<StreamRequest?> EnterAsync(PeerCaller caller, string? playSession, Guid itemId, HttpContext http)
+    private async Task<StreamRequest?> EnterAsync(PeerCaller caller, string? playSession, Guid itemId, string? device, HttpContext http)
     {
         var grant = caller.Grant;
-        if (_slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort) is { } request)
+        if (_slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort, device) is { } request)
         {
             return request;
         }
 
         await _closer.CloseAbandonedAsync().ConfigureAwait(false);
-        return _slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort);
+        return _slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort, device);
+    }
+
+    // The device a stream of audio names. Anything but one hash counts as none, and the stream then counts on its own.
+    private static string? DeviceOf(HttpContext http)
+    {
+        var values = http.Request.Headers[ProviderProtocol.DeviceHeader];
+        return values is [{ Length: ProviderProtocol.DeviceLength } device] && device.All(char.IsAsciiHexDigitLower) ? device : null;
     }
 
     // One answer for all of them, the same for a play session that exists and one that does not. The joined values of a

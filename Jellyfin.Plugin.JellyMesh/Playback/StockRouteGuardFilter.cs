@@ -113,6 +113,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly StreamSlots _peerSlots;
     private readonly Func<string, IReadOnlyList<string>> _listFolder;
     private readonly AudioStubRoutes _audio;
+    private readonly PlaybackVersions _versions;
     private readonly ILogger<StockRouteGuardFilter> _logger;
     private readonly ErrorLogLimits _errorLogs;
 
@@ -127,6 +128,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="transcodes">The transcode manager.</param>
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
     /// <param name="audio">The audio routes of track stubs.</param>
+    /// <param name="versions">The versions of a title, for the copies of a track.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
     public StockRouteGuardFilter(
@@ -138,9 +140,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
         AudioStubRoutes audio,
+        PlaybackVersions versions,
         ILogger<StockRouteGuardFilter> logger,
         ErrorLogLimits? errorLogs = null)
-        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, audio, ListFolder, logger, errorLogs)
+        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, audio, versions, ListFolder, logger, errorLogs)
     {
     }
 
@@ -154,6 +157,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
         AudioStubRoutes audio,
+        PlaybackVersions versions,
         Func<string, IReadOnlyList<string>> listFolder,
         ILogger<StockRouteGuardFilter>? logger = null,
         ErrorLogLimits? errorLogs = null)
@@ -169,6 +173,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         _peerSlots = peerSlots;
         _listFolder = listFolder;
         _audio = audio;
+        _versions = versions;
     }
 
     /// <summary>
@@ -446,7 +451,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
-        using var read = await _coordinator.TryBeginFileReadAsync(authorization.User!.Id).ConfigureAwait(false);
+        var user = authorization.User!;
+        using var read = await _coordinator.TryBeginFileReadAsync(user.Id).ConfigureAwait(false);
         if (read is null)
         {
             _logger.LogInformation("{Action} of stub {StubId}: the user has {Count} sessions and file reads running, the most allowed: 503", action, stub.Id, PlaybackLimits.SessionsPerUser);
@@ -456,7 +462,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var http = context.HttpContext;
         var method = HttpMethods.IsHead(http.Request.Method) ? HttpMethod.Head : HttpMethod.Get;
         var range = http.Request.Headers.Range.ToString();
-        using var opened = await _coordinator.OpenFileAsync(stub, method, string.IsNullOrEmpty(range) ? null : range, http.RequestAborted).ConfigureAwait(false);
+        var asked = string.IsNullOrEmpty(range) ? null : range;
+
+        // A track falls back to its copies the user sees (row 457); a video stub stays on its server (D22).
+        using var opened = stub.Kind == StubKind.Track
+            ? await _coordinator.OpenTrackFileAsync(user.Id, authorization.DeviceId ?? string.Empty, stub, _versions.Fallbacks(itemId, stub, user).Select(copy => copy.Stub).ToList(), method, asked, http.RequestAborted).ConfigureAwait(false)
+            : await _coordinator.OpenFileAsync(stub, method, asked, http.RequestAborted).ConfigureAwait(false);
         if (opened is null)
         {
             _logger.LogWarning("{Action} of stub {StubId}: no source opened its file", action, stub.Id);
@@ -515,17 +526,28 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     // go through a session, anything else is a bare 503.
     private async Task<IActionResult> AudioStubResultAsync(ActionExecutingContext context, AuthorizationInfo authorization, List<Guid> tracks)
     {
-        if (tracks is not [var track] || StubLookup.ItemIdOf(context) != track || _stubs.FindFile(track) is not { } stub || string.IsNullOrEmpty(authorization.Token))
+        var user = authorization.User!;
+
+        // The route names the track, and may name one of its copies as the version, after a fallback (row 457).
+        var route = StubLookup.ItemIdOf(context);
+        var track = tracks switch
+        {
+            [var only] when only == route => only,
+            [_, _] when route is { } item && tracks.Contains(item) && tracks.First(id => id != item) is var copy && _versions.IsVersionOf(item, copy) => copy,
+            _ => (Guid?)null
+        };
+        if (track is not { } served || _stubs.FindFile(served) is not { } stub || string.IsNullOrEmpty(authorization.Token))
         {
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
         if (StubLookup.ActionOf(context).Controller == "Audio" && context.ActionArguments.TryGetValue("static", out var isStatic) && isStatic is true)
         {
-            return await FileResultAsync(context, authorization, track).ConfigureAwait(false);
+            return await FileResultAsync(context, authorization, served).ConfigureAwait(false);
         }
 
-        return await _audio.ServeAsync(context, new AudioAccess(authorization.User!.Id, authorization.DeviceId ?? string.Empty, authorization.Token, track), stub).ConfigureAwait(false);
+        var access = new AudioAccess(user.Id, authorization.DeviceId ?? string.Empty, authorization.Token, served);
+        return await _audio.ServeAsync(context, access, stub, _versions.Fallbacks(served, stub, user)).ConfigureAwait(false);
     }
 
     // A 503, with a text for a book or photo placeholder, whose readers show it.
@@ -637,7 +659,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
     }
 
-    // Q54: when an item the action names has linked versions, its user must see every item it names. A Playstate report
+    // Q54: when an item the action names has linked versions or track copies, its user must see every item it names. A Playstate report
     // gets 204 without effect, as for the play session of another user (D8). Null when the action goes on.
     private async Task<IActionResult?> VersionRefusalAsync(ActionExecutingContext context, string controller, string action, IReadOnlyList<string> sessions)
     {
@@ -653,7 +675,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             named.AddRange(sessions.Select(_sessions.LocalItemOf).OfType<Guid>());
         }
 
-        if (!named.Exists(_stubs.HasVersions))
+        // The copies of a track count as its versions (row 66).
+        if (!named.Exists(id => _stubs.HasVersions(id) || _versions.HasCopies(id)))
         {
             return null;
         }

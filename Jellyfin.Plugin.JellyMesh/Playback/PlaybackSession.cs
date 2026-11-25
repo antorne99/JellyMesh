@@ -84,6 +84,9 @@ public sealed partial class PlaybackSession
     /// <summary>Gets when the session was opened.</summary>
     public DateTimeOffset Opened { get; }
 
+    /// <summary>Gets the hash of the device a track plays on, null unless the remote is a JellyMesh server.</summary>
+    public string? RemoteDevice { get; init; }
+
     /// <summary>Gets the time of the last request.</summary>
     public DateTimeOffset LastRequest => new(Interlocked.Read(ref _lastRequestTicks), TimeSpan.Zero);
 

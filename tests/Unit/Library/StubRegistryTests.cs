@@ -460,6 +460,27 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Null(registry.FindGroupOfLocal(Guid.NewGuid()));
     }
 
+    // The copies of a track are the track stubs with its dedup key (row 457, D65); other kinds never count.
+    [Fact]
+    public async Task TheCopiesOfATrackAreTheTrackStubsWithItsKey()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState
+        {
+            Stubs =
+            [
+                Entry("a", "x/Musica/A/a.strm") with { Kind = StubKind.Track, IdentityKey = "Track|mbr:1" },
+                Entry("b", "y/Musica/A/b.strm") with { Kind = StubKind.Track, IdentityKey = "Track|mbr:1" },
+                Entry("c", "y/Musica/A/c.strm") with { Kind = StubKind.Track, IdentityKey = "Track|mbr:2" },
+                Entry("d", "y/Film/D/d.strm") with { IdentityKey = "Track|mbr:1" }
+            ]
+        });
+
+        Assert.Equal(["a", "b"], registry.FindCopies("Track|mbr:1").Select(stub => stub.Id).Order(StringComparer.Ordinal));
+        Assert.Empty(registry.FindCopies("Track|mbr:3"));
+        Assert.Empty(registry.FindCopies(string.Empty));
+    }
+
     [Fact]
     public async Task AStubListedInTwoGroupsDoesNotBreakTheRegistry()
     {

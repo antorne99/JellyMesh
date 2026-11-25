@@ -218,6 +218,33 @@ public class PlaybackFallbackTests
         Assert.Single(_fixture.Client.Opened);
     }
 
+    // The file an access goes on in, from the middle of it: the track's own, or the copy that took over.
+    private async Task<string?> TrackFileOpenedAsync(Guid user, string device, string range)
+    {
+        _fixture.Client.Opened.Clear();
+        using var content = await _fixture.Coordinator.OpenTrackFileAsync(user, device, _a, [_b], HttpMethod.Get, range, CancellationToken.None);
+        return content is null ? null : _fixture.Client.Opened.Last();
+    }
+
+    [Fact]
+    public async Task A_user_naming_many_devices_pushes_out_only_their_own_remembered_copies()
+    {
+        _fixture.Registry.Offline.Add(_serverA);
+        await TrackFileOpenedAsync(_otherUser, "theirs", "bytes=0-");
+        await TrackFileOpenedAsync(_user, "oldest", "bytes=0-");
+        for (var index = 0; index < PlaybackLimits.FileCopiesPerUser; index++)
+        {
+            _fixture.Clock.Advance(TimeSpan.FromMilliseconds(1));
+            await TrackFileOpenedAsync(_user, "device" + index, "bytes=0-");
+        }
+
+        _fixture.Registry.Offline.Clear();
+
+        Assert.StartsWith("/Videos/a1/", await TrackFileOpenedAsync(_user, "oldest", "bytes=500-"), StringComparison.Ordinal);
+        Assert.StartsWith("/Videos/b1/", await TrackFileOpenedAsync(_user, "device0", "bytes=500-"), StringComparison.Ordinal);
+        Assert.StartsWith("/Videos/b1/", await TrackFileOpenedAsync(_otherUser, "theirs", "bytes=500-"), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_chosen_source_is_forgotten_after_the_session_retention()
     {

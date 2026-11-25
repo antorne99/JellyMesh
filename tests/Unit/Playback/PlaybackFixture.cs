@@ -191,6 +191,9 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
 
     public List<string> Opened { get; } = [];
 
+    /// <summary>Gets the device each playlist and stream named, in order.</summary>
+    public List<string?> Devices { get; } = [];
+
     public List<string> Stopped { get; } = [];
 
     public Func<RemotePlaybackRequest, CancellationToken, Task<RemoteResult<PlaybackInfoResponse>>> Answer { get; set; } = (request, _) => Task.FromResult(Hls(request));
@@ -242,8 +245,9 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return Task.FromResult(RemoteResult.Success(Policy));
     }
 
-    public Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken)
+    public Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, string? device, CancellationToken cancellationToken)
     {
+        Devices.Add(device);
         var failure = Playlists(path);
         if (failure != RemoteFailure.None)
         {
@@ -256,6 +260,7 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     public Task<RemoteResult<RemoteContent>> OpenStreamAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
         Opened.Add(request.Path);
+        Devices.Add(request.Device);
         return Open(request, cancellationToken);
     }
 
@@ -333,8 +338,10 @@ internal sealed class CoordinatorFixture
     {
         LastServed = lastServed ?? new InMemoryLastServedStore();
         Database.Setup(database => database.Health).Returns(() => Health);
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, Database.Object, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, Database.Object, logger ?? NullLogger<PlaybackCoordinator>.Instance, Hasher, Transcodes.Object);
     }
+
+    public DeviceHasher Hasher { get; } = new(new byte[32]);
 
     public Mock<ITranscodeManager> Transcodes { get; } = new();
 

@@ -31,6 +31,26 @@ public static class StubRanking
     /// <param name="lookup">The items of the index.</param>
     /// <returns>The stubs, best first.</returns>
     public static IReadOnlyList<string> Order(IReadOnlyList<string> stubIds, Func<string, StubEntry?> find, IndexItemLookup lookup)
+        => Order(stubIds, find, lookup, CatalogItemMapper.QualityOf, new SourceQuality(null, false, null, null) { IsRangeKnown = false }, QualityRanking.Rank);
+
+    /// <summary>
+    /// Ranks track stubs best first by their audio quality (row 453). A stub the index does not know ranks as one of
+    /// unknown quality.
+    /// </summary>
+    /// <param name="stubIds">The stubs, at least one.</param>
+    /// <param name="find">Finds a stub in the registry.</param>
+    /// <param name="lookup">The items of the index.</param>
+    /// <returns>The stubs, best first.</returns>
+    public static IReadOnlyList<string> OrderTracks(IReadOnlyList<string> stubIds, Func<string, StubEntry?> find, IndexItemLookup lookup)
+        => Order(stubIds, find, lookup, CatalogItemMapper.AudioQualityOf, SourceQuality.Audio(null, null, null, null), QualityRanking.RankAudio);
+
+    private static IReadOnlyList<string> Order(
+        IReadOnlyList<string> stubIds,
+        Func<string, StubEntry?> find,
+        IndexItemLookup lookup,
+        Func<IndexedVersion, SourceQuality> qualityOf,
+        SourceQuality unknown,
+        Func<IEnumerable<RemoteSource>, IReadOnlyList<RemoteSource>> rank)
     {
         ArgumentNullException.ThrowIfNull(stubIds);
         ArgumentNullException.ThrowIfNull(find);
@@ -43,13 +63,13 @@ public static class StubRanking
             var version = source is null
                 ? null
                 : lookup.Find(source.ServerId, source.ItemId)?.Versions.FirstOrDefault(v => string.Equals(v.MediaSourceId, source.MediaSourceId, StringComparison.Ordinal));
-            var quality = version is null ? new SourceQuality(null, false, null, null) { IsRangeKnown = false } : CatalogItemMapper.QualityOf(version);
+            var quality = version is null ? unknown : qualityOf(version);
 
             // The stub ID stands for the item, so that two stubs never count as one source.
             byStub.Add((stubId, new RemoteSource(source?.ServerId.ToString("N") ?? string.Empty, stubId, source?.MediaSourceId ?? string.Empty, quality)));
         }
 
-        return QualityRanking.Rank(byStub.Select(entry => entry.Source))
+        return rank(byStub.Select(entry => entry.Source))
             .Select(ranked => byStub.First(entry => entry.Source == ranked).StubId)
             .ToList();
     }

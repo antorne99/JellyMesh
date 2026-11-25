@@ -74,7 +74,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 
         var peerId = caller.Grant.UserId;
         var replaces = http.Request.Headers[ProviderProtocol.ReplacesHeader].ToString();
-        var reservation = await ReserveAsync(peerId, caller.Grant.MaxStreams, string.IsNullOrEmpty(replaces) ? null : replaces).ConfigureAwait(false);
+        var reservation = await ReserveAsync(peerId, caller.Grant.MaxStreams, string.IsNullOrEmpty(replaces) ? null : replaces, PeerGuardFilter.NotedDevice(http)).ConfigureAwait(false);
         if (reservation is null)
         {
             context.Result = PeerGuardFilter.RefuseOverLimit(http);
@@ -108,15 +108,15 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
     }
 
     // Holds a slot. At the limit it first closes what waits to be closed, whose slot that frees, and tries once more.
-    private async Task<string?> ReserveAsync(Guid peerId, int limit, string? replaces)
+    private async Task<string?> ReserveAsync(Guid peerId, int limit, string? replaces, string? device)
     {
-        if (_slots.TryReserve(peerId, limit, replaces) is { } reservation)
+        if (_slots.TryReserve(peerId, limit, replaces, device) is { } reservation)
         {
             return reservation;
         }
 
         await _closer.CloseAbandonedAsync().ConfigureAwait(false);
-        return _slots.TryReserve(peerId, limit, replaces);
+        return _slots.TryReserve(peerId, limit, replaces, device);
     }
 
     // Keeps the versions of an answer that the peer may see. An answer left with none is the one for a missing item.

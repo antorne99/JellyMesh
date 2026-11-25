@@ -212,7 +212,7 @@ public partial class PlaybackFiltersTests
         _fixture.Damage();
 
         var segment = await _fixture.Coordinator.OpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, "/videos/x/0.ts", null), CancellationToken.None);
-        var playlist = await _fixture.Coordinator.ReadPlaylistAsync(session.Source.ServerId, "/videos/x/main.m3u8", CancellationToken.None);
+        var playlist = await _fixture.Coordinator.ReadPlaylistAsync(session, "/videos/x/main.m3u8", CancellationToken.None);
         await _fixture.Coordinator.CloseReportedAsync(session.Id, [_user.Id]);
 
         Assert.True(segment.IsSuccess);

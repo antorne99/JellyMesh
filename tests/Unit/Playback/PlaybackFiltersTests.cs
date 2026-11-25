@@ -102,7 +102,7 @@ public partial class PlaybackFiltersTests
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
-            new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, TrackIndex(), store),
             _offer,
             _infoLog,
             _errorLogs);
@@ -117,8 +117,10 @@ public partial class PlaybackFiltersTests
 
     private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null, InMemoryConfigurationStore? store = null)
     {
+        store ??= new InMemoryConfigurationStore();
+        var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         return new StockRouteGuardFilter(
-            new StubLookup(_library.Object, _stubs.Object, store ?? new InMemoryConfigurationStore()),
+            lookup,
             _authorization.Object,
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,
@@ -126,6 +128,7 @@ public partial class PlaybackFiltersTests
             _transcodes.Object,
             _peerSlots,
             new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, NullLogger<AudioStubRoutes>.Instance),
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, TrackIndex(), store),
             listFolder ?? StockRouteGuardFilter.ListFolder,
             _guardLog,
             _errorLogs);
