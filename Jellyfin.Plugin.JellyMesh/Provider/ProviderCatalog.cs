@@ -262,6 +262,11 @@ public sealed class ProviderCatalog
         var fits = excluded.Length + collections.Count <= MaxIdsPerQuery;
         var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, fits ? excluded : [], startIndex, limit);
         query.ItemIds = fits ? [.. collections.Keys] : [.. collections.Keys.Except(excluded)];
+        if (query.ItemIds.Length == 0)
+        {
+            return new ProviderCollectionsResponse([], 0);
+        }
+
         var page = _library.GetItemsResult(query);
         var entries = WithoutHidden(caller, libraryId, scope, BaseItemKind.Movie, page.Items)
             .Where(item => collections.ContainsKey(item.Id))

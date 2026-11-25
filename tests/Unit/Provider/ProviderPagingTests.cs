@@ -464,6 +464,26 @@ public sealed class ProviderPagingTests : IDisposable
         Assert.Equal(1, page.TotalRecordCount);
     }
 
+    [Fact]
+    public void A_page_of_collections_of_only_stubs_past_one_query_of_items_left_out_is_empty()
+    {
+        const string Root = "/media/nuova";
+        _provider.Store.Configuration.FederatedFolderPath = Root;
+        WithLocations("/media");
+        _folders[_provider.WithFolder(Root).Id] = Root;
+        var stubs = Enumerable.Range(0, ProviderCatalog.MaxIdsPerQuery).Select(i => Add(Root + "/Film/" + i + "/" + i + " - Server.strm")).ToList();
+        Add(Real + "/A.mkv");
+        _provider.Library.Setup(manager => manager.GetItemList(It.Is<InternalItemsQuery>(query => query.IncludeItemTypes.Contains(BaseItemKind.BoxSet)))).Returns(
+        [
+            new BoxSet { Name = "Saga", LinkedChildren = [new LinkedChild { ItemId = stubs[0].Id }, new LinkedChild { ItemId = stubs[1].Id }] }
+        ]);
+
+        var page = _provider.Catalog.ReadCollections(_provider.PeerCaller, ProviderFixture.SharedLibrary, 0, 10);
+
+        Assert.Empty(page.Items);
+        Assert.Equal(0, page.TotalRecordCount);
+    }
+
     private ProviderItemsResponse ReadPage() =>
         _provider.Catalog.ReadLibrary(_provider.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, RemoteCatalogReader.PageSize);
 
