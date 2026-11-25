@@ -897,6 +897,23 @@ public class PlaybackCoordinatorTests
         Assert.Contains("/Videos/backup/stream?static=true", Assert.Single(fixture.Client.Opened), StringComparison.Ordinal);
     }
 
+    // Row 515: a placeholder is read through File, which asks the remote user for no download permission, never Download.
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("HEAD")]
+    public async Task A_placeholder_is_read_through_File_on_each_remote_and_never_through_Download(string method)
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source("winner"), PlaybackValues.Source("backup")) with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965).epub" };
+        var answers = new Queue<RemoteResult<RemoteContent>>([RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError), FakePlaybackClient.Bytes()]);
+        fixture.Client.Open = (_, _) => Task.FromResult(answers.Dequeue());
+
+        using var content = await fixture.Coordinator.OpenFileAsync(stub, new HttpMethod(method), "bytes=0-", CancellationToken.None);
+
+        Assert.NotNull(content);
+        Assert.Equal(["/Items/winner/File", "/Items/backup/File"], fixture.Client.Opened);
+    }
+
     [Fact]
     public void Subtitles_of_a_local_transcode_go_to_the_remote_of_the_file()
     {
