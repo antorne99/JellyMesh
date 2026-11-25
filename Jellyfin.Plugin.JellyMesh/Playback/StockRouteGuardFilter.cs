@@ -104,7 +104,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         new("UniversalAudio", null, StubCover.Audio, StubAccess.Visible, (filter, context, authorization, stubs) => filter.AudioStubResultAsync(context, authorization, stubs))
     ];
 
-    // The extensions a downloaded audio stub gets, by the media type of the remote file (row 532).
+    // The extensions a downloaded audio stub gets, by the media type of the remote file (rows 532 and 561).
     private static readonly Dictionary<string, string> _audioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ["audio/mpeg"] = ".mp3",
@@ -127,6 +127,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ["audio/webm"] = ".webm",
         ["audio/x-matroska"] = ".mka",
         ["audio/x-ms-wma"] = ".wma",
+        ["video/x-matroska"] = ".mka",
+        ["video/x-ms-asf"] = ".wma",
         ["audio/aiff"] = ".aiff",
         ["audio/x-aiff"] = ".aiff",
         ["audio/ape"] = ".ape",
