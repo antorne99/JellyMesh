@@ -36,6 +36,7 @@ public sealed class AudioStubRoutes
     private readonly PlaybackRefusal _refusal;
     private readonly TimeProvider _clock;
     private readonly SessionRelay _relay;
+    private readonly ILogger<AudioStubRoutes> _logger;
     private readonly SemaphoreSlim[] _locks = Enumerable.Range(0, LockCount).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
     private readonly ConcurrentDictionary<string, string> _opened = new(StringComparer.Ordinal);
 
@@ -54,6 +55,7 @@ public sealed class AudioStubRoutes
         _sessions = sessions;
         _refusal = refusal;
         _clock = clock;
+        _logger = logger;
         _relay = new SessionRelay(coordinator, refusal, clock, logger, errorLogs);
     }
 
@@ -85,6 +87,7 @@ public sealed class AudioStubRoutes
         var route = RouteOf(controller, action);
         if (route == AudioRoute.None)
         {
+            _logger.LogDebug("{Controller}.{Action} of track stub {StubId} is not an audio route JellyMesh serves: 503", controller, action, stub.Id);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -106,6 +109,7 @@ public sealed class AudioStubRoutes
         using var scope = session.TryBeginRequest(_clock, http.RequestAborted);
         if (scope is null)
         {
+            _logger.LogWarning("Play session {PlaySessionId} already has {Count} requests running: one more is refused with 503", session.Id, PlaybackLimits.RequestsPerSession);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -120,7 +124,7 @@ public sealed class AudioStubRoutes
             (AudioRoute.Universal or AudioRoute.Stream, PlaybackStreamKind.Progressive) when head => new FileContentResult([], AudioTypeOf(session.UpstreamPath)),
             (AudioRoute.Universal or AudioRoute.Stream, PlaybackStreamKind.Direct or PlaybackStreamKind.Progressive)
                 => await _relay.StreamAsync(http, session, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false),
-            _ => new StatusCodeResult(StatusCodes.Status503ServiceUnavailable)
+            _ => Mismatch(route, session)
         };
     }
 
@@ -140,6 +144,7 @@ public sealed class AudioStubRoutes
         var read = await _coordinator.ReadLyricsAsync(stub, http.RequestAborted).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
+            _logger.LogWarning("The lyrics of track stub {StubId} could not be read: {Failure}", stub.Id, read.Failure);
             var offline = read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.UnknownServer or RemoteFailure.Suspended;
             return _refusal.Refuse(http, deviceId, offline ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
         }
@@ -315,11 +320,17 @@ public sealed class AudioStubRoutes
     private async Task<IActionResult> VariantAsync(HttpContext http, PlaybackSession session, string prefix, string token)
     {
         var master = await _coordinator.ReadPlaylistAsync(session, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false);
-        if (!master.IsSuccess
-            || HlsMaster.ReadVariants(master.Value!) is not [var variant, ..]
+        if (!master.IsSuccess)
+        {
+            _logger.LogWarning("The master playlist of play session {PlaySessionId} could not be read for its variant: {Failure}: 502", session.Id, master.Failure);
+            return new StatusCodeResult(StatusCodes.Status502BadGateway);
+        }
+
+        if (HlsMaster.ReadVariants(master.Value!) is not [var variant, ..]
             || variant.Uri.StartsWith('/')
             || variant.Uri.Contains("://", StringComparison.Ordinal))
         {
+            _logger.LogWarning("The master playlist of play session {PlaySessionId} names no variant in its own folder: 502", session.Id);
             return new StatusCodeResult(StatusCodes.Status502BadGateway);
         }
 
@@ -332,6 +343,7 @@ public sealed class AudioStubRoutes
         var gate = _locks[(int)((uint)StringComparer.Ordinal.GetHashCode(fingerprint) % LockCount)];
         if (!await gate.WaitAsync(_lockWait, cancellationToken).ConfigureAwait(false))
         {
+            _logger.LogWarning("Track stub {StubId} waited {Seconds} s for another opening of the same request: 503", request.Stub.Id, _lockWait.TotalSeconds);
             return (null, PlaybackRefusal.FailedText);
         }
 
@@ -355,6 +367,11 @@ public sealed class AudioStubRoutes
             if (outcome.Kind != PlaybackOutcomeKind.Remote || _sessions.Find(outcome.Response?.PlaySessionId) is not { } session)
             {
                 // No local audio transcode: the end of the chain is a clear error.
+                if (outcome.Kind == PlaybackOutcomeKind.LocalTranscode)
+                {
+                    _logger.LogWarning("No remote serves track stub {StubId}, and audio has no local transcode: 503", request.Stub.Id);
+                }
+
                 return (null, outcome.Kind == PlaybackOutcomeKind.LocalTranscode ? PlaybackRefusal.FailedText : PlaybackRefusal.TextOf(outcome));
             }
 
@@ -365,6 +382,13 @@ public sealed class AudioStubRoutes
         {
             gate.Release();
         }
+    }
+
+    // A route whose session holds a stream of another kind, as a master playlist asked of a file.
+    private StatusCodeResult Mismatch(AudioRoute route, PlaybackSession session)
+    {
+        _logger.LogDebug("{Route} of play session {PlaySessionId} does not fit its {Kind} stream: 503", route, session.Id, session.Kind);
+        return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
     }
 
     private static bool IsVersionOf(PlaybackIdentity identity, PlaybackOpenRequest request)

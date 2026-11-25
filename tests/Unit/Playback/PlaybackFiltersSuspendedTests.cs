@@ -141,6 +141,7 @@ public partial class PlaybackFiltersTests
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
         Assert.Empty(_fixture.Client.LyricsAsked);
+        Assert.Contains(_audioLog.Lines, line => line.Contains("could not be read: Suspended", StringComparison.Ordinal));
     }
 
     [Fact]

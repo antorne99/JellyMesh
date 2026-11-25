@@ -55,6 +55,7 @@ public partial class PlaybackFiltersTests
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly CapturingLogger<PlaybackInfoFilter> _infoLog = new();
     private readonly CapturingLogger<StockRouteGuardFilter> _guardLog = new();
+    private readonly CapturingLogger<AudioStubRoutes> _audioLog = new();
     private readonly Mock<IFederationResolver> _resolver = new();
     private readonly Mock<IMediaSegmentManager> _segmentManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
@@ -127,7 +128,7 @@ public partial class PlaybackFiltersTests
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
-            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, NullLogger<AudioStubRoutes>.Instance),
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, _audioLog),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, TrackIndex(), store),
             listFolder ?? StockRouteGuardFilter.ListFolder,
             _guardLog,
@@ -2411,6 +2412,8 @@ public partial class PlaybackFiltersTests
 
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Contains(_audioLog.Lines, line => line.Contains("names no variant in its own folder: 502", StringComparison.Ordinal));
+        PlaybackLogAssert.NoRemoteValue(_audioLog.Lines);
     }
 
     [Fact]
@@ -2658,6 +2661,7 @@ public partial class PlaybackFiltersTests
         Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
         Assert.Equal(status, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
         Assert.Empty(_fixture.Client.LyricsAsked);
+        Assert.Equal(sees, _guardLog.Lines.Any(line => line.Contains("Lyrics." + action + " on a track stub is refused", StringComparison.Ordinal)));
     }
 
     [Fact]

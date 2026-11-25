@@ -579,11 +579,20 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     // Serves the lyrics of a track stub its user may reach from its remote; they are read, never managed.
     private async Task<IActionResult> LyricsResultAsync(ActionExecutingContext context, AuthorizationInfo authorization, Guid track)
     {
-        return StubLookup.ActionOf(context).Action != GetLyricsAction
-            ? new StatusCodeResult(StatusCodes.Status403Forbidden)
-            : _stubs.FindFile(track) is { } stub
-                ? await _audio.LyricsAsync(context.HttpContext, authorization.DeviceId ?? string.Empty, stub).ConfigureAwait(false)
-                : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        var (controller, action) = StubLookup.ActionOf(context);
+        if (action != GetLyricsAction)
+        {
+            _logger.LogInformation("{Controller}.{Action} on a track stub is refused: its lyrics are only read: 403", controller, action);
+            return new StatusCodeResult(StatusCodes.Status403Forbidden);
+        }
+
+        if (_stubs.FindFile(track) is not { } stub)
+        {
+            _logger.LogWarning("{Action} of a federated track whose stub is gone: 503", action);
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return await _audio.LyricsAsync(context.HttpContext, authorization.DeviceId ?? string.Empty, stub).ConfigureAwait(false);
     }
 
     // Serves a stock stream route on audio stubs their user may reach: a static stream is the file; the other audio routes
@@ -602,6 +611,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         };
         if (track is not { } served || _stubs.FindFile(served) is not { } stub || string.IsNullOrEmpty(authorization.Token))
         {
+            var (controller, action) = StubLookup.ActionOf(context);
+            _logger.LogWarning(
+                "{Controller}.{Action} of a federated track is refused: {Count} tracks named, served track found {Found}, local token present {HasToken}: 503",
+                controller,
+                action,
+                tracks.Count,
+                track is not null,
+                !string.IsNullOrEmpty(authorization.Token));
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
