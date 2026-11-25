@@ -24,9 +24,9 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Security;
 /// </summary>
 public class LogLeakTests
 {
-    private const string SecretText = "failed for http://" + TestValues.Host + ":8096/x?api_key=" + TestValues.Token;
+    private const string SecretText = "failed for http://" + TestValues.Host + ":8096/x?ApiKey=" + TestValues.Token;
 
-    private static readonly string[] _secrets = [TestValues.Token, TestValues.Password, TestValues.Key];
+    private static readonly string[] _secrets = [TestValues.Token, TestValues.Password, TestValues.Key, "Authorization", "api_key"];
 
     private static void AssertClean(IEnumerable<string> lines)
     {
@@ -65,7 +65,7 @@ public class LogLeakTests
 
         Assert.False(result.IsSuccess);
         Assert.NotNull(capabilities);
-        Assert.Contains(fixture.Logger.Lines, line => line.Contains(exception.GetType().FullName!, StringComparison.Ordinal) && line.Contains("http://" + TestValues.Host + ":8096/x?api_key=" + ErrorText.Removed, StringComparison.Ordinal));
+        Assert.Contains(fixture.Logger.Lines, line => line.Contains(exception.GetType().FullName!, StringComparison.Ordinal) && line.Contains("http://" + TestValues.Host + ":8096/x?ApiKey=" + ErrorText.Removed, StringComparison.Ordinal));
         AssertClean(fixture.Logger.Lines);
     }
 

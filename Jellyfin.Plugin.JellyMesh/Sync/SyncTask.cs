@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -14,16 +15,19 @@ namespace Jellyfin.Plugin.JellyMesh.Sync;
 public abstract class SyncTask : IScheduledTask
 {
     private readonly ILogger _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SyncTask"/> class.
     /// </summary>
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
-    protected SyncTask(IPluginConfigurationStore store, ILogger logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    protected SyncTask(IPluginConfigurationStore store, ILogger logger, ErrorLogLimits? errorLogs = null)
     {
         Store = store;
         _logger = logger;
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
     }
 
     /// <inheritdoc />
@@ -56,7 +60,7 @@ public abstract class SyncTask : IScheduledTask
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Jellyfin stores and logs what a task throws, so it gets the type only: a message could hold a remote address.
-            _logger.LogError("{Task} stopped: {Error}{Detail:l}", Name, exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("{Task} stopped: {Error}{Detail:l}", Name, exception.GetType().Name, _errorLogs.Local.Of(exception));
             throw new InvalidOperationException($"{Name} stopped: {exception.GetType().Name}");
         }
 

@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Sync;
@@ -44,6 +45,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
 
     private readonly string _path;
     private readonly ILogger<SyncHistoryStore> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile IReadOnlyList<SyncRun> _runs;
     private volatile bool _isDamaged;
@@ -53,8 +55,10 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
     /// </summary>
     /// <param name="folder">The folder of the file.</param>
     /// <param name="logger">The logger.</param>
-    public SyncHistoryStore(string folder, ILogger<SyncHistoryStore> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public SyncHistoryStore(string folder, ILogger<SyncHistoryStore> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _path = Path.Combine(folder, FileName);
         _logger = logger;
         _runs = Load();
@@ -131,7 +135,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the sync history: {Error}. The history starts empty{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the file of the sync history: {Error}. The history starts empty{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         _isDamaged = true;
@@ -169,7 +173,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the sync history: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot keep a copy of the damaged file of the sync history: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

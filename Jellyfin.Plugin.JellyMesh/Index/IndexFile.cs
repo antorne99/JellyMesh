@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Index;
@@ -35,14 +36,17 @@ public sealed class IndexFile
     private readonly string _path;
     private readonly string _backupPath;
     private readonly ILogger<IndexFile> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IndexFile"/> class.
     /// </summary>
     /// <param name="folder">The folder of the file.</param>
     /// <param name="logger">The logger.</param>
-    public IndexFile(string folder, ILogger<IndexFile> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public IndexFile(string folder, ILogger<IndexFile> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _folder = folder;
         _path = Path.Combine(folder, FileName);
         _backupPath = _path + ".bak";
@@ -140,7 +144,7 @@ public sealed class IndexFile
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the federation index file {FileName}: {Error}{Detail:l}", Path.GetFileName(path), exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the federation index file {FileName}: {Error}{Detail:l}", Path.GetFileName(path), exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         return null;
@@ -159,7 +163,7 @@ public sealed class IndexFile
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged federation index: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot keep a copy of the damaged federation index: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

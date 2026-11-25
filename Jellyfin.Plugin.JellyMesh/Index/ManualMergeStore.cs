@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Index;
@@ -34,6 +35,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
 
     private readonly string _path;
     private readonly ILogger<ManualMergeStore> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile IReadOnlyList<ManualMerge> _merges;
     private volatile bool _isDamaged;
@@ -43,8 +45,10 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
     /// </summary>
     /// <param name="folder">The folder of the file.</param>
     /// <param name="logger">The logger.</param>
-    public ManualMergeStore(string folder, ILogger<ManualMergeStore> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public ManualMergeStore(string folder, ILogger<ManualMergeStore> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _path = Path.Combine(folder, FileName);
         _logger = logger;
         _merges = Load();
@@ -121,7 +125,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of manual merges: {Error}. Its merges are not applied{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the file of manual merges: {Error}. Its merges are not applied{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         _isDamaged = true;
@@ -137,7 +141,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of manual merges: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot keep a copy of the damaged file of manual merges: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
@@ -37,6 +38,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     private readonly ILibraryRenamer _renamer;
     private readonly IStubRegistry _stubs;
     private readonly ILogger<ServerLibraryManager> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Lock _jobsLock = new();
@@ -58,6 +60,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
     /// <param name="renamer">The renamer of libraries.</param>
     /// <param name="stubs">The stub registry, which tells whether a removed server still has titles.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public ServerLibraryManager(
         IPluginConfigurationStore store,
         ILibraryManager libraries,
@@ -66,8 +69,10 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         ILibraryMaterializer materializer,
         ILibraryRenamer renamer,
         IStubRegistry stubs,
-        ILogger<ServerLibraryManager> logger)
+        ILogger<ServerLibraryManager> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _store = store;
         _libraries = libraries;
         _fileSystem = fileSystem;
@@ -87,8 +92,9 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         ILibraryRenamer renamer,
         IStubRegistry stubs,
         ILogger<ServerLibraryManager> logger,
-        TimeProvider time)
-        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, logger)
+        TimeProvider time,
+        ErrorLogLimits? errorLogs = null)
+        : this(store, libraries, fileSystem, scans, materializer, renamer, stubs, logger, errorLogs)
     {
         _scanLimit = new(time);
     }
@@ -240,7 +246,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot wait for the libraries of the server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot wait for the libraries of the server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -446,7 +452,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cannot update the libraries of a server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot update the libraries of a server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             _errors[serverId] = AutomaticLibrariesError.Failed;
         }
         finally
@@ -544,7 +550,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}{Detail:l}", kind, LogText.Clean(serverName), exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot create the {Kind} library of {Server}: {Error}{Detail:l}", kind, LogText.Clean(serverName), exception.GetType().Name, _errorLogs.Local.Of(exception));
             _errors[serverId] = AutomaticLibrariesError.CreateFailed;
             return false;
         }
@@ -673,7 +679,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot validate the libraries after a rename: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot validate the libraries after a rename: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -686,7 +692,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot rename the library {Library}: {Error}{Detail:l}", LogText.Clean(folder.Name), exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot rename the library {Library}: {Error}{Detail:l}", LogText.Clean(folder.Name), exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }
@@ -730,7 +736,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             }
             catch (Exception exception)
             {
-                _logger.LogError("Cannot delete the libraries of a removed server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot delete the libraries of a removed server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
 
             lock (_jobsLock)
@@ -805,7 +811,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot delete the library {Library}: {Error}{Detail:l}", LogText.Clean(next.Name), exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot delete the library {Library}: {Error}{Detail:l}", LogText.Clean(next.Name), exception.GetType().Name, _errorLogs.Local.Of(exception));
                 SetError(errorKey, AutomaticLibrariesError.RemoveFailed);
                 return false;
             }
@@ -873,7 +879,7 @@ public sealed partial class ServerLibraryManager : IServerLibraryManager, IDispo
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Cannot read the libraries of the server: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot read the libraries of the server: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }

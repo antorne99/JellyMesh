@@ -10,6 +10,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -43,6 +44,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     private readonly LibraryRenameJournal _journal;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<LibraryRenamer> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly ILibraryChangeTracker? _changes;
     private readonly Action<string, string> _move;
 
@@ -59,6 +61,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
     /// <param name="store">The configuration store, whose registries name the libraries of the plugin.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="changes">The library change tracker, told of the new id so the page does not warn (Q53).</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public LibraryRenamer(
         IServerApplicationPaths paths,
         ILibraryManager library,
@@ -69,8 +72,9 @@ public sealed class LibraryRenamer : ILibraryRenamer
         LibraryRenameJournal journal,
         IPluginConfigurationStore store,
         ILogger<LibraryRenamer> logger,
-        ILibraryChangeTracker? changes = null)
-        : this(paths, library, monitor, users, views, retired, journal, store, logger, changes, Directory.Move)
+        ILibraryChangeTracker? changes = null,
+        ErrorLogLimits? errorLogs = null)
+        : this(paths, library, monitor, users, views, retired, journal, store, logger, changes, Directory.Move, errorLogs)
     {
     }
 
@@ -86,8 +90,10 @@ public sealed class LibraryRenamer : ILibraryRenamer
         IPluginConfigurationStore store,
         ILogger<LibraryRenamer> logger,
         ILibraryChangeTracker? changes,
-        Action<string, string> move)
+        Action<string, string> move,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _paths = paths;
         _library = library;
         _monitor = monitor;
@@ -174,7 +180,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                _logger.LogError("Cannot finish the rename of a library: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot finish the rename of a library: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
     }
@@ -457,7 +463,7 @@ public sealed class LibraryRenamer : ILibraryRenamer
                     user.SetPreference(kind, values);
                 }
 
-                _logger.LogError("Cannot rewrite the library lists of a user after a rename: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot rewrite the library lists of a user after a rename: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
                 done = false;
             }
         }

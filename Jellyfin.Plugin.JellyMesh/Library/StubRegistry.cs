@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -31,6 +32,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     private readonly string _path;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<StubRegistry> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile Lookup _lookup;
     private long _generation;
@@ -41,8 +43,10 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <param name="folder">The folder of the file.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
-    public StubRegistry(string folder, IPluginConfigurationStore store, ILogger<StubRegistry> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public StubRegistry(string folder, IPluginConfigurationStore store, ILogger<StubRegistry> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _path = Path.Combine(folder, FileName);
         _store = store;
         _logger = logger;
@@ -245,7 +249,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -274,7 +278,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the stub registry: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the stub registry: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         return StubState.Empty;

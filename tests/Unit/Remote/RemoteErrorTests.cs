@@ -207,6 +207,19 @@ public class RemoteErrorTests
     }
 
     [Theory]
+    [InlineData("tokens: {\n    at first\n    a: \"X", "\"\n}")]
+    [InlineData("tokens: [\n  --- one\n  \"X", "\"\n]")]
+    [InlineData("tokens: {\n\tat first\n\ta: \"X", "\"\n}")]
+    public async Task ABracketOfABodyIsRemovedPastALineLikeAStackTrace(string start, string end)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json(start + OtherToken + end, HttpStatusCode.InternalServerError));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.DoesNotContain(OtherToken, result.Error!.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("token", ' ')]
     [InlineData(":", '\\')]
     [InlineData("Bearer", ' ')]
