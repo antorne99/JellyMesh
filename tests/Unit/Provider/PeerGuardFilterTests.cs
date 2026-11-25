@@ -1300,6 +1300,31 @@ public class PeerGuardFilterTests
         Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
+    // Row 561: the File and Download of an admin's .strm in a shared library would be its text, a URL with any credentials.
+    [Theory]
+    [InlineData("GetFile", "/media/film/remote.strm")]
+    [InlineData("GetDownload", "/media/film/remote.STRM")]
+    public async Task The_strm_of_the_admin_is_never_given_to_a_peer(string action, string path)
+    {
+        var item = Guid.Parse("31000000-0000-0000-0000-000000000000");
+        _fixture.AddItem(item, new MediaBrowser.Controller.Entities.Movies.Movie { Path = path }, ProviderFixture.SharedLibrary);
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Library", action), "GET", item);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task The_file_of_a_shared_item_is_given_to_a_peer(string action)
+    {
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("Library", action), "GET", ProviderFixture.SharedItem);
+
+        Assert.True(ran);
+    }
+
     [Fact]
     public async Task An_item_route_needs_an_item()
     {

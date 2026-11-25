@@ -150,10 +150,11 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         }
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
-        // A folder has no file to give, so a slot would be taken for nothing.
+        // A folder has no file to give, so a slot would be taken for nothing. The file of an admin's .strm is its text, a
+        // URL that may carry credentials, so no peer gets it (row 561).
         if (ItemIdOf(context.RouteData) is not { } itemId
             || _catalog.FindVisible(caller, itemId) is not { } item
-            || (item.IsFolder && action?.ControllerName == "Library")
+            || (action?.ControllerName == "Library" && (item.IsFolder || IsStrm(item.Path)))
             || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version)))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
@@ -352,4 +353,8 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         return null;
     }
+
+    // Tells whether a path is a .strm file, whatever the case of its extension.
+    private static bool IsStrm(string? path)
+        => string.Equals(System.IO.Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
 }
