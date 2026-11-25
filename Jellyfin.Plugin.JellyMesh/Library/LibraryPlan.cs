@@ -25,16 +25,16 @@ internal static class LibraryPlan
         switch (mode ?? server.LibraryMode)
         {
             case LibraryMode.ByType:
-                return [.. KindsOf(imported).Select(kind => new PlannedLibrary(
+                return [.. KindsOf(imported, olderLayout).Select(kind => new PlannedLibrary(
                     kind.ToString(),
                     kind,
                     string.Empty,
                     TypeOf(kind).Name,
                     olderLayout
-                        ? [ServerFolderOf(kind, root, server.Id)]
-                        : [.. imported.Where(library => library.Kind == kind).Select(library => library.Path(root, server.Id))]))];
+                        ? [ServerFolderOf(kind, root, server.Id)!]
+                        : [.. imported.SelectMany(library => library.PathsOf(kind, root, server.Id))]))];
             case LibraryMode.ByRemoteLibrary when !olderLayout:
-                return [.. imported.Select(library => new PlannedLibrary(library.Id, library.Kind, library.Id, library.Name, [library.Path(root, server.Id)]))];
+                return [.. imported.Select(library => new PlannedLibrary(library.Id, library.Kind, library.Id, library.Name, library.Paths(root, server.Id)))];
             default:
                 return [];
         }
@@ -46,14 +46,15 @@ internal static class LibraryPlan
     /// <param name="server">The server.</param>
     /// <param name="root">The federated folder.</param>
     /// <param name="olderLayout">Whether its titles are still in the 0.5 layout, where only the folders of the server exist.</param>
-    /// <returns>Each folder with the local library type it needs.</returns>
+    /// <returns>Each folder with the local library type it needs: for a mixed library, Film for films and Serie for series.</returns>
     public static IReadOnlyList<ManualLibraryPath> ManualPaths(RemoteServerConfig server, string root, bool olderLayout)
     {
         ArgumentNullException.ThrowIfNull(server);
         var imported = Imported(server);
         return olderLayout
-            ? [.. KindsOf(imported).Select(kind => new ManualLibraryPath(ServerFolderOf(kind, root, server.Id), TypeOf(kind).LibraryType.ToString(), string.Empty))]
-            : [.. imported.Select(library => new ManualLibraryPath(library.Path(root, server.Id), TypeOf(library.Kind).LibraryType.ToString(), library.Name))];
+            ? [.. KindsOf(imported, true).Select(kind => new ManualLibraryPath(ServerFolderOf(kind, root, server.Id)!, TypeOf(kind).LibraryType.ToString(), string.Empty))]
+            : [.. imported.SelectMany(library => ServerLibraryKinds.TypeFoldersOf(library.Kind).Select(type => new ManualLibraryPath(
+                FederatedFolderLayout.TypeFolderPath(root, server.Id, library.Id, type), type.LibraryType.ToString(), library.Name)))];
     }
 
     /// <summary>
@@ -64,7 +65,7 @@ internal static class LibraryPlan
     public static IReadOnlyList<string> TypeFolders(RemoteServerConfig server)
     {
         ArgumentNullException.ThrowIfNull(server);
-        return [.. Imported(server).Select(library => FederatedPaths.TypeFolderOf(server.Id, library.Id, TypeOf(library.Kind)))];
+        return [.. Imported(server).SelectMany(library => ServerLibraryKinds.TypeFoldersOf(library.Kind).Select(type => FederatedPaths.TypeFolderOf(server.Id, library.Id, type)))];
     }
 
     /// <summary>
@@ -73,17 +74,20 @@ internal static class LibraryPlan
     /// <param name="kind">The kind.</param>
     /// <param name="root">The federated folder.</param>
     /// <param name="serverId">The server.</param>
-    /// <returns>The absolute folder.</returns>
-    public static string ServerFolderOf(ServerLibraryKind kind, string root, Guid serverId) => kind == ServerLibraryKind.Series
-        ? FederatedFolderLayout.ServerSeriesPath(root, serverId)
-        : FederatedFolderLayout.ServerMoviesPath(root, serverId);
+    /// <returns>The absolute folder, null for a kind the 0.5 layout has no folder for.</returns>
+    public static string? ServerFolderOf(ServerLibraryKind kind, string root, Guid serverId) => kind switch
+    {
+        ServerLibraryKind.Movies => FederatedFolderLayout.ServerMoviesPath(root, serverId),
+        ServerLibraryKind.Series => FederatedFolderLayout.ServerSeriesPath(root, serverId),
+        _ => null
+    };
 
     /// <summary>
-    /// Gets the type folder of a kind of plugin library.
+    /// Gets the type folder of a kind of plugin library with one.
     /// </summary>
     /// <param name="kind">The kind.</param>
     /// <returns>The type folder.</returns>
-    public static TypeFolder TypeOf(ServerLibraryKind kind) => kind == ServerLibraryKind.Series ? TypeFolder.Series : TypeFolder.Movies;
+    public static TypeFolder TypeOf(ServerLibraryKind kind) => ServerLibraryKinds.TypeFolderOf(kind);
 
     // The imported libraries the plugin read, in the order of the remote, with the kind of their type and an id safe as a
     // folder name; others wait for a sync.
@@ -91,21 +95,23 @@ internal static class LibraryPlan
         => [.. server.RemoteLibraries
             .Where(library => FederatedPaths.IsLibraryId(library.Id) && server.ImportedLibraryIds.Contains(library.Id, StringComparer.OrdinalIgnoreCase))
             .DistinctBy(library => library.Id, StringComparer.OrdinalIgnoreCase)
-            .Select(library => KindOf(library.CollectionType) is { } kind ? new ImportedLibrary(library.Id, library.Name, kind) : null)
+            .Select(library => ServerLibraryKinds.Of(library.CollectionType) is { } kind ? new ImportedLibrary(library.Id, library.Name, kind) : null)
             .OfType<ImportedLibrary>()];
 
-    private static IEnumerable<ServerLibraryKind> KindsOf(IReadOnlyCollection<ImportedLibrary> imported)
-        => Enum.GetValues<ServerLibraryKind>().Where(kind => imported.Any(library => library.Kind == kind));
-
-    private static ServerLibraryKind? KindOf(string collectionType) => collectionType.ToLowerInvariant() switch
-    {
-        "movies" => ServerLibraryKind.Movies,
-        "tvshows" => ServerLibraryKind.Series,
-        _ => null
-    };
+    // The by-type kinds with a type folder in an imported library; in the 0.5 layout only those with a folder of the server.
+    private static IEnumerable<ServerLibraryKind> KindsOf(IReadOnlyCollection<ImportedLibrary> imported, bool olderLayout)
+        => (olderLayout ? ServerLibraryKinds.OfOlderLayout : ServerLibraryKinds.OfOneType)
+            .Where(kind => imported.Any(library => library.Holds(kind)));
 
     private sealed record ImportedLibrary(string Id, string Name, ServerLibraryKind Kind)
     {
-        public string Path(string root, Guid serverId) => FederatedFolderLayout.TypeFolderPath(root, serverId, Id, TypeOf(Kind));
+        // Whether it has the type folder of a by-type kind: a mixed library has those of films and series [D14].
+        public bool Holds(ServerLibraryKind kind) => ServerLibraryKinds.TypeFoldersOf(Kind).Contains(TypeOf(kind));
+
+        public IReadOnlyList<string> Paths(string root, Guid serverId)
+            => [.. ServerLibraryKinds.TypeFoldersOf(Kind).Select(type => FederatedFolderLayout.TypeFolderPath(root, serverId, Id, type))];
+
+        public IEnumerable<string> PathsOf(ServerLibraryKind kind, string root, Guid serverId)
+            => Holds(kind) ? [FederatedFolderLayout.TypeFolderPath(root, serverId, Id, TypeOf(kind))] : [];
     }
 }

@@ -53,7 +53,7 @@ public sealed partial class ServerLibraryManager
             foreach (var planned in matched.Where(match => match.Kept is null).Select(match => match.Planned))
             {
                 // As the change does: a library of the admin with exactly the paths and type is adopted, one in the way stops it.
-                var adoption = LibraryAdoption.Classify(planned, TypeOf(planned.Kind), unclaimed, root, serverId);
+                var adoption = LibraryAdoption.Classify(planned, unclaimed, root, serverId);
                 if (adoption.Adopt is { ItemId: { } adoptedId } adopted && Guid.TryParse(adoptedId, out var id))
                 {
                     made.Add(new NewLibrary(adopted.Name, id, planned.Paths, true));
@@ -384,7 +384,7 @@ public sealed partial class ServerLibraryManager
     private AutomaticLibraryConfig? TakeOverMatch(RemoteServerConfig server, LibraryMode mode, PlannedLibrary planned, IReadOnlyList<VirtualFolderInfo> folders)
         => server.AutomaticLibraryRegistry.FirstOrDefault(record => Retires(mode, record)
             && FindRecorded(record, folders) is { } folder
-            && folder.CollectionType == TypeOf(planned.Kind)
+            && ServerLibraryKinds.HasTypeOf(folder.CollectionType, planned.Kind)
             && folder.Locations.Length == planned.Paths.Count
             && planned.Paths.All(path => folder.Locations.Any(location => FederatedFolderLinkChecker.IsSamePath(location, path)))
             && (record.Adopted || NamesFor(server.Name, server.Id, planned.Suffix).Contains(folder.Name, StringComparer.Ordinal)));

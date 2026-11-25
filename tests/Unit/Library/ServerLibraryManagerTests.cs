@@ -2067,6 +2067,8 @@ public sealed partial class ServerLibraryManagerTests
 
         public List<(string Name, string NewName)> Calls { get; } = [];
 
+        public List<(string Name, Jellyfin.Data.Enums.CollectionType? Type)> Types { get; } = [];
+
         public Exception? Failure { get; set; }
 
         public bool Refuses { get; set; }
@@ -2168,6 +2170,7 @@ public sealed partial class ServerLibraryManagerTests
         public Task<Guid?> RenameAsync(string name, Guid? itemId, Jellyfin.Data.Enums.CollectionType? type, string newName, CancellationToken cancellationToken)
         {
             Calls.Add((name, newName));
+            Types.Add((name, type));
             OnRename?.Invoke();
             if (Failure is not null)
             {
