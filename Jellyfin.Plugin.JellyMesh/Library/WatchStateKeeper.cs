@@ -240,8 +240,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     // Matching reads only these two IDs on a film.
     private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
 
-    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453 and 535), but
-    // photos, which have none yet (row 560).
+    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453, 535 and 565).
     private static bool IsInDedup(KeptTitle title) => !IsOfItsOwn(title.Kind);
 
     private static bool IsOfItsOwn(KeptTitleKind kind) => kind is KeptTitleKind.Track or KeptTitleKind.AudioBook or KeptTitleKind.Book or KeptTitleKind.HomeVideo or KeptTitleKind.Photo;
@@ -281,6 +280,15 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         Title = title.Title,
         Year = title.Year,
         RunTimeTicks = title.RunTimeTicks,
+        Folder = FolderOf(title.Place)
+    };
+
+    private static PhotoItem SavedPhoto(KeptTitle title) => new()
+    {
+        ServerId = SavedServer,
+        ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+        Title = title.Title,
+        Year = title.Year,
         Folder = FolderOf(title.Place)
     };
 
@@ -518,7 +526,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             .. Match("tracks", () => TrackDedup.Pair(Own(KeptTitleKind.Track, SavedTrack), current.Tracks, MaxCopies, cancellationToken)),
             .. Match("audiobooks", () => TrackDedup.Pair(Own(KeptTitleKind.AudioBook, SavedTrack), current.AudioBooks, MaxCopies, cancellationToken)),
             .. Match("books", () => BookIdentity.Pair(Own(KeptTitleKind.Book, SavedBook), current.Books, MaxCopies, cancellationToken)),
-            .. Match("home videos", () => HomeVideoIdentity.Pair(Own(KeptTitleKind.HomeVideo, SavedHomeVideo), current.HomeVideos, MaxCopies, cancellationToken))
+            .. Match("home videos", () => HomeVideoIdentity.Pair(Own(KeptTitleKind.HomeVideo, SavedHomeVideo), current.HomeVideos, MaxCopies, cancellationToken)),
+            .. Match("photos", () => PhotoIdentity.Pair(Own(KeptTitleKind.Photo, SavedPhoto), current.Photos, MaxCopies, cancellationToken))
         ];
         foreach (var match in pairs.GroupBy(pair => pair.Saved, StringComparer.Ordinal))
         {
@@ -670,7 +679,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         var oneFile = FoldersOfOneFile(state.Stubs);
-        var found = new CurrentTitles([], [], [], [], [], [], paths);
+        var found = new CurrentTitles([], [], [], [], [], [], [], paths);
         void AddOwn(StubEntry stub, StubSource source, IndexedItem item)
         {
             var serverId = source.ServerId.ToString("N");
@@ -707,8 +716,17 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                         Folder = FolderOf(PlaceOf(stub.RelativePath))
                     });
                     break;
+                case StubKind.Photo:
+                    found.Photos.Add(new PhotoItem
+                    {
+                        ServerId = serverId,
+                        ItemId = item.ItemId,
+                        Title = item.Name,
+                        Year = item.ProductionYear ?? item.PremiereDate?.Year,
+                        Folder = FolderOf(PlaceOf(stub.RelativePath))
+                    });
+                    break;
                 default:
-                    // No rule of identity knows a photo again yet: its kept state stays (row 560).
                     return;
             }
 
@@ -835,5 +853,6 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         List<TrackItem> AudioBooks,
         List<BookItem> Books,
         List<HomeVideoItem> HomeVideos,
+        List<PhotoItem> Photos,
         Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>> Paths);
 }

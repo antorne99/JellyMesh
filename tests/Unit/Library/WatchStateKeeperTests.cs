@@ -553,12 +553,13 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
     }
 
-    // Row 535: an audiobook as a track, a book by its ID or its data, a home video by its data.
+    // Rows 535 and 565: an audiobook as a track, a book by its ID or its data, a home video and a photo by their data.
     [Theory]
     [InlineData(StubKind.AudioBook)]
     [InlineData(StubKind.Book)]
     [InlineData(StubKind.HomeVideo)]
-    public async Task AnAudioBookABookAndAHomeVideoGetTheirStateBack(StubKind kind)
+    [InlineData(StubKind.Photo)]
+    public async Task AnAudioBookABookAHomeVideoAndAPhotoGetTheirStateBack(StubKind kind)
     {
         AddRemote(kind);
         var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
@@ -570,9 +571,9 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
-    // Row 560: no rule of identity knows a photo again yet, so its state stays kept, and a photo stops no other title.
+    // Row 565: a photo is known again by title, year and folder, and gives nothing to a book of the same name.
     [Fact]
-    public async Task APhotoKeepsItsStateAndStopsNoOtherTitleFromGettingItsStateBack()
+    public async Task APhotoGetsItsStateBackAndGivesNothingToABookOfTheSameName()
     {
         AddRemote(StubKind.Photo);
         AddRemote(StubKind.Book);
@@ -582,21 +583,20 @@ public sealed class WatchStateKeeperTests : IDisposable
         await _materializer.MaterializeAsync(CancellationToken.None);
         var (photo, book) = (ItemOf(b, StubKind.Photo), ItemOf(b, StubKind.Book));
         Watch(_anna, ItemOf(a, StubKind.Photo));
-        Watch(_anna, ItemOf(a, StubKind.Book));
 
         await RemoveAsync(a);
 
-        Assert.True(Row(_anna, book).Played);
-        Assert.False(Row(_anna, photo).Played);
-        var kept = Assert.Single(await _kept.ReadAsync(CancellationToken.None));
-        Assert.Equal((KeptTitleKind.Photo, "Song"), (kept.Kind, kept.Title));
+        Assert.True(Row(_anna, photo).Played);
+        Assert.False(Row(_anna, book).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
     [Theory]
     [InlineData(StubKind.AudioBook)]
     [InlineData(StubKind.Book)]
     [InlineData(StubKind.HomeVideo)]
-    public async Task AnAudioBookABookAndAHomeVideoThatAreNotTheSameGetNothing(StubKind kind)
+    [InlineData(StubKind.Photo)]
+    public async Task AnAudioBookABookAHomeVideoAndAPhotoThatAreNotTheSameGetNothing(StubKind kind)
     {
         AddRemote(kind);
         var a = await AddAndMaterializeAsync("A", LibraryOf(kind));
@@ -619,6 +619,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [InlineData(StubKind.AudioBook, 101, false)]
     [InlineData(StubKind.Book, 101, false)]
     [InlineData(StubKind.HomeVideo, 101, false)]
+    [InlineData(StubKind.Photo, 100, true)]
+    [InlineData(StubKind.Photo, 101, false)]
     public async Task ATitleWithMoreCopiesThanTheMostKeepsItsState(StubKind kind, int copies, bool isPutBack)
     {
         var film = kind == StubKind.Movie;
@@ -783,6 +785,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     [InlineData(StubKind.AudioBook)]
     [InlineData(StubKind.Book)]
     [InlineData(StubKind.HomeVideo)]
+    [InlineData(StubKind.Photo)]
     public async Task ATitleOfATypeOfItsOwnGivesNothingToAFilmAnEpisodeOrASeriesOfTheSameName(StubKind kind)
     {
         var ids = new Dictionary<string, string?> { ["Imdb"] = "tt1" };
