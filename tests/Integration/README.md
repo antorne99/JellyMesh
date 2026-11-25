@@ -154,7 +154,7 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `$PREFIX-a`, `$PREFIX-b` (default `jm-prov`), `$PREFIX-s` with `STOCK=own` | `PORT_A` and the next one (default 18410-18411), gates on the next three | `remoto-standard` of this stack unless `STOCK=own`, `python3`, `WORK` |
 | `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15). `permissions.sh`: integration 13 of the 0.6-0.7 spec. `provider-types.sh`: integration 16 of the 0.6-0.7 spec (row 460), on its own `jm-f62` set | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`

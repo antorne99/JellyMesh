@@ -35,12 +35,17 @@ public static class PeerRoutes
             ("System", "GetPublicSystemInfo") => PeerRouteKind.Open,
             ("MediaInfo", var name) when name.Contains("PlaybackInfo", StringComparison.Ordinal) => PeerRouteKind.PlaybackInfo,
             ("Videos", var name) when reads && name.StartsWith("GetVideoStream", StringComparison.Ordinal) => PeerRouteKind.Stream,
+            ("Audio", "GetAudioStream" or "GetAudioStreamByContainer") when reads => PeerRouteKind.Stream,
+
+            // The file of a track or a book (D12). A video by this route counts on the stream limit as by any other.
+            ("Library", "GetFile" or "GetDownload") when reads => PeerRouteKind.Stream,
 
             // Closing a transcode (decision 6). Stock stops whatever play session it is told, or every job of a device.
             (_, "StopEncodingProcess") when HttpMethods.IsDelete(method) => PeerRouteKind.StopEncoding,
             ("DynamicHls", _) when reads => PeerRouteKind.Stream,
             ("Image" or "Subtitle", _) when reads => PeerRouteKind.Item,
             ("MediaSegments", "GetItemSegments") when reads => PeerRouteKind.Item,
+            ("Lyrics", "GetLyrics") when reads => PeerRouteKind.Item,
             _ => PeerRouteKind.Closed
         };
     }

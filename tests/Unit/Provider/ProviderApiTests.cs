@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -71,6 +72,237 @@ public class ProviderCatalogTests
         Assert.Null(_fixture.Catalog.FindVisible(caller, Guid.NewGuid()));
     }
 
+    [Theory]
+    [InlineData("audio", "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album/01 - Uno.strm")]
+    [InlineData("musicvideo", "/federata/Video musicali/Clip/Clip.strm")]
+    [InlineData("video", "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Video domestici/Gita/gita.strm")]
+    [InlineData("folder", "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Video domestici/Gita")]
+    [InlineData("book", "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Libri/Autore/Libro.epub")]
+    [InlineData("audiobook", "/federata/Libri/Autore/Libro/01.strm")]
+    public void A_stub_of_any_type_never_reaches_a_peer(string type, string path)
+    {
+        BaseItem stub = type switch
+        {
+            "audio" => new MediaBrowser.Controller.Entities.Audio.Audio { Path = path },
+            "musicvideo" => new MusicVideo { Path = path },
+            "video" => new Video { Path = path },
+            "folder" => new Folder { Path = path },
+            "book" => new Book { Path = path },
+            _ => new AudioBook { Path = path }
+        };
+        var id = Guid.NewGuid();
+        _fixture.AddItem(id, stub, ProviderFixture.SharedLibrary);
+
+        Assert.True(_fixture.Catalog.IsFederated(stub));
+        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, id));
+    }
+
+    [Theory]
+    [InlineData("audio", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album/01 - Uno.strm", "/nuova")]
+    [InlineData("audio", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album/01 - Uno.strm", "")]
+    [InlineData("album", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/Artista/Album", "")]
+    [InlineData("folder", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Video domestici/Gita", "/nuova")]
+    [InlineData("book", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Libri/Autore/Libro.epub", "")]
+    [InlineData("audiobook", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Libri/Autore/Libro/01.strm", "/nuova")]
+    public void A_stub_left_by_a_moved_or_cleared_federated_folder_never_reaches_a_peer(string type, string path, string root)
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = root;
+        BaseItem stub = type switch
+        {
+            "audio" => new MediaBrowser.Controller.Entities.Audio.Audio { Path = path },
+            "album" => new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Path = path },
+            "folder" => new Folder { Path = path },
+            "book" => new Book { Path = path },
+            _ => new AudioBook { Path = path }
+        };
+        var id = Guid.NewGuid();
+        _fixture.AddItem(id, stub, ProviderFixture.SharedLibrary);
+
+        Assert.True(_fixture.Catalog.IsFederated(stub));
+        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, id));
+    }
+
+    [Fact]
+    public void A_stub_reached_through_a_link_to_an_old_server_folder_never_reaches_a_peer()
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-old-root");
+        try
+        {
+            var music = Directory.CreateDirectory(Path.Combine(temp.FullName, "vecchia", "0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679742540de944be07fc1f90ae7", "Musica", "Artista"));
+            File.WriteAllText(Path.Combine(music.FullName, "01 - Uno.strm"), "stub");
+            var alias = Path.Combine(temp.FullName, "alias");
+            Directory.CreateSymbolicLink(alias, music.FullName);
+            _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+            Assert.True(_fixture.Catalog.IsFederated(new MediaBrowser.Controller.Entities.Audio.Audio { Path = Path.Combine(alias, "01 - Uno.strm") }));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Fact]
+    public void A_server_folder_name_alone_does_not_make_an_item_federated()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+
+        Assert.False(_fixture.Catalog.IsFederated(new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Musica/Artista/01.flac" }));
+        Assert.False(_fixture.Catalog.IsFederated(new Book { Path = "/media/Libri/Autore/Libro.epub" }));
+    }
+
+    [Theory]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7", false)]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/", false)]
+    [InlineData("/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e", true)]
+    public void The_folders_of_a_server_left_by_a_moved_federated_folder_never_reach_a_peer(string path, bool onDisk)
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-old-root");
+        try
+        {
+            if (onDisk)
+            {
+                Directory.CreateDirectory(Path.Combine(temp.FullName, "vecchia", "0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679742540de944be07fc1f90ae7", "Video domestici"));
+                path = temp.FullName + path;
+            }
+
+            _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+
+            Assert.True(_fixture.Catalog.IsFederated(new Folder { Path = path }));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Fact]
+    public void A_folder_named_as_a_guid_is_federated_only_with_the_folder_of_a_library_in_it()
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-guid-folder");
+        try
+        {
+            var own = Directory.CreateDirectory(Path.Combine(temp.FullName, "0f8fad5b-d9cb-469f-a165-70867728950e", "Gita"));
+            _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = Path.GetDirectoryName(own.FullName)! }));
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = "/media/0f8fad5b-d9cb-469f-a165-70867728950e" }));
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = "/media/7c9e6679742540de944be07fc1f90ae7" }));
+            Assert.False(_fixture.Catalog.IsFederated(new Folder { Path = "/media/Gita/7c9e6679742540de944be07fc1f90ae7" }));
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
+    [Fact]
+    public void A_photo_and_its_album_stay_hidden_until_photos_are_shared()
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.homevideos, "/media/casa");
+        var photo = Guid.NewGuid();
+        var album = Guid.NewGuid();
+        var video = Guid.NewGuid();
+        _fixture.AddItem(photo, new Photo { Path = "/media/casa/Album/a.jpg" }, ProviderFixture.SharedLibrary);
+        _fixture.AddItem(album, new PhotoAlbum { Path = "/media/casa/Album" }, ProviderFixture.SharedLibrary);
+        _fixture.AddItem(video, new Video { Path = "/media/casa/gita.mkv" }, ProviderFixture.SharedLibrary);
+
+        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, photo));
+        Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, album));
+        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, video));
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.music, true)]
+    [InlineData(CollectionTypeOptions.movies, false)]
+    [InlineData(CollectionTypeOptions.mixed, false)]
+    [InlineData(null, false)]
+    public void A_track_and_its_album_are_found_only_in_a_shared_library_that_gives_tracks(CollectionTypeOptions? type, bool found)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/musica");
+        var track = Guid.NewGuid();
+        var album = Guid.NewGuid();
+        _fixture.AddItem(track, new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/musica/a/1.flac" }, ProviderFixture.SharedLibrary);
+        _fixture.AddItem(album, new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Path = "/media/musica/a" }, ProviderFixture.SharedLibrary);
+
+        Assert.Equal(found, _fixture.Catalog.FindVisible(_fixture.PeerCaller, track) is not null);
+        Assert.Equal(found, _fixture.Catalog.FindVisible(_fixture.PeerCaller, album) is not null);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.movies)]
+    [InlineData(CollectionTypeOptions.mixed)]
+    [InlineData(null)]
+    public void A_film_or_mixed_library_gives_a_peer_no_track_book_or_home_video(CollectionTypeOptions? type)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/misti");
+        BaseItem[] items =
+        [
+            new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/misti/1.flac" },
+            new Book { Path = "/media/misti/a.epub" },
+            new AudioBook { Path = "/media/misti/b.m4b" },
+            new Video { Path = "/media/misti/gita.mkv" },
+            new MusicVideo { Path = "/media/misti/clip.mkv" },
+            new Folder { Path = "/media/misti/Gita" }
+        ];
+        foreach (var item in items)
+        {
+            _fixture.AddItem(Guid.NewGuid(), item, ProviderFixture.SharedLibrary);
+        }
+
+        Assert.All(items, item => Assert.Null(_fixture.Catalog.FindVisible(_fixture.PeerCaller, item.Id)));
+        Assert.NotNull(_fixture.Catalog.FindVisible(_fixture.PeerCaller, ProviderFixture.SharedItem));
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.music, RemoteItemType.Movie)]
+    [InlineData(CollectionTypeOptions.movies, RemoteItemType.Audio)]
+    [InlineData(CollectionTypeOptions.movies, RemoteItemType.Series)]
+    [InlineData(CollectionTypeOptions.mixed, RemoteItemType.Book)]
+    [InlineData(null, RemoteItemType.Video)]
+    [InlineData(CollectionTypeOptions.tvshows, RemoteItemType.Movie)]
+    public void A_page_of_a_type_the_library_does_not_give_reads_as_empty(CollectionTypeOptions? libraryType, RemoteItemType type)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, libraryType, "/media/film");
+
+        var withRoot = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, type, 0, 10);
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+        var withoutRoot = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, type, 0, 10);
+
+        Assert.Empty(withRoot.Items);
+        Assert.Empty(withoutRoot.Items);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Fact]
+    public void A_page_of_a_library_no_longer_on_the_server_reads_as_empty_without_a_federated_folder()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
+
+        var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.PrivateLibrary, RemoteItemType.Movie, 0, 10);
+
+        Assert.Empty(page.Items);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.music, true)]
+    [InlineData(CollectionTypeOptions.mixed, false)]
+    public void A_lookup_of_tracks_gives_only_those_of_a_library_that_gives_tracks(CollectionTypeOptions? type, bool given)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/musica");
+        var track = Guid.NewGuid();
+        _fixture.AddItem(track, new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/musica/a/1.flac" }, ProviderFixture.SharedLibrary);
+        IReadOnlyList<BaseItem>? sent = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((items, _, _, _, _) => sent = items)
+            .Returns([]);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [track], RemoteItemType.Audio);
+
+        Assert.Equal(given ? [track] : [], sent!.Select(item => item.Id));
+    }
+
     [Fact]
     public void An_item_the_user_cannot_see_stays_hidden_even_if_shared()
     {
@@ -130,10 +362,12 @@ public class ProviderCatalogTests
         Assert.Empty(_fixture.CatalogLogger.Lines);
     }
 
-    [Fact]
-    public void A_library_whose_real_paths_are_not_indexed_yet_reads_as_empty()
+    [Theory]
+    [InlineData("/federata/Film")]
+    [InlineData("/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Film")]
+    public void A_library_whose_real_paths_are_not_indexed_yet_reads_as_empty(string federated)
     {
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", "/federata/Film");
+        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media/film", federated);
 
         var page = _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Movie, 0, 10);
 
@@ -185,7 +419,7 @@ public class ProviderCatalogTests
     public void A_page_of_a_library_above_the_federated_folder_leaves_out_the_folder_itself()
     {
         _fixture.Store.Configuration.FederatedFolderPath = "/media/federata";
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, "/media");
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, "/media");
         var root = _fixture.WithFolder("/media/federata");
         _fixture.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>())).Returns([]);
         var seen = CaptureQuery();
@@ -244,6 +478,40 @@ public class ProviderCatalogTests
     }
 
     [Fact]
+    public void Libraries_of_every_federated_type_are_offered_as_the_consumer_reads_them()
+    {
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            Library("Film", CollectionTypeOptions.movies, "/media/film"),
+            Library("Serie", CollectionTypeOptions.tvshows, "/media/serie"),
+            Library("Musica", CollectionTypeOptions.music, "/media/musica"),
+            Library("Clip", CollectionTypeOptions.musicvideos, "/media/clip"),
+            Library("Casa", CollectionTypeOptions.homevideos, "/media/casa"),
+            Library("Libri", CollectionTypeOptions.books, "/media/libri"),
+            Library("Misti", CollectionTypeOptions.mixed, "/media/misti"),
+            new VirtualFolderInfo { Name = "Untyped", ItemId = Guid.NewGuid().ToString(), Locations = ["/media/altro"] },
+            Library("Raccolte", CollectionTypeOptions.boxsets, "/config/collections")
+        ]);
+
+        var offered = _fixture.Catalog.ReadLibraries().Select(library => (library.Name, library.CollectionType));
+
+        Assert.Equal(
+            [("Film", "movies"), ("Serie", "tvshows"), ("Musica", "music"), ("Clip", "musicvideos"), ("Casa", "homevideos"), ("Libri", "books"), ("Misti", "mixed"), ("Untyped", "mixed")],
+            offered);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.music)]
+    [InlineData(CollectionTypeOptions.books)]
+    [InlineData(CollectionTypeOptions.mixed)]
+    public void A_library_of_a_new_type_with_only_federated_paths_is_not_offered(CollectionTypeOptions type)
+    {
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns([Library("Flat", type, "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/Musica")]);
+
+        Assert.Empty(_fixture.Catalog.ReadLibraries());
+    }
+
+    [Fact]
     public void Without_a_federated_folder_every_library_is_offered()
     {
         _fixture.Store.Configuration.FederatedFolderPath = string.Empty;
@@ -283,6 +551,25 @@ public class ProviderCatalogTests
     }
 
     [Fact]
+    public void A_page_of_series_leaves_out_those_of_an_old_0_5_folder()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, "/media/serie", "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie");
+        BaseItem left = new Series { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show" };
+        BaseItem real = new Series { Id = Guid.NewGuid(), Path = "/media/serie/Show" };
+        _fixture.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()))
+            .Returns(new QueryResult<BaseItem>(0, 2, [left, real]));
+        IReadOnlyList<BaseItem>? sent = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((items, _, _, _, _) => sent = items)
+            .Returns([]);
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Equal([real], sent!);
+    }
+
+    [Fact]
     public void A_lookup_leaves_out_what_the_peer_may_not_reach()
     {
         IReadOnlyList<BaseItem>? sent = null;
@@ -307,6 +594,34 @@ public class ProviderCatalogTests
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
         Assert.Contains(MediaBrowser.Model.Querying.ItemFields.RemoteTrailers, options!.Fields);
+    }
+
+    [Fact]
+    public void A_peer_gets_the_parent_of_each_item_for_the_folders_of_home_videos()
+    {
+        MediaBrowser.Controller.Dto.DtoOptions? options = null;
+        _fixture.Dto.Setup(service => service.GetBaseItemDtos(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<MediaBrowser.Controller.Dto.DtoOptions>(), It.IsAny<User?>(), It.IsAny<BaseItem?>()))
+            .Callback<IReadOnlyList<BaseItem>, MediaBrowser.Controller.Dto.DtoOptions, User?, BaseItem?, bool>((_, value, _, _, _) => options = value)
+            .Returns([new BaseItemDto { Id = ProviderFixture.SharedItem }]);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Contains(MediaBrowser.Model.Querying.ItemFields.ParentId, options!.Fields);
+    }
+
+    [Theory]
+    [InlineData("/media/libri/Autore/Libro.EPUB", ".epub")]
+    [InlineData("/media/libri/Fumetto.cbz", ".cbz")]
+    [InlineData("/media/libri/Senza estensione", null)]
+    [InlineData(null, null)]
+    public void A_book_sends_only_the_extension_of_its_file(string? path, string? sent)
+    {
+        var book = new BaseItemDto { Id = Guid.NewGuid(), Type = BaseItemKind.Book, Path = path };
+        _fixture.WithDtos(book);
+
+        _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
+
+        Assert.Equal(sent, book.Path);
     }
 
     [Fact]
@@ -364,10 +679,13 @@ public class ProviderCatalogTests
     {
         var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Subtitle, Path = "/media/secret.srt" });
         dto.Chapters = [new ChapterInfo { Name = "Intro", ImagePath = "/config/metadata/secret.jpg" }];
+        dto.Type = BaseItemKind.Movie;
+        dto.Path = "/media/secret.mkv";
         _fixture.WithDtos(dto);
 
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
+        Assert.Null(dto.Path);
         Assert.Null(dto.MediaSources[0].Path);
         Assert.Null(dto.MediaSources[0].MediaStreams[0].Path);
         Assert.Null(dto.Chapters[0].ImagePath);
@@ -513,8 +831,38 @@ public class ProviderControllerTests
     }
 
     [Theory]
-    [InlineData(RemoteItemType.Audio)]
-    [InlineData(RemoteItemType.Folder)]
+    [InlineData(RemoteItemType.Audio, BaseItemKind.Audio, CollectionTypeOptions.music)]
+    [InlineData(RemoteItemType.MusicVideo, BaseItemKind.MusicVideo, CollectionTypeOptions.musicvideos)]
+    [InlineData(RemoteItemType.Video, BaseItemKind.Video, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.Folder, BaseItemKind.Folder, CollectionTypeOptions.homevideos)]
+    [InlineData(RemoteItemType.Book, BaseItemKind.Book, CollectionTypeOptions.books)]
+    [InlineData(RemoteItemType.AudioBook, BaseItemKind.AudioBook, CollectionTypeOptions.books)]
+    public async Task A_page_of_a_new_type_reads_that_type(RemoteItemType type, BaseItemKind kind, CollectionTypeOptions library)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, library, "/media/film");
+        InternalItemsQuery? seen = null;
+        _fixture.Library.Setup(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(query => seen = query)
+            .Returns(new QueryResult<BaseItem>(0, 0, []));
+
+        Assert.NotNull((await _controller.GetItems(type, ProviderFixture.SharedLibrary, null)).Value);
+        Assert.Equal([kind], seen!.IncludeItemTypes);
+    }
+
+    // A refusal would fail the whole read of a home video library, so a type no library gives yet reads as empty.
+    [Theory]
+    [InlineData(RemoteItemType.Photo)]
+    [InlineData(RemoteItemType.PhotoAlbum)]
+    public async Task Photos_and_their_albums_read_as_empty_until_they_are_shared(RemoteItemType type)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.homevideos, "/media/casa");
+
+        Assert.Equal(0, (await _controller.GetItems(type, ProviderFixture.SharedLibrary, null)).Value!.TotalRecordCount);
+        Assert.Equal(0, (await _controller.GetItems(type, null, ProviderFixture.SharedItem.ToString("N"))).Value!.TotalRecordCount);
+        _fixture.Library.Verify(manager => manager.GetItemsResult(It.IsAny<InternalItemsQuery>()), Times.Never);
+    }
+
+    [Theory]
     [InlineData((RemoteItemType)99)]
     public async Task A_type_the_provider_does_not_share_is_refused(RemoteItemType type)
     {
@@ -552,6 +900,101 @@ public class ProviderControllerTests
         Assert.Equal(ProviderFixture.SharedItem.ToString("N"), change.Id);
         Assert.Equal("Movie", change.Type);
         Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.movies, false)]
+    [InlineData(CollectionTypeOptions.mixed, false)]
+    [InlineData(CollectionTypeOptions.homevideos, true)]
+    public async Task The_feed_announces_an_item_only_from_a_library_that_gives_its_type(CollectionTypeOptions type, bool announced)
+    {
+        _fixture.Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+            [new VirtualFolderInfo { Name = "Shared", ItemId = ProviderFixture.SharedLibrary.ToString(), CollectionType = type, Locations = ["/media/film"] }]);
+        var folder = Guid.NewGuid();
+        _fixture.AddItem(folder, new Folder { Path = "/media/film/Extra" }, ProviderFixture.SharedLibrary);
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(folder);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal(announced ? [(folder.ToString("N"), "Folder")] : [], changes.Select(change => (change.Id, change.Type)));
+        Assert.All(changes, change => Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds));
+    }
+
+    // The album of a track and some of its tracks, as the library answers for the peer.
+    private (Guid Album, Guid[] Tracks, Func<InternalItemsQuery?> Query) WithAlbum(CollectionTypeOptions? type, params string[] trackPaths)
+    {
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, type, "/media/musica");
+        var album = Guid.NewGuid();
+        _fixture.AddItem(album, new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Path = "/media/musica/A" }, ProviderFixture.SharedLibrary);
+        var tracks = trackPaths.Select(path => new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = path }).ToList();
+        foreach (var track in tracks)
+        {
+            _fixture.AddItem(track.Id, track, ProviderFixture.SharedLibrary);
+        }
+
+        InternalItemsQuery? seen = null;
+        _fixture.Library.Setup(manager => manager.GetItemList(It.Is<InternalItemsQuery>(query => query.ParentId == album)))
+            .Callback<InternalItemsQuery>(query => seen = query)
+            .Returns(tracks.Cast<BaseItem>().ToList());
+        return (album, tracks.Select(track => track.Id).ToArray(), () => seen);
+    }
+
+    [Fact]
+    public async Task An_album_change_reaches_the_peer_as_its_tracks()
+    {
+        var (album, tracks, query) = WithAlbum(CollectionTypeOptions.music, "/media/musica/A/1.flac", "/media/musica/A/2.flac");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(album);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal(tracks.Select(id => (id.ToString("N"), "Audio")), changes.Select(change => (change.Id, change.Type)));
+        Assert.All(changes, change => Assert.Equal([ProviderFixture.SharedLibrary.ToString("N")], change.LibraryIds));
+        Assert.Same(_fixture.Peer, query()!.User);
+        Assert.True(query()!.Recursive);
+        Assert.Equal([BaseItemKind.Audio], query()!.IncludeItemTypes);
+    }
+
+    [Fact]
+    public async Task An_album_change_leaves_out_the_stubs_among_its_tracks()
+    {
+        var (album, tracks, _) = WithAlbum(
+            CollectionTypeOptions.music,
+            "/media/musica/A/1.flac",
+            "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/2.strm");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(album);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal([tracks[0].ToString("N")], changes.Select(change => change.Id));
+    }
+
+    [Fact]
+    public async Task A_track_changed_with_its_album_is_announced_once()
+    {
+        var (album, tracks, _) = WithAlbum(CollectionTypeOptions.music, "/media/musica/A/1.flac", "/media/musica/A/2.flac");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(tracks[0]);
+        _journal.Record(album);
+
+        var changes = (await _controller.GetChanges(cursor)).Value!.Changes;
+
+        Assert.Equal(tracks.Select(id => id.ToString("N")), changes.Select(change => change.Id));
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.movies)]
+    [InlineData(CollectionTypeOptions.mixed)]
+    [InlineData(null)]
+    public async Task An_album_in_a_library_that_gives_no_tracks_announces_nothing(CollectionTypeOptions? type)
+    {
+        var (album, _, _) = WithAlbum(type, "/media/musica/A/1.flac");
+        var cursor = (await _controller.GetChanges(null)).Value!.Cursor;
+        _journal.Record(album);
+
+        Assert.Empty((await _controller.GetChanges(cursor)).Value!.Changes);
     }
 
     [Fact]
@@ -1076,7 +1519,85 @@ public class ChangeFeedRecorderTests
     {
         var cursor = await StartAsync();
 
-        RaiseAdded(new Folder { Id = Guid.NewGuid(), Path = "/media" });
+        RaiseAdded(new CollectionFolder { Id = Guid.NewGuid(), Path = "/media" });
+        RaiseAdded(new BoxSet { Id = Guid.NewGuid() });
+
+        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task Photos_stay_out_until_they_are_shared()
+    {
+        var cursor = await StartAsync();
+
+        RaiseAdded(new Photo { Id = Guid.NewGuid(), Path = "/media/casa/a.jpg" });
+        RaiseAdded(new PhotoAlbum { Id = Guid.NewGuid(), Path = "/media/casa/Album" });
+
+        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task Records_tracks_music_videos_home_videos_and_books()
+    {
+        var cursor = await StartAsync();
+        BaseItem[] items =
+        [
+            new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = "/media/musica/a/1.flac" },
+            new MusicVideo { Id = Guid.NewGuid(), Path = "/media/clip/a.mkv" },
+            new Video { Id = Guid.NewGuid(), Path = "/media/casa/gita.mkv" },
+            new Folder { Id = Guid.NewGuid(), Path = "/media/casa/Gita" },
+            new Book { Id = Guid.NewGuid(), Path = "/media/libri/a.epub" },
+            new AudioBook { Id = Guid.NewGuid(), Path = "/media/libri/b.m4b" }
+        ];
+
+        foreach (var item in items)
+        {
+            RaiseAdded(item);
+        }
+
+        Assert.Equal(items.Select(item => item.Id), _journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task Records_a_changed_album_so_that_its_tracks_reach_the_peer()
+    {
+        var cursor = await StartAsync();
+        var album = new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/media/musica/a" };
+
+        RaiseUpdated(album);
+
+        Assert.Equal([album.Id], _journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task An_album_stub_never_enters_the_feed()
+    {
+        var cursor = await StartAsync();
+
+        RaiseUpdated(new MediaBrowser.Controller.Entities.Audio.MusicAlbum { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/Album" });
+
+        Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task A_series_of_an_old_0_5_folder_never_enters_the_feed()
+    {
+        _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+        var cursor = await StartAsync();
+        var real = new Series { Id = Guid.NewGuid(), Path = "/media/serie/Show" };
+
+        RaiseUpdated(new Series { Id = Guid.NewGuid(), Path = "/vecchia/0f8fad5b-d9cb-469f-a165-70867728950e/Serie/Show" });
+        RaiseUpdated(real);
+
+        Assert.Equal([real.Id], _journal.Read(cursor, "share", 10).ItemIds);
+    }
+
+    [Fact]
+    public async Task A_track_stub_never_enters_the_feed()
+    {
+        var cursor = await StartAsync();
+
+        RaiseAdded(new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = "/federata/0f8fad5b-d9cb-469f-a165-70867728950e/7c9e6679742540de944be07fc1f90ae7/Musica/A/1.strm" });
 
         Assert.Empty(_journal.Read(cursor, "share", 10).ItemIds);
     }

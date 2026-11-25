@@ -12,8 +12,8 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
@@ -28,6 +28,12 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public sealed class ProviderCatalog
 {
+    // How many parents of an item without a path are looked at for one.
+    private const int MaxParents = 4;
+
+    // The page size of a search for hidden items, which no peer sees.
+    private const int SearchPageSize = 500;
+
     private static readonly ItemFields[] _fields =
     [
         ItemFields.ProviderIds,
@@ -42,13 +48,16 @@ public sealed class ProviderCatalog
         ItemFields.Taglines,
         ItemFields.OriginalTitle,
         ItemFields.Chapters,
-        ItemFields.RemoteTrailers
+        ItemFields.RemoteTrailers,
+        ItemFields.ParentId,
+        ItemFields.Path
     ];
 
     private readonly ILibraryManager _library;
     private readonly IDtoService _dto;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<ProviderCatalog> _logger;
+    private readonly HiddenItems _hidden;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ProviderCatalog"/> class.
@@ -58,16 +67,31 @@ public sealed class ProviderCatalog
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
     public ProviderCatalog(ILibraryManager library, IDtoService dto, IPluginConfigurationStore store, ILogger<ProviderCatalog> logger)
+        : this(library, dto, store, logger, TimeProvider.System)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ProviderCatalog"/> class with a clock.
+    /// </summary>
+    /// <param name="library">The library manager.</param>
+    /// <param name="dto">The DTO service.</param>
+    /// <param name="store">The configuration store.</param>
+    /// <param name="logger">The logger.</param>
+    /// <param name="clock">The clock.</param>
+    internal ProviderCatalog(ILibraryManager library, IDtoService dto, IPluginConfigurationStore store, ILogger<ProviderCatalog> logger, TimeProvider clock)
     {
         _library = library;
         _dto = dto;
         _store = store;
         _logger = logger;
+        _hidden = new HiddenItems(clock);
     }
 
     /// <summary>
     /// Tells whether an item is one this server federates itself. §4.4: such an item never leaves it. The URL covers
     /// video stubs wherever they are; the path, links resolved, covers all under the federated folder in every layout, placeholders included.
+    /// The layout of a server folder covers the stubs of every type a moved or cleared federated folder left behind, and its folders.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is a stub.</returns>
@@ -80,21 +104,31 @@ public sealed class ProviderCatalog
             return true;
         }
 
-        var root = FederatedRoot();
-        return root is not null && !string.IsNullOrWhiteSpace(item.Path) && FolderPath.Of(item.Path).IsWithin(root);
+        if (NearestPath(item) is not { } nearest)
+        {
+            return false;
+        }
+
+        var path = FolderPath.Of(nearest);
+        if (HasServerFolderLayout(path) || IsServerFolder(path.Lexical) || IsServerFolder(path.Canonical))
+        {
+            return true;
+        }
+
+        return FederatedRoot() is { } root && path.IsWithin(root);
     }
 
     /// <summary>
-    /// Lists the film and series libraries of this server, except those whose paths are all federated.
+    /// Lists the libraries of this server of a type peers can be given, except those whose paths are all federated.
     /// </summary>
     /// <returns>The libraries.</returns>
     public IReadOnlyList<ProviderLibrary> ReadLibraries()
     {
         var root = FederatedRoot();
         return _library.GetVirtualFolders()
-            .Where(folder => folder.CollectionType is CollectionTypeOptions.movies or CollectionTypeOptions.tvshows && Guid.TryParse(folder.ItemId, out _))
+            .Where(folder => ProviderLibraryTypes.NameOf(folder.CollectionType) is not null && Guid.TryParse(folder.ItemId, out _))
             .Where(folder => root is null || !IsOnlyFederated(folder, root))
-            .Select(folder => new ProviderLibrary(Guid.Parse(folder.ItemId).ToString("N"), folder.Name ?? string.Empty, folder.CollectionType!.Value == CollectionTypeOptions.movies ? "movies" : "tvshows"))
+            .Select(folder => new ProviderLibrary(Guid.Parse(folder.ItemId).ToString("N"), folder.Name ?? string.Empty, ProviderLibraryTypes.NameOf(folder.CollectionType)!))
             .ToList();
     }
 
@@ -115,20 +149,45 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
-    /// Finds an item a peer may reach.
+    /// Finds an item a peer may reach: a real one that a library shared with it gives.
     /// </summary>
     /// <param name="caller">The peer.</param>
     /// <param name="itemId">The item.</param>
     /// <returns>The item, null if it does not exist as far as the peer is concerned.</returns>
-    public BaseItem? FindVisible(PeerCaller caller, Guid itemId)
+    public BaseItem? FindVisible(PeerCaller caller, Guid itemId) => FindVisible(caller, itemId, new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes));
+
+    /// <summary>
+    /// Turns changed items into the changes a peer is told of: those it may reach, each once with the libraries that give
+    /// it, and an album as its tracks. A change no read of its libraries would return would only make the consumer index it.
+    /// </summary>
+    /// <param name="caller">The peer.</param>
+    /// <param name="itemIds">The changed items.</param>
+    /// <returns>The changes.</returns>
+    public IReadOnlyList<ProviderChange> ReadChanges(PeerCaller caller, IEnumerable<Guid> itemIds)
     {
         ArgumentNullException.ThrowIfNull(caller);
+        ArgumentNullException.ThrowIfNull(itemIds);
 
-        return _library.GetItemById<BaseItem>(itemId, caller.User) is { } item
-            && !IsFederated(item)
-            && SharedLibrariesOf(caller.Grant, item).Count > 0
-                ? item
-                : null;
+        var types = new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes);
+        var announced = new HashSet<Guid>();
+        var changes = new List<ProviderChange>();
+        foreach (var itemId in itemIds)
+        {
+            if (FindVisible(caller, itemId, types) is not { } item)
+            {
+                continue;
+            }
+
+            foreach (var entry in item is MusicAlbum ? TracksOf(caller, item) : [item])
+            {
+                if (announced.Add(entry.Id) && !IsFederated(entry) && LibrariesGiving(caller.Grant, entry, types) is { Count: > 0 } libraries)
+                {
+                    changes.Add(new ProviderChange(entry.Id.ToString("N"), entry.GetBaseItemKind().ToString(), libraries));
+                }
+            }
+        }
+
+        return changes;
     }
 
     /// <summary>
@@ -161,15 +220,19 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
 
         // The exclusion is in the query so that the total stays true for the paging of the consumer.
-        if (ScopeOf(libraryId) is not { } scope)
+        if (!ProviderLibraryTypes.Reads(type) || !Gives(libraryId, ProviderLibraryTypes.KindOf(type)) || ScopeOf(libraryId) is not { } scope)
         {
-            return new ProviderItemsResponse([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
+            return Empty();
         }
 
-        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, KindOf(type), startIndex, limit));
+        var kind = ProviderLibraryTypes.KindOf(type);
+        if (startIndex == 0)
+        {
+            ForgetHidden(libraryId, kind);
+        }
 
-        // Should a stub get past the query, the page comes up short: the read fails and nothing leaks.
-        return ToResponse(caller, page.Items.Where(item => !IsFederated(item)).ToList(), page.TotalRecordCount);
+        var page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, _hidden.Of(libraryId, kind), startIndex, limit));
+        return ToResponse(caller, WithoutHidden(caller, libraryId, scope, kind, page.Items), page.TotalRecordCount);
     }
 
     /// <summary>
@@ -186,16 +249,16 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
 
         var collections = CollectionsOfFilms(caller);
-        if (collections.Count == 0 || ScopeOf(libraryId) is not { } scope)
+        if (collections.Count == 0 || !Gives(libraryId, BaseItemKind.Movie) || ScopeOf(libraryId) is not { } scope)
         {
             return new ProviderCollectionsResponse([], 0);
         }
 
-        var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, startIndex, limit);
+        var query = PageQuery(caller, libraryId, scope, BaseItemKind.Movie, _hidden.Of(libraryId, BaseItemKind.Movie), startIndex, limit);
         query.ItemIds = [.. collections.Keys];
         var page = _library.GetItemsResult(query);
-        var entries = page.Items
-            .Where(item => !IsFederated(item) && collections.ContainsKey(item.Id))
+        var entries = WithoutHidden(caller, libraryId, scope, BaseItemKind.Movie, page.Items)
+            .Where(item => collections.ContainsKey(item.Id))
             .Select(item => new ProviderCollectionEntry(item.Id.ToString("N"), collections[item.Id].Name, collections[item.Id].TmdbId))
             .ToList();
         return new ProviderCollectionsResponse(entries, page.TotalRecordCount);
@@ -213,52 +276,162 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(itemIds);
 
-        var kind = KindOf(type);
+        if (!ProviderLibraryTypes.Reads(type))
+        {
+            return Empty();
+        }
+
+        var kind = ProviderLibraryTypes.KindOf(type);
+        var types = new Lazy<Dictionary<string, CollectionTypeOptions?>>(LibraryTypes);
         var items = itemIds
-            .Select(id => FindVisible(caller, id))
+            .Select(id => FindVisible(caller, id, types))
             .OfType<BaseItem>()
             .Where(item => item.GetBaseItemKind() == kind)
             .ToList();
         return ToResponse(caller, items, items.Count);
     }
 
-    /// <summary>
-    /// Tells whether an item is of a kind the catalog holds.
-    /// </summary>
-    /// <param name="item">The item.</param>
-    /// <returns>Whether it is a film, series, season or episode.</returns>
-    public static bool IsCatalogItem(BaseItem item) => item is Movie or Series or Season or Episode;
-
-    /// <summary>
-    /// Tells whether peers may ask for items of a type.
-    /// </summary>
-    /// <param name="type">The item type.</param>
-    /// <returns>Whether it is a film, series, season or episode.</returns>
-    public static bool Shares(RemoteItemType type) => type is RemoteItemType.Movie or RemoteItemType.Series or RemoteItemType.Season or RemoteItemType.Episode;
-
-    private static BaseItemKind KindOf(RemoteItemType type) => type switch
+    // The tracks of an album the user of the peer can see, at any depth.
+    private IReadOnlyList<BaseItem> TracksOf(PeerCaller caller, BaseItem album) => _library.GetItemList(new InternalItemsQuery(caller.User)
     {
-        RemoteItemType.Movie => BaseItemKind.Movie,
-        RemoteItemType.Series => BaseItemKind.Series,
-        RemoteItemType.Season => BaseItemKind.Season,
-        RemoteItemType.Episode => BaseItemKind.Episode,
-        _ => throw new ArgumentOutOfRangeException(nameof(type))
-    };
+        ParentId = album.Id,
+        Recursive = true,
+        IncludeItemTypes = [BaseItemKind.Audio],
+        IsVirtualItem = false
+    });
 
-    // A page of a library as the peer sees it, under the scope that leaves the federated folder out.
-    private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, int startIndex, int limit) => new(caller.User)
+    // The type of each library of this server, by its identifier.
+    private Dictionary<string, CollectionTypeOptions?> LibraryTypes() => _library.GetVirtualFolders()
+        .Where(folder => Guid.TryParse(folder.ItemId, out _))
+        .GroupBy(folder => Guid.Parse(folder.ItemId).ToString("N"), StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.First().CollectionType, StringComparer.Ordinal);
+
+    // Whether a library of this server gives items of a kind; a library no longer on it gives none.
+    private bool Gives(Guid libraryId, BaseItemKind kind)
+    {
+        if (LibraryTypes().TryGetValue(libraryId.ToString("N"), out var type))
+        {
+            return ProviderLibraryTypes.Gives(type, kind);
+        }
+
+        _logger.LogDebug("Library {LibraryId} is no longer on this server, so a page of it reads as empty", libraryId);
+        return false;
+    }
+
+    // The libraries shared with a peer whose type gives it an item (ProviderLibraryTypes.Gives).
+    private IReadOnlyList<string> LibrariesGiving(PeerGrant grant, BaseItem item, Lazy<Dictionary<string, CollectionTypeOptions?>> types)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        var shared = SharedLibrariesOf(grant, item);
+        if (shared.Count == 0)
+        {
+            return shared;
+        }
+
+        var kind = item.GetBaseItemKind();
+        return shared.Where(id => types.Value.TryGetValue(id, out var type) && ProviderLibraryTypes.Gives(type, kind)).ToList();
+    }
+
+    private BaseItem? FindVisible(PeerCaller caller, Guid itemId, Lazy<Dictionary<string, CollectionTypeOptions?>> types)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+
+        return _library.GetItemById<BaseItem>(itemId, caller.User) is { } item
+            && !IsFederated(item)
+            && LibrariesGiving(caller.Grant, item, types).Count > 0
+                ? item
+                : null;
+    }
+
+    // A type no library gives reads as empty rather than refused, so that the read of the rest of the library goes on.
+    private static ProviderItemsResponse Empty() => new([], 0, new Dictionary<string, RemoteQuality>(StringComparer.Ordinal));
+
+    // A page of a library as the peer sees it, under the scope that leaves the federated folder out and without the
+    // items known to be hidden.
+    private static InternalItemsQuery PageQuery(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlySet<Guid> hidden, int startIndex, int limit) => new(caller.User)
     {
         ParentId = libraryId,
         Recursive = true,
         IncludeItemTypes = [kind],
         IsVirtualItem = false,
         AncestorIds = scope.AncestorIds,
-        ExcludeItemIds = scope.ExcludeItemIds,
+        ExcludeItemIds = [.. scope.ExcludeItemIds, .. hidden],
         OrderBy = [(ItemSortBy.DateCreated, SortOrder.Ascending), (ItemSortBy.SortName, SortOrder.Ascending)],
         StartIndex = startIndex,
         Limit = limit,
         EnableTotalRecordCount = true
     };
+
+    // Drops the stubs that got past the query of a page, which comes up short: that read fails and nothing leaks. The
+    // next one leaves out every hidden item of the library.
+    private List<BaseItem> WithoutHidden(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlyList<BaseItem> items)
+    {
+        var hidden = items.Where(IsFederated).Select(item => item.Id).ToHashSet();
+        if (hidden.Count > 0)
+        {
+            LearnHidden(caller, libraryId, scope, kind, hidden);
+        }
+
+        return items.Where(item => !hidden.Contains(item.Id)).ToList();
+    }
+
+    // Remembers the hidden items of a page and, once one not known yet came up, those of the whole library. A request that
+    // finds that search running leaves it to it.
+    private void LearnHidden(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlyCollection<Guid> hidden)
+    {
+        var known = _hidden.Of(libraryId, kind);
+        if (known.IsSupersetOf(hidden))
+        {
+            return;
+        }
+
+        _hidden.KeepOnly(LibraryTypes().Keys.Select(Guid.Parse).ToHashSet());
+        _hidden.Add(libraryId, kind, hidden);
+        if (!_hidden.TryBeginSearch(libraryId, kind))
+        {
+            return;
+        }
+
+        try
+        {
+            SearchHidden(caller, libraryId, scope, kind, known);
+        }
+        finally
+        {
+            _hidden.EndSearch(libraryId, kind);
+        }
+    }
+
+    // Reads a library for its hidden items, up to the most kept. The exclusion holds still, since pages are offsets.
+    private void SearchHidden(PeerCaller caller, Guid libraryId, LibraryScope scope, BaseItemKind kind, IReadOnlySet<Guid> known)
+    {
+        var start = 0;
+        QueryResult<BaseItem> page;
+        do
+        {
+            page = _library.GetItemsResult(PageQuery(caller, libraryId, scope, kind, known, start, SearchPageSize));
+            _hidden.Add(libraryId, kind, page.Items.Where(IsFederated).Select(item => item.Id).ToList());
+            start += SearchPageSize;
+        }
+        while (page.Items.Count > 0 && start < page.TotalRecordCount && _hidden.Of(libraryId, kind).Count < HiddenItems.MaxPerType);
+    }
+
+    // Forgets the hidden items of a library that are gone or no longer hidden.
+    private void ForgetHidden(Guid libraryId, BaseItemKind kind)
+    {
+        if (_hidden.TryBeginCheck(libraryId, kind))
+        {
+            _hidden.Remove(libraryId, kind, _hidden.Of(libraryId, kind).Where(id => _library.GetItemById(id) is not { } item || !IsFederated(item)).ToList());
+        }
+    }
+
+    // The consumer needs only the format of a book for its placeholder (D47), so no name or folder of this server leaves.
+    private static string? ExtensionOf(string? path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension is { Length: >= 2 and <= 6 } && extension[1..].All(char.IsAsciiLetterOrDigit) ? extension.ToLowerInvariant() : null;
+    }
 
     private static RemoteQuality? QualityOf(MediaSourceInfo source)
     {
@@ -309,6 +482,7 @@ public sealed class ProviderCatalog
         foreach (var dto in dtos)
         {
             dto.UserData = null;
+            dto.Path = dto.Type == BaseItemKind.Book ? ExtensionOf(dto.Path) : null;
         }
 
         // The file of a chapter image is a path of this server too.
@@ -346,6 +520,73 @@ public sealed class ProviderCatalog
         return members;
     }
 
+    // The path of an item, or of its nearest parent that has one, such as the series of a season without a folder.
+    private string? NearestPath(BaseItem item)
+    {
+        BaseItem? current = item;
+        for (var depth = 0; current is not null && depth <= MaxParents; depth++)
+        {
+            if (!string.IsNullOrWhiteSpace(current.Path))
+            {
+                return current.Path;
+            }
+
+            current = current.ParentId.Equals(Guid.Empty) ? null : _library.GetItemById(current.ParentId);
+        }
+
+        return null;
+    }
+
+    private static bool HasServerFolderLayout(FolderPath path) => HasServerFolderLayout(path.Lexical) || HasServerFolderLayout(path.Canonical);
+
+    // Looks for the folder of a server anywhere in the path: {server guid}/{library id}/{type folder}, or
+    // {server guid}/{type folder} of the 0.5 layout, which held only films and series (decision 513).
+    private static bool HasServerFolderLayout(string path)
+    {
+        var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i + 1 < parts.Length; i++)
+        {
+            if (Guid.TryParseExact(parts[i], "D", out _)
+                && (IsAny(TypeFolder.Older, parts[i + 1])
+                    || (i + 2 < parts.Length && FederatedPaths.IsLibraryId(parts[i + 1]) && IsAny(TypeFolder.Written, parts[i + 2]))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsAny(IReadOnlyList<TypeFolder> types, string? name) =>
+        types.Any(type => string.Equals(type.Name, name, PathIdentity.Comparison));
+
+    // The folder of a server's library, {server guid}/{library id}, or the folder of a server holding such folders.
+    private static bool IsServerFolder(string path)
+    {
+        var parts = path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && Guid.TryParseExact(parts[^2], "D", out _) && FederatedPaths.IsLibraryId(parts[^1]))
+        {
+            return true;
+        }
+
+        return parts.Length >= 1 && Guid.TryParseExact(parts[^1], "D", out _) && HoldsServerFolders(path);
+    }
+
+    // Whether a folder holds the folder of a library or of a type, as the folder of a server does.
+    private static bool HoldsServerFolders(string path)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(path)
+                .Select(Path.GetFileName)
+                .Any(name => FederatedPaths.IsLibraryId(name) || IsAny(TypeFolder.Written, name));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
     private static bool IsOnlyFederated(VirtualFolderInfo library, FolderPath root)
     {
         var locations = Locations(library);
@@ -363,15 +604,11 @@ public sealed class ProviderCatalog
     }
 
     /// <summary>
-    /// Narrows a page of a library to what is outside the federated folder, at any depth. Null when there is nothing to read.
+    /// Narrows a page of a library to what is outside the federated folder, at any depth, and outside the paths of the library
+    /// that are a server folder left by a moved one. Null when there is nothing to read.
     /// </summary>
     private LibraryScope? ScopeOf(Guid libraryId)
     {
-        if (FederatedRoot() is not { } root)
-        {
-            return LibraryScope.Whole;
-        }
-
         var library = _library.GetVirtualFolders().Find(folder => Guid.TryParse(folder.ItemId, out var id) && id == libraryId);
         if (library is null)
         {
@@ -379,16 +616,22 @@ public sealed class ProviderCatalog
             return null;
         }
 
+        // Every item under a path named with the layout of a server folder is hidden, whatever the root is now. A path that
+        // only links to one is not left out, since what it holds may link out of it.
+        var root = FederatedRoot();
         var locations = Locations(library);
-        var federated = locations.Where(location => location.IsWithin(root)).ToList();
-        var above = locations.Where(location => root.IsWithin(location) && !location.IsWithin(root)).ToList();
-        if (above.Count > 0)
+        var federated = root is null ? [] : locations.Where(location => location.IsWithin(root)).ToList();
+        var rest = locations.Except(federated).ToList();
+        var old = rest.Where(location => HasServerFolderLayout(location.Lexical)).ToList();
+        var real = rest.Except(old).ToList();
+        var above = root is null ? [] : real.Where(root.IsWithin).ToList();
+        if (above.Count > 0 || real.Exists(location => old.Exists(folder => folder.IsNamedWithin(location))))
         {
             // Jellyfin names the federated folder after the path of the library, which may reach it by a link.
-            var folders = above.Select(location => location.Below(root))
+            var folders = above.Select(location => location.Below(root!))
+                .Prepend(above.Count > 0 ? root!.Indexed : null)
                 .OfType<string>()
-                .Prepend(root.Indexed)
-                .Concat(federated.Select(location => location.Indexed))
+                .Concat(federated.Concat(old).Select(folder => folder.Indexed))
                 .Distinct(StringComparer.Ordinal)
                 .Select(path => _library.FindByPath(path, true))
                 .OfType<BaseItem>()
@@ -401,24 +644,36 @@ public sealed class ProviderCatalog
                 : new LibraryScope([], [.. folders, .. _library.GetItemIds(new InternalItemsQuery { AncestorIds = folders, Recursive = true })]);
         }
 
-        if (federated.Count == 0)
+        if (federated.Count == 0 && old.Count == 0)
         {
             return LibraryScope.Whole;
         }
 
-        var paths = locations.Except(federated).Select(location => location.Indexed).ToList();
-        var real = paths
-            .Select(path => _library.FindByPath(path, true))
-            .OfType<BaseItem>()
-            .Select(folder => folder.Id)
-            .ToArray();
-        if (real.Length == 0 && paths.Count > 0)
+        // A read that fails keeps what the peer already has, so an old folder is left out only if no real path is lost with it.
+        var indexed = IndexedIds(real);
+        if (indexed.Length < real.Count && old.Count > 0)
+        {
+            if (federated.Count == 0)
+            {
+                return LibraryScope.Whole;
+            }
+
+            indexed = IndexedIds(rest);
+        }
+
+        if (indexed.Length == 0 && real.Count > 0)
         {
             _logger.LogDebug("The real paths of library {LibraryId} are not indexed yet, so a page of it reads as empty", libraryId);
         }
 
-        return real.Length == 0 ? null : new LibraryScope(real, []);
+        return indexed.Length == 0 ? null : new LibraryScope(indexed, []);
     }
+
+    private Guid[] IndexedIds(IEnumerable<FolderPath> paths) => paths
+        .Select(path => _library.FindByPath(path.Indexed, true))
+        .OfType<BaseItem>()
+        .Select(folder => folder.Id)
+        .ToArray();
 
     // A path as Jellyfin indexes it, which is what it is looked up by, and as it is on disk. It is within a folder if
     // either form is, so that a link inside the federated folder pointing out of it does not let its content out.
@@ -432,6 +687,9 @@ public sealed class ProviderCatalog
 
         public bool IsWithin(FolderPath folder) =>
             PathIdentity.IsWithin(Lexical, folder.Lexical, PathIdentity.Comparison) || PathIdentity.IsWithin(Canonical, folder.Canonical, PathIdentity.Comparison);
+
+        // Whether it is within a folder by its name alone, links not resolved.
+        public bool IsNamedWithin(FolderPath folder) => PathIdentity.IsWithin(Lexical, folder.Lexical, PathIdentity.Comparison);
 
         // A folder within this one on disk, named from the indexed path of this one. Null if it is not within on disk.
         public string? Below(FolderPath folder) =>

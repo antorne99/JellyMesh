@@ -356,7 +356,7 @@ public sealed class PlaybackCoordinator
             var read = await GatedAsync(
                 source.ServerId,
                 Times.StreamOpen,
-                (endpoint, session, token) => LyricsOfAsync(endpoint, session, source, token),
+                (endpoint, session, token) => _client.GetLyricsAsync(endpoint, session, source.ItemId, token),
                 cancellationToken).ConfigureAwait(false);
             if (read.IsSuccess)
             {
@@ -367,13 +367,6 @@ public sealed class PlaybackCoordinator
         }
 
         return failed;
-    }
-
-    // A JellyMesh remote keeps Lyrics closed to its peers until row 460, so its 403 means no lyrics, and no connection error.
-    private async Task<RemoteResult<RemoteLyrics>> LyricsOfAsync(RemoteEndpoint endpoint, RemoteSession session, StubSource source, CancellationToken cancellationToken)
-    {
-        var read = await _client.GetLyricsAsync(endpoint, session, source.ItemId, cancellationToken).ConfigureAwait(false);
-        return read.Failure == RemoteFailure.Forbidden && IsJellyMesh(source.ServerId) ? RemoteResult.Success(RemoteLyrics.None) : read;
     }
 
     /// <summary>

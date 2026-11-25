@@ -2454,24 +2454,18 @@ public partial class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
-    // A JellyMesh remote answers 403 on Lyrics to its peers until row 460, which means it has none to give.
-    [Fact]
-    public async Task Lyrics_a_jellymesh_remote_keeps_from_its_peers_are_not_found()
+    // A JellyMesh remote opens Lyrics to its peers (row 460), so its 403 is a refusal like that of a stock one.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Lyrics_a_remote_refuses_are_refused_with_a_clear_error(bool jellyMesh)
     {
         CanSeeItem();
-        _fixture.Registry.AddJellyMesh(_stub.Sources[0].ServerId);
-        _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Forbidden);
-        var context = LyricsRequest();
+        if (jellyMesh)
+        {
+            _fixture.Registry.AddJellyMesh(_stub.Sources[0].ServerId);
+        }
 
-        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
-        Assert.IsType<NotFoundResult>(context.Result);
-        Assert.DoesNotContain(RemoteFailure.Forbidden, _fixture.Registry.Recorded);
-    }
-
-    [Fact]
-    public async Task Lyrics_a_stock_remote_refuses_are_refused_with_a_clear_error()
-    {
-        CanSeeItem();
         _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Forbidden);
         var context = LyricsRequest();
 

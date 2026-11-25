@@ -83,7 +83,7 @@ public class ProviderController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden);
         }
 
-        if (startIndex < 0 || limit < 1 || !ProviderCatalog.Shares(includeItemTypes))
+        if (startIndex < 0 || limit < 1 || !Enum.IsDefined(includeItemTypes))
         {
             return BadRequest();
         }
@@ -163,16 +163,7 @@ public class ProviderController : ControllerBase
         }
 
         var window = _journal.Read(cursor, caller.Grant.ShareKey, Math.Min(limit, ProviderProtocol.MaxChangesPerPage));
-        var changes = new List<ProviderChange>();
-        foreach (var itemId in window.ItemIds)
-        {
-            if (_catalog.FindVisible(caller, itemId) is { } item)
-            {
-                changes.Add(new ProviderChange(item.Id.ToString("N"), item.GetBaseItemKind().ToString(), _catalog.SharedLibrariesOf(caller.Grant, item)));
-            }
-        }
-
-        return new ProviderChangesResponse(window.Reset, window.Cursor, window.HasMore, changes);
+        return new ProviderChangesResponse(window.Reset, window.Cursor, window.HasMore, _catalog.ReadChanges(caller, window.ItemIds));
     }
 
     /// <summary>
