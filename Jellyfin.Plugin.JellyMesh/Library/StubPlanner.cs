@@ -1130,14 +1130,13 @@ public static partial class StubPlanner
     {
         private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
 
-        // Finds the series stub of a work by its key, then by a remote series among those no other work has, written ones first.
+        // Finds the series stub of a work by its key, then by a remote series among those no other work has, in their order.
         public SeriesStub? Claim(string workKey, List<(Guid ServerId, IndexedItem Item)> known)
         {
             var stub = Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
-                ?? Existing.Where(entry => !Contents.Contains(entry.WorkKey)
+                ?? Existing.FirstOrDefault(entry => !Contents.Contains(entry.WorkKey)
                     && !_claimed.Contains(entry.Id)
-                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)))
-                    .MinBy(entry => entry.ContentHash is null);
+                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
             if (stub is not null)
             {
                 _claimed.Add(stub.Id);

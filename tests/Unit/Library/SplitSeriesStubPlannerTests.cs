@@ -403,22 +403,26 @@ public class SplitSeriesStubPlannerTests
         Assert.Single(next.Series);
     }
 
-    [Fact]
-    public void AWorkOfAnotherKeyKeepsItsRowBeforeOneMadeAgain()
+    // On a tie of source the rows keep their order, written or not (§10 row 562).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AWorkOfAnotherKeyTakesTheFirstRowOfItsSource(bool writtenFirst)
     {
         RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2)];
         var first = Sync(StubState.Empty, [Series("s1")], episodes);
         var old = first with
         {
-            Series = first.Series.Select(entry => entry with { ContentHash = "written" }).ToList(),
             Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { SeriesStubId = "gone", RelativePath = stub.RelativePath.Replace("Show (2020)", "Show", StringComparison.Ordinal) } : stub).ToList()
         };
         var second = Sync(old, [Series("s1")], episodes);
-        Assert.Equal(2, second.Series.Count);
+        var written = Assert.Single(second.Series, entry => entry.Id == first.Series[0].Id) with { ContentHash = "written" };
+        var made = Assert.Single(second.Series, entry => entry.Id != first.Series[0].Id) with { ContentHash = null };
+        SeriesStub[] rows = writtenFirst ? [written, made] : [made, written];
 
-        var third = Plan(false, second, [Series("s1", tvdb: "71")], episodes);
+        var third = Plan(false, second with { Series = rows }, [Series("s1", tvdb: "71")], episodes);
 
-        Assert.Equal(first.Series[0].Id, Assert.Single(third.Series).Entry.Id);
+        Assert.Equal(rows[0].Id, Assert.Single(third.Series).Entry.Id);
     }
 
     private static void AssertInTheirFolder(StubState state)
