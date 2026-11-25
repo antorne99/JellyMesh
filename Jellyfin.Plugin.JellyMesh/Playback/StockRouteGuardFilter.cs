@@ -502,8 +502,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var range = http.Request.Headers.Range.ToString();
         var asked = string.IsNullOrEmpty(range) ? null : range;
 
-        // A track falls back to its copies the user sees (row 457); a video stub stays on its server (D22).
-        using var opened = stub.Kind == StubKind.Track
+        // A track falls back to its copies the user sees (row 457); a video stub stays on its server (D22). Audio is read with
+        // its device, which shares one slot on a JellyMesh remote (rows 511 and 561).
+        using var opened = stub.Kind is StubKind.Track or StubKind.AudioBook
             ? await _coordinator.OpenTrackFileAsync(user.Id, authorization.DeviceId ?? string.Empty, stub, _versions.Fallbacks(itemId, stub, user).Select(copy => copy.Stub).ToList(), method, asked, http.RequestAborted).ConfigureAwait(false)
             : await _coordinator.OpenFileAsync(stub, method, asked, http.RequestAborted).ConfigureAwait(false);
         if (opened is null)

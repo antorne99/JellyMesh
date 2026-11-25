@@ -894,10 +894,11 @@ public sealed class PlaybackCoordinator
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
     }
 
-    // What names the device of a track to a JellyMesh remote, so that its streams share a slot there (row 511).
+    // What names the device of a track or an audiobook to a JellyMesh remote, so that its streams share a slot there (rows
+    // 511 and 561).
     private string? DeviceFor(StubEntry stub, StubSource source, Guid userId, string? deviceId)
     {
-        return stub.Kind == StubKind.Track && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
+        return stub.Kind is StubKind.Track or StubKind.AudioBook && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
     }
 
     // A session keeps its device, and its server can stop running JellyMesh meanwhile.

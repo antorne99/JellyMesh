@@ -1032,6 +1032,19 @@ public class PeerGuardFilterTests
         VerifyNothingClosed();
     }
 
+    // Row 561: an audiobook is audio, so its reads share the slot of their device as those of a track.
+    [Fact]
+    public async Task An_audiobook_read_holds_the_slot_of_its_device()
+    {
+        var book = Guid.Parse("61000000-0000-0000-0000-000000000000");
+        _fixture.AddItem(book, new MediaBrowser.Controller.Entities.AudioBook { Path = "/media/music/book.m4b" }, ProviderFixture.SharedLibrary);
+
+        Assert.True(await FileAsync(DeviceOne, book));
+        Assert.True(await FileAsync(DeviceOne, book));
+        Assert.False(await FileAsync(DeviceTwo, book));
+        Assert.Equal(1, Slots);
+    }
+
     // What a consumer sends and what a provider takes are the same value.
     [Fact]
     public async Task The_hashes_a_consumer_makes_group_its_reads_by_device()
