@@ -16,6 +16,7 @@ public static class QualityRanking
 {
     private const long BitRateTolerancePercent = 95;
     private const string BestCodec = "AV1";
+    private const int LosslessRank = 10;
 
     /// <summary>
     /// Ranks sources best first. Each position holds the winner among the sources not yet placed, so the first backup is
@@ -91,6 +92,78 @@ public static class QualityRanking
             .ThenBy(source => source.ItemId, StringComparer.Ordinal)
             .ThenBy(source => source.MediaSourceId, StringComparer.Ordinal)
             .First();
+    }
+
+    /// <summary>
+    /// Ranks the sources of a track best first (row 453, D65): lossless before lossy, then bit depth, sample rate, bitrate
+    /// with the tolerance of §4.3, and codec, most efficient first. Ties are ordered as in <see cref="Rank"/>.
+    /// </summary>
+    /// <param name="sources">The sources.</param>
+    /// <returns>The distinct sources, best first.</returns>
+    public static IReadOnlyList<RemoteSource> RankAudio(IEnumerable<RemoteSource> sources)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+
+        var remaining = sources.Distinct().ToList();
+        var ranked = new List<RemoteSource>(remaining.Count);
+        while (remaining.Count > 0)
+        {
+            var best = SelectBestAudio(remaining);
+            ranked.Add(best);
+            remaining.Remove(best);
+        }
+
+        return ranked;
+    }
+
+    private static RemoteSource SelectBestAudio(List<RemoteSource> sources)
+    {
+        var anyLossless = sources.Any(source => IsLossless(source.Quality.Codec));
+        var best = sources.Where(source => IsLossless(source.Quality.Codec) == anyLossless).ToList();
+
+        var maxDepth = best.Max(source => source.Quality.BitDepth ?? 0);
+        best = best.Where(source => (source.Quality.BitDepth ?? 0) == maxDepth).ToList();
+
+        var maxRate = best.Max(source => source.Quality.SampleRate ?? 0);
+        best = best.Where(source => (source.Quality.SampleRate ?? 0) == maxRate).ToList();
+
+        var maxBitRate = best.Max(BitRate);
+        return best
+            .Where(source => BitRate(source) * 100 >= maxBitRate * BitRateTolerancePercent)
+            .OrderByDescending(source => AudioCodecRank(source.Quality.Codec))
+            .ThenByDescending(BitRate)
+            .ThenBy(source => source.ServerId, StringComparer.Ordinal)
+            .ThenBy(source => source.ItemId, StringComparer.Ordinal)
+            .ThenBy(source => source.MediaSourceId, StringComparer.Ordinal)
+            .First();
+    }
+
+    // The lossless codecs of row 453 and D6.
+    private static bool IsLossless(string? codec) => AudioCodecRank(codec) >= LosslessRank;
+
+    // D65: lossless flac > alac > wavpack > ape > truehd > mlp > pcm_*, then lossy opus > aac > vorbis > mp3 > the rest.
+    private static int AudioCodecRank(string? codec)
+    {
+        var name = codec?.ToLowerInvariant();
+        if (name is not null && name.StartsWith("pcm_", StringComparison.Ordinal))
+        {
+            return LosslessRank;
+        }
+
+        return name switch
+        {
+            "flac" => LosslessRank + 6,
+            "alac" => LosslessRank + 5,
+            "wavpack" => LosslessRank + 4,
+            "ape" => LosslessRank + 3,
+            "truehd" => LosslessRank + 2,
+            "mlp" => LosslessRank + 1,
+            "opus" => 4,
+            "aac" => 3,
+            "vorbis" => 2,
+            "mp3" => 1,
+            _ => 0,
+        };
     }
 
     private static int Height(RemoteSource source) => source.Quality.Height ?? 0;

@@ -22,6 +22,89 @@ public class CatalogItemMapperTests
     private static ServerCatalog Catalog(params IndexedItem[] items)
         => new() { ServerId = _serverId, State = ServerSyncState.Complete, Items = items };
 
+    private static IndexedItem Song(string id, params IndexedVersion[] versions) => new()
+    {
+        ItemId = id,
+        Kind = IndexedItemKind.Audio,
+        LibraryId = "music",
+        LastSeenUtc = _now,
+        Name = "Song",
+        Album = "Album",
+        AlbumArtists = ["Band"],
+        Artists = ["Band", "Guest"],
+        IndexNumber = 4,
+        ParentIndexNumber = 2,
+        RunTimeTicks = 1_800_000_000,
+        ProviderIds = new System.Collections.Generic.Dictionary<string, string>
+        {
+            ["MusicBrainzRecording"] = "rec",
+            ["MusicBrainzTrack"] = "trk",
+            ["MusicBrainzAlbum"] = "alb"
+        },
+        Versions = versions
+    };
+
+    [Fact]
+    public void ATrackCarriesItsTagsAndMusicBrainzIds()
+    {
+        var song = Song("t", new IndexedVersion { MediaSourceId = "ms" });
+
+        var track = Assert.Single(CatalogItemMapper.ToTrackItems(Catalog(song, Map(TestItems.Movie("m"), RemoteItemType.Movie))));
+
+        Assert.Equal((_serverId.ToString("N"), "t", "Song", "Album"), (track.ServerId, track.ItemId, track.Title, track.Album));
+        Assert.Equal(["Band"], track.AlbumArtists);
+        Assert.Equal(["Band", "Guest"], track.Artists);
+        Assert.Equal((2, 4, 1_800_000_000L), (track.DiscNumber, track.TrackNumber, track.RunTimeTicks));
+        Assert.Equal(("rec", "trk"), (track.RecordingId, track.TrackId));
+        Assert.Equal("ms", Assert.Single(track.Versions).MediaSourceId);
+        Assert.DoesNotContain(CatalogItemMapper.ToCatalogItems(Catalog(song)), item => item.ItemId == "t");
+    }
+
+    [Fact]
+    public void TheQualityOfATrackComesFromItsDefaultAudioStream()
+    {
+        var version = new IndexedVersion
+        {
+            MediaSourceId = "ms",
+            ContainerBitRate = 2_000_000,
+            Streams =
+            [
+                new IndexedTrack { Type = "Video", Codec = "mjpeg", BitRate = 5_000_000, IsDefault = true },
+                new IndexedTrack { Type = "Audio", Codec = "mp3", BitRate = 128_000, SampleRate = 44100 },
+                new IndexedTrack { Type = "Audio", Codec = "flac", BitRate = 900_000, BitDepth = 24, SampleRate = 96000, IsDefault = true }
+            ]
+        };
+
+        var quality = Assert.Single(Assert.Single(CatalogItemMapper.ToTrackItems(Catalog(Song("t", version)))).Versions).Quality;
+
+        Assert.Equal(("flac", 24, 96000, 900_000), (quality.Codec, quality.BitDepth, quality.SampleRate, quality.BitRate));
+    }
+
+    [Fact]
+    public void WithoutADefaultTheFirstAudioStreamCountsAndTheContainerBitrateStandsForAMissingOne()
+    {
+        var version = new IndexedVersion
+        {
+            MediaSourceId = "ms",
+            ContainerBitRate = 1_000_000,
+            Streams = [new IndexedTrack { Type = "Audio", Codec = "alac", BitDepth = 16, SampleRate = 44100 }, new IndexedTrack { Type = "Audio", Codec = "mp3" }]
+        };
+
+        var quality = Assert.Single(Assert.Single(CatalogItemMapper.ToTrackItems(Catalog(Song("t", version)))).Versions).Quality;
+
+        Assert.Equal(("alac", 16, 44100, 1_000_000), (quality.Codec, quality.BitDepth, quality.SampleRate, quality.BitRate));
+    }
+
+    [Fact]
+    public void AnAudioVersionWithoutStreamsKeepsTheContainerBitrateOnly()
+    {
+        var version = new IndexedVersion { MediaSourceId = "ms", ContainerBitRate = 320_000 };
+
+        var quality = Assert.Single(Assert.Single(CatalogItemMapper.ToTrackItems(Catalog(Song("t", version)))).Versions).Quality;
+
+        Assert.Equal((null, null, null, 320_000), (quality.Codec, quality.BitDepth, quality.SampleRate, quality.BitRate));
+    }
+
     [Fact]
     public void AnEpisodeTakesTitleYearAndIdsFromItsSeries()
     {

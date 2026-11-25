@@ -22,6 +22,47 @@ public sealed class FederationResolverTests : IDisposable
 
     private async Task SyncAsync() => await _fixture.Sync.RunAsync(CancellationToken.None);
 
+    private static IndexedItem Song(string id, string codec, int bitRate) => new()
+    {
+        ItemId = id,
+        Kind = IndexedItemKind.Audio,
+        LibraryId = "music",
+        LastSeenUtc = SyncFixture.Start,
+        Name = "Song",
+        Album = "Album",
+        AlbumArtists = ["Band"],
+        IndexNumber = 1,
+        RunTimeTicks = 1_800_000_000,
+        ProviderIds = new Dictionary<string, string> { ["MusicBrainzRecording"] = "rec" },
+        Versions = [new IndexedVersion { MediaSourceId = "ms-" + id, Streams = [new IndexedTrack { Type = "Audio", Codec = codec, BitRate = bitRate }] }]
+    };
+
+    [Fact]
+    public void TracksAreResolvedAcrossServersBesideTheContentsAndNeverTurnLocal()
+    {
+        var a = new RemoteServerInfo(Guid.NewGuid(), "A", "http://a", RemoteMode.Standard, 0, ["music"], null, null);
+        var b = new RemoteServerInfo(Guid.NewGuid(), "B", "http://b", RemoteMode.Standard, 0, ["music"], null, null);
+        ServerCatalog Catalog(RemoteServerInfo server, IndexedItem item) => new() { ServerId = server.Id, State = ServerSyncState.Complete, Items = [item] };
+        var snapshot = new IndexSnapshot
+        {
+            Version = IndexSnapshot.CurrentVersion,
+            Health = IndexHealth.Ok,
+            Servers = [Catalog(a, Song("mp3", "mp3", 320_000)), Catalog(b, Song("flac", "flac", 900_000))]
+        };
+        _local.Items.Add(new CatalogItem { ServerId = "local", ItemId = Guid.NewGuid().ToString(), Kind = ContentKind.Movie, Title = "Song" });
+
+        var view = Resolver().Resolve(snapshot, [a, b]);
+
+        Assert.Empty(view.Contents);
+        var track = Assert.Single(view.Tracks);
+        Assert.Equal("Track|mbr:rec", track.Identity.Key);
+        Assert.False(track.IsLocal);
+        Assert.Empty(track.LocalItemIds);
+        Assert.Equal((b.Id, "B", "flac", "Song"), (track.Winner!.ServerId, track.Winner.ServerName, track.Winner.ItemId, track.Winner.Title));
+        Assert.Equal([(a.Id, "mp3")], track.Backups.Select(source => (source.ServerId, source.ItemId)));
+        Assert.Equal([new ResolvedItem(a.Id, "mp3"), new ResolvedItem(b.Id, "flac")], track.RemoteItems.OrderBy(item => item.ItemId == "flac"));
+    }
+
     [Fact]
     public async Task ALocalCopyWins()
     {

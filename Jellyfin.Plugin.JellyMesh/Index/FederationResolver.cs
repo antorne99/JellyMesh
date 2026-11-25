@@ -98,8 +98,16 @@ public sealed class FederationResolver : IFederationResolver
             })
             .ToList();
 
+        var tracks = TrackDedup.Resolve(catalogs.SelectMany(CatalogItemMapper.ToTrackItems))
+            .Select(decision => new ResolvedContent(decision.Identity, false, ToSource(decision.Winner!), decision.Backups.Select(ToSource).ToList())
+            {
+                RemoteItems = decision.RemoteItems.Select(ToResolvedItem).ToList()
+            })
+            .ToList();
+
         return new FederationView(snapshot.Health, local.Count, contents, result.Issues)
         {
+            Tracks = tracks,
             LocalItemByWork = result.LocalItemByWork.ToDictionary(entry => entry.Key, entry => ToLocalId(entry.Value), StringComparer.Ordinal),
             MergeCases = result.MergeCases
                 .Select(entry => new MergeCaseView(
