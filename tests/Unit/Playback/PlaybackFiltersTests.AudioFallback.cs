@@ -399,6 +399,22 @@ public partial class PlaybackFiltersTests
         Assert.StartsWith("/Videos/item-a/", _fixture.Client.Opened[^1], StringComparison.Ordinal);
     }
 
+    // Row 561: a known track stub named as a version of a real track is not found, as a video stub is, and reaches no remote.
+    [Fact]
+    public async Task PlaybackInfo_naming_a_track_stub_as_a_version_of_a_real_track_is_not_found()
+    {
+        var (store, _, _) = TrackWithCopy();
+        var real = Guid.NewGuid();
+        var item = new MediaBrowser.Controller.Entities.Audio.Audio { Id = real, Path = "/musica/Artist/Album/01 - Song.flac" };
+        _library.Setup(library => library.GetItemById(real)).Returns(item);
+        _library.Setup(library => library.GetItemById<BaseItem>(real, _user)).Returns(item);
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", real), ("mediaSourceId", _itemId.ToString("N")));
+
+        Assert.False(await RunAsync(InfoFilter(store), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
     // No local audio transcode: when every copy answers but none can serve, the track stays with a clear error.
     [Fact]
     public async Task PlaybackInfo_of_a_track_no_copy_can_serve_tries_each_copy_and_never_reads_a_file()

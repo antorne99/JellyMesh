@@ -267,7 +267,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
     }
 
-    private bool IsFederated(Guid itemId) => _stubs.Resolve(itemId, out var isUnknown) is not null || isUnknown;
+    // Tells whether an item is a stub, a known audio stub included, or a federated .strm the registry does not hold.
+    private bool IsFederated(Guid itemId) => _stubs.ResolvePlayable(itemId, out var isUnknown) is not null || isUnknown;
 
     // Keeps only the source of a local version, and never the one of a stub, which holds its signed URL.
     private void KeepLocal(PlaybackInfoResponse response, Guid versionId)
