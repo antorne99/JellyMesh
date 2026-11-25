@@ -2437,6 +2437,10 @@ public partial class PlaybackFiltersTests
         Assert.Equal(_remoteBytes, BodyOf(get));
         Assert.Equal(PlaybackStreamKind.Progressive, Assert.Single(_fixture.Sessions.All).Kind);
         Assert.Single(_fixture.Client.Requests);
+
+        // Row 561: neither the HEAD nor the GET of universal is sniffed.
+        Assert.Equal("nosniff", head.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Equal("nosniff", get.HttpContext.Response.Headers.XContentTypeOptions.ToString());
     }
 
     // The extension of a transcode comes from the remote, so the HEAD of universal tells an audio type only.
@@ -2536,6 +2540,7 @@ public partial class PlaybackFiltersTests
         Assert.Equal(_remoteBytes, BodyOf(context));
         var direct = Assert.Single(Assert.Single(_fixture.Client.Requests).DeviceProfile!.DirectPlayProfiles);
         Assert.Equal(("mp3", "mp3"), (direct.Container, direct.AudioCodec));
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
     }
 
     // No local audio transcode: a remote that answers but cannot serve leaves a clear error, and stock is never reached.

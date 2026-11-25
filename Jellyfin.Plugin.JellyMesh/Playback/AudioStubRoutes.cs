@@ -88,7 +88,13 @@ public sealed class AudioStubRoutes
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
+        // Universal and stream answer with the type of the remote, which is never sniffed (row 561).
         var http = context.HttpContext;
+        if (route is AudioRoute.Universal or AudioRoute.Stream)
+        {
+            http.Response.Headers.XContentTypeOptions = "nosniff";
+        }
+
         var arguments = new Arguments(context.ActionArguments);
         var request = OpenRequest(route, arguments, access, stub, copies);
         var opened = await FindOrOpenAsync(Fingerprint(route, access, context.ActionArguments), request, http.RequestAborted).ConfigureAwait(false);
