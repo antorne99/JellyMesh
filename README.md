@@ -355,6 +355,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Going back:** a server that has run 0.6 goes back to 0.5 only by hand, as described in [Upgrading to 0.6](#upgrading-to-06), and one that has run 0.5 can't go back to 0.4.
 - **Bandwidth:** every stream passes through your server, which reads it from the remote and sends it to the client.
 - **Matching:** a title and year alone never merge two copies. When metadata can't confirm a match, both copies stay. A copy with no IDs and no year stays alone.
+- **Watch state of the same episode in two libraries:** on Jellyfin 12.4, deleting a library that holds two copies of the same episode, such as a file with episodes 1 and 2 and a file with episode 1 only, can move the watch state of one copy onto the other at the next scan. Jellyfin does this without JellyMesh too. JellyMesh deletes its own libraries when you change the library mode of a server or turn off the library of all servers, so check the watched marks of such episodes afterwards.
 - **Seasons from two servers:** when two servers give different names or plots for a season of the same series, which one Jellyfin shows is effectively random, and stays the same on a given install. Each episode keeps the season name of its own server.
 - **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 only starting the plugin and opening its database have been checked.
 - **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
