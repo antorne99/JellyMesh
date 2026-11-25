@@ -201,6 +201,49 @@ public sealed class PhotoMaterializerTests : IDisposable
         Assert.True(File.Exists(ThumbnailOfTheStub()));
     }
 
+    // Row 560: a remote may give the thumbnail of these formats in their own format, which is never a clean JPEG.
+    [Theory]
+    [InlineData("IMG_0001.GIF")]
+    [InlineData("IMG_0001.tif")]
+    [InlineData("IMG_0001.tiff")]
+    [InlineData("IMG_0001.avif")]
+    public async Task ARefusedThumbnailOfAGifATiffOrAnAvifIsReadAgainOnlyWhenItChanges(string file)
+    {
+        await AddPhotosAsync(Photo(file: file));
+        _fixture.Sync.Client.Thumbnail = WithExif();
+        await _fixture.SyncAndMaterializeAsync();
+        Assert.Equal(1, PhotoReads());
+
+        _fixture.Sync.Client.Thumbnail = PhotoPlaceholders.For("jpg");
+        await _fixture.SyncAndMaterializeAsync();
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await _fixture.Materializer.MaterializeAsync(true, CancellationToken.None);
+        Assert.Equal(1, PhotoReads());
+        Assert.False(File.Exists(ThumbnailOfTheStub()));
+
+        _fixture.Sync.Client.Items[(TestLibraries.HomeVideos, RemoteItemType.Photo)][0] = Photo(file: file) with
+        {
+            ImageTags = new Dictionary<string, string> { ["Primary"] = "edited" }
+        };
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(2, PhotoReads());
+        Assert.True(File.Exists(ThumbnailOfTheStub()));
+    }
+
+    [Fact]
+    public async Task AThumbnailOfAGifDeletedFromTheDiskIsReadAgain()
+    {
+        await AddPhotosAsync(Photo(file: "IMG_0001.gif"));
+        await _fixture.SyncAndMaterializeAsync();
+        File.Delete(ThumbnailOfTheStub());
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(2, PhotoReads());
+        Assert.True(File.Exists(ThumbnailOfTheStub()));
+    }
+
     [Fact]
     public async Task AThumbnailReadLaterBecomesThePrimaryOfThePhoto()
     {

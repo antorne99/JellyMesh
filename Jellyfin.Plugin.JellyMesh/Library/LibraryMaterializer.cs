@@ -663,13 +663,15 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
     }
 
     // Reads the thumbnail of each photo that has none, or whose remote image changed since (its Primary tag, kept as the
-    // technical tag). One that cannot be read keeps the old file and its old tag, so the next run tries again.
+    // technical tag). One that cannot be read keeps the old file and its old tag, so the next run tries again, but a GIF,
+    // TIFF or AVIF refused at a tag, which waits for its next one (row 560).
     private async Task FetchThumbnailsAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
     {
         var wanted = plan.Stubs
             .Where(work => work.Entry.Kind == StubKind.Photo && work.Entry.Sources.Count > 0)
             .Select(work => (Work: work, Path: PhotoThumbnails.PathOf(run.Root, work.Entry.Id)))
             .Where(photo => photo.Path is not null
+                && !string.Equals(photo.Work.Entry.TechnicalTag, PhotoThumbnails.Refused(photo.Work.TechnicalTag), StringComparison.Ordinal)
                 && (!File.Exists(photo.Path) || !string.Equals(photo.Work.Entry.TechnicalTag, photo.Work.TechnicalTag, StringComparison.Ordinal)))
             .ToList();
         var failed = 0;
@@ -690,6 +692,7 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         run.ImagesPending += failed;
     }
 
+    // Reads and writes the thumbnail of one photo; false when the next run must try again.
     private async Task<bool> FetchThumbnailAsync(Run run, StubEntry photo, string path, CancellationToken cancellationToken)
     {
         var source = photo.Sources[0];
@@ -716,6 +719,12 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
         if (!PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
         {
             _logger.LogWarning("A photo thumbnail from a remote was not a whole JPEG of the thumbnail size without EXIF and was not saved");
+            if (PhotoThumbnails.IsReadOnceWhenRefused(photo.RelativePath))
+            {
+                run.RefusedThumbnails[photo.Id] = true;
+                return true;
+            }
+
             return false;
         }
 
@@ -923,6 +932,9 @@ public sealed partial class LibraryMaterializer : ILibraryMaterializer
 
         /// <summary>Gets the photo stubs whose thumbnail was written this run.</summary>
         public ConcurrentDictionary<string, bool> Thumbnails { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Gets the photo stubs whose thumbnail was refused this run and is read again only on a change.</summary>
+        public ConcurrentDictionary<string, bool> RefusedThumbnails { get; } = new(StringComparer.Ordinal);
 
         /// <summary>Gets the remote images read ahead, by relative stem, with null for one that could not be read.</summary>
         public ConcurrentDictionary<string, string?> Fetched { get; } = new(StringComparer.Ordinal);
