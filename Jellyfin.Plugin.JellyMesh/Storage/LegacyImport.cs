@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using Microsoft.Data.Sqlite;
@@ -117,6 +118,7 @@ public sealed class LegacyImport
     private readonly string _folder;
     private readonly string? _configurationFile;
     private readonly ILogger<LegacyImport> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IKeyFileGuard _guard;
     private readonly Func<SqliteConnection, string> _check;
 
@@ -126,8 +128,9 @@ public sealed class LegacyImport
     /// <param name="folder">The plugin data folder.</param>
     /// <param name="configurationFile">The configuration XML Jellyfin kept for 0.5, or null when there is none to read.</param>
     /// <param name="logger">The logger.</param>
-    public LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger)
-        : this(folder, configurationFile, logger, KeyFileGuards.ForThisSystem())
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, ErrorLogLimits? errorLogs = null)
+        : this(folder, configurationFile, logger, KeyFileGuards.ForThisSystem(), errorLogs: errorLogs)
     {
     }
 
@@ -139,8 +142,10 @@ public sealed class LegacyImport
     /// <param name="logger">The logger.</param>
     /// <param name="guard">Keeps the moved files private.</param>
     /// <param name="check">Runs the integrity check of the database; <c>PRAGMA integrity_check</c> when null.</param>
-    internal LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, IKeyFileGuard guard, Func<SqliteConnection, string>? check = null)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    internal LegacyImport(string folder, string? configurationFile, ILogger<LegacyImport> logger, IKeyFileGuard guard, Func<SqliteConnection, string>? check = null, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _folder = folder;
         _configurationFile = configurationFile;
         _logger = logger;
@@ -262,7 +267,7 @@ public sealed class LegacyImport
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 kept++;
-                _logger.LogWarning("The old JellyMesh file {File} cannot be overwritten and deleted yet: {Error}", Path.GetFileName(file), exception.Message);
+                _logger.LogWarning("The old JellyMesh file {File} cannot be overwritten and deleted yet: {Error}{Detail:l}", Path.GetFileName(file), exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
 
@@ -449,7 +454,7 @@ public sealed class LegacyImport
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("The old JellyMesh files cannot all move to {Folder} yet: {Error}. They are never read again, and the next start moves them", FolderName, exception.Message);
+            _logger.LogWarning("The old JellyMesh files cannot all move to {Folder} yet. They are never read again, and the next start moves them: {Error}{Detail:l}", FolderName, exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }
@@ -579,7 +584,7 @@ public sealed class LegacyImport
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode is Corrupt or NotADatabase)
         {
-            _logger.LogDebug("The old JellyMesh file {File} cannot be read: {Error}", KeptWatchStateStore.FileName, exception.Message);
+            _logger.LogDebug("The old JellyMesh file {File} cannot be read: {Error}{Detail:l}", KeptWatchStateStore.FileName, exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.Local.Of(exception) : string.Empty);
         }
         catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException or ArgumentException)
         {

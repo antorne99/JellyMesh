@@ -563,7 +563,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (SqliteException exception) when (!IsDamage(exception))
         {
-            _logger.LogWarning("The JellyMesh database log could not be emptied at open: {Error}", exception.Message);
+            _logger.LogWarning("The JellyMesh database log could not be emptied at open: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -654,7 +654,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogWarning("The damaged JellyMesh database file {File} cannot be overwritten and deleted yet: {Error}", Path.GetFileName(file.FilePath), exception.Message);
+                _logger.LogWarning("The damaged JellyMesh database file {File} cannot be overwritten and deleted yet: {Error}{Detail:l}", Path.GetFileName(file.FilePath), exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
     }
@@ -671,7 +671,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("The damaged JellyMesh database files cannot be listed: {Error}", exception.Message);
+            _logger.LogWarning("The damaged JellyMesh database files cannot be listed: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -708,7 +708,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("The JellyMesh database {What} {File} cannot be overwritten and deleted yet: {Error}", what, Path.GetFileName(path), exception.Message);
+            _logger.LogWarning("The JellyMesh database {What} {File} cannot be overwritten and deleted yet: {Error}{Detail:l}", what, Path.GetFileName(path), exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

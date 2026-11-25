@@ -20,7 +20,7 @@ public static partial class FederatedPaths
 
     private const int MaxNameBytes = 120;
     private const int MaxFileNameBytes = 255;
-    private const int MaxLabelLength = 40;
+    private const int MaxLabelBytes = 40;
     private const int GuidDigits = 8;
     private const string FallbackName = "Untitled";
     private const string MoviesFolder = "Film";
@@ -278,6 +278,22 @@ public static partial class FederatedPaths
     }
 
     /// <summary>
+    /// Tells whether a saved label is over the byte limit of a label, without the start of the GUID it may end with
+    /// (row 564).
+    /// </summary>
+    /// <param name="serverId">The server of the label.</param>
+    /// <param name="label">The saved label.</param>
+    /// <returns>True if the label is too long.</returns>
+    public static bool IsLabelOverLimit(Guid serverId, string label)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+
+        var suffix = " " + GuidStart(serverId);
+        var name = label.EndsWith(suffix, StringComparison.Ordinal) ? label[..^suffix.Length] : label;
+        return Encoding.UTF8.GetByteCount(name) > MaxLabelBytes;
+    }
+
+    /// <summary>
     /// Tells whether each name of a path is short enough for a file system that counts its bytes.
     /// </summary>
     /// <param name="relativePath">The path.</param>
@@ -356,10 +372,7 @@ public static partial class FederatedPaths
                 && !_threeDWords.Contains(word, StringComparer.OrdinalIgnoreCase));
 
         var label = string.Join(' ', words);
-        if (label.Length > MaxLabelLength)
-        {
-            label = label[..MaxLabelLength].TrimEnd();
-        }
+        label = label[..LengthWithin(label, MaxLabelBytes)].TrimEnd();
 
         return label.Length == 0 ? GuidStart(serverId) : label;
     }

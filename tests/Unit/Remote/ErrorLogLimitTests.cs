@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Controller;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -124,12 +125,12 @@ public class ErrorLogLimitTests
             constructor => constructor.GetParameters().Any(parameter => parameter.ParameterType == typeof(ErrorLogLimits))));
     }
 
-    // Row 554: the database and the settings store are local log points of 0.6.
+    // Row 554: the database and the settings store are local log points of 0.6; row 564 adds the nightly task and the import.
     [Fact]
     public void TheDatabaseAndTheSettingsStoreLogTheirErrorsWithinTheLimits()
     {
         Assert.All(
-            new[] { typeof(PluginDatabase), typeof(PluginConfigurationStore) },
+            new[] { typeof(PluginDatabase), typeof(PluginConfigurationStore), typeof(ReconciliationTask), typeof(LegacyImport) },
             type => Assert.Contains(type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic), field => field.FieldType == typeof(ErrorLogLimits)));
     }
 

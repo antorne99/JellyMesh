@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
@@ -29,6 +30,15 @@ public interface IServerRenamer
     /// <param name="confirmed">Whether the admin confirmed after the warning.</param>
     /// <returns>The answer.</returns>
     ServerRenameRequest Rename(Guid serverId, string? name, bool confirmed);
+
+    /// <summary>
+    /// Renames under its current name each server whose saved label is over the byte limit, one after another, with the
+    /// steps of a rename (row 564), once the libraries are ready. A server whose rename is refused or keeps its label is left
+    /// for the next start. It is called only at a start with no title in the older layouts (row 565).
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many servers got a label within the limit.</returns>
+    Task<int> RenameLongLabelsAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Drops the stub moves of a server that wait for a scan, and deletes their old files (row 288).

@@ -51,7 +51,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             var legacy = new LegacyImport(
                 folder,
                 Path.Combine(provider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath, LegacyImport.ConfigurationFileName),
-                provider.GetRequiredService<ILogger<LegacyImport>>());
+                provider.GetRequiredService<ILogger<LegacyImport>>(),
+                provider.GetRequiredService<ErrorLogLimits>());
             return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy, provider.GetRequiredService<ErrorLogLimits>());
         });
         serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
@@ -98,6 +99,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
         serviceCollection.AddSingleton<IServerStubRenamer, ServerStubRenamer>();
         serviceCollection.AddSingleton<IServerRenamer, ServerRenamer>();
+        serviceCollection.AddHostedService<LongLabelRenameService>();
         serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
         serviceCollection.AddSingleton<IKeptWatchStateStore, KeptWatchStateStore>();
         serviceCollection.AddSingleton<IWatchStateKeeper, WatchStateKeeper>();
