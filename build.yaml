@@ -23,7 +23,7 @@ artifacts:
 - "Jellyfin.Plugin.JellyMesh.dll"
 changelog: |
   - JellyMesh keeps its settings and state in one database file, jellymesh.db, in its data folder; at the first start the data of 0.5 or 0.4 moves into it, saved logins included, and the old files are kept in the folder migrated-0.5 for 30 days.
-  - Each night JellyMesh copies its database and keeps the last 2 copies; a damaged database starts again from the last copy, and the plugin page shows the date of that copy.
+  - Each night JellyMesh checks its database and copies it, keeping the last 2 copies. A database found damaged, at the start or while it runs, starts again from the last copy, and the plugin page shows the date of that copy and asks you to check the servers and the connected servers; after 3 recoveries in 24 hours it stays suspended until Try again.
   - A database written by a newer JellyMesh, or one that cannot be opened, is left as it is: sync and remote playback stop, and the plugin page says why and offers Try again.
   - The settings are saved only through the plugin page, and Jellyfin no longer writes a configuration file for JellyMesh.
   - Each server has one Edit form for its name, URL, login, libraries and library mode, which checks the server and lists what the change does before saving.
@@ -34,5 +34,9 @@ changelog: |
   - A library that disappears from a server that answers is no longer imported after two syncs, and the plugin page says so.
   - A server you share libraries with now gets only the versions of a title it may see: no longer the copies your server reads from other servers, nor those in libraries you don't share with it. It also can't play them by asking for them.
   - The servers connected to yours drop the versions they no longer get at their next full sync, which runs every night. Update the servers that share libraries; the others need no change.
+  - The whole errors in the server log have a limit for each server and one for the rest of JellyMesh, its database and settings included: past 20 in a minute or 50 MB in a day, an error is one short line, and a server that keeps failing takes no room in the log from the others.
+  - Folders and files named after a title are cut at 120 bytes, so films and series with a very long title in an alphabet such as Cyrillic or Chinese are added, also when a title is split between libraries. Titles that are already there keep their files.
+  - The name of a server in the file names is cut at 40 bytes instead of 40 characters, so a server with a long name in an alphabet such as Cyrillic or Chinese no longer leaves folders with images only. The files of a server already named with more than 40 bytes are renamed once, as a rename of the server does, and keep their watch state: at the first start after the update or, while the folder migration is not finished, at the first start after it finishes.
+  - Known limit of Jellyfin 12.4: deleting a library that holds two copies of the same episode can move the watch state of one copy onto the other at the next scan, also without JellyMesh. JellyMesh deletes its own libraries when you change the library mode of a server or turn off the library of all servers, so check the watched marks of such episodes afterwards.
 
-  Not verified: Jellyfin 12.2 and 12.3, installs outside Docker such as Windows and macOS, going back to 0.5 by hand after the folder migration, the versions a connected server gets on Jellyfin 12.1, 12.2 and 12.3, and their drop in an incremental sync.
+  Not verified: Jellyfin 12.2 and 12.3, installs outside Docker such as Windows and macOS, going back to 0.5 by hand after the folder migration, the versions a connected server gets on Jellyfin 12.1, 12.2 and 12.3, their drop in an incremental sync, the long titles and server names on a running Jellyfin and on network disks, and the rename of the long server names already saved.
