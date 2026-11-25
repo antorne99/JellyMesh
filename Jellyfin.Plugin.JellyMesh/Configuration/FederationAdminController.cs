@@ -346,7 +346,7 @@ public class FederationAdminController : ControllerBase
 
         var retryRename = request.Name is not null && RenameFailed(serverId);
         request = WithSavedFields(serverId, request);
-        if ((RefuseName(serverId, request.Name) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
+        if ((RefuseName(serverId, request.Name) ?? RefuseResume(retryRename) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
         {
             return refused;
         }
@@ -606,7 +606,8 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.NameTaken => "Another server already has this name.",
             RemoteFailure.RenameUnfinished => "A rename of this server has not finished. Wait for it, or save the edit without changing the name.",
             RemoteFailure.MigrationUnfinished => "The name of a server can change after the folder migration ends. Save the edit without changing the name, or rename the server then.",
-            RemoteFailure.MigrationUnknown => "JellyMesh cannot tell yet whether the folder migration has ended, so the name cannot change now. Try again in a moment, or save the edit without changing the name.",
+            RemoteFailure.MigrationUnknown => "JellyMesh cannot tell yet whether the folder migration has ended, so the server cannot be renamed now. Try again in a moment.",
+            RemoteFailure.RenameWaitsForMigration => "The rename of this server that did not finish resumes after the folder migration ends: save the edit with the same name then.",
             _ => "The operation failed."
         };
     }
@@ -671,7 +672,7 @@ public class FederationAdminController : ControllerBase
         {
             RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved
                 or RemoteFailure.NameTaken or RemoteFailure.RenameUnfinished or RemoteFailure.MigrationUnfinished
-                or RemoteFailure.MigrationUnknown => StatusCodes.Status409Conflict,
+                or RemoteFailure.MigrationUnknown or RemoteFailure.RenameWaitsForMigration => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
@@ -733,6 +734,18 @@ public class FederationAdminController : ControllerBase
 
         var state = _renamer.GetState(serverId);
         return state.Busy || state.Pending || state.Failed || _renamer.NeedsRestart;
+    }
+
+    // Refuses the resume of a failed rename, a save of the same name, until the folder migration ends (row 567).
+    private ObjectResult? RefuseResume(bool retryRename)
+    {
+        var failure = retryRename ? MigrationFailure() : RemoteFailure.None;
+        return failure switch
+        {
+            RemoteFailure.None => null,
+            RemoteFailure.MigrationUnfinished => EditFailed(RemoteResult.Fail(RemoteFailure.RenameWaitsForMigration, new RemoteEditReport(RemoteEditField.Name))),
+            _ => EditFailed(RemoteResult.Fail(failure, new RemoteEditReport(RemoteEditField.Name)))
+        };
     }
 
     // Refuses a new name while titles are in the older folder layouts, or while that cannot be read (row 566).
@@ -830,7 +843,7 @@ public class FederationAdminController : ControllerBase
         request = WithSavedFields(serverId, request);
 
         // A first check, before any remote; the registry checks the name again in the change that stores it.
-        if ((RefuseName(serverId, request.Name) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
+        if ((RefuseName(serverId, request.Name) ?? RefuseResume(retryRename) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
         {
             return refused;
         }

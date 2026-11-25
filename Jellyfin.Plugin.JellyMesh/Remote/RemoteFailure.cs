@@ -141,8 +141,14 @@ public enum RemoteFailure
     MigrationUnfinished,
 
     /// <summary>
-    /// Whether titles are still in the older folder layouts cannot be read yet, so an edit cannot change the name now
-    /// (row 566).
+    /// Whether titles are still in the older folder layouts cannot be read yet, so an edit cannot rename the server now
+    /// (rows 566, 567).
     /// </summary>
-    MigrationUnknown
+    MigrationUnknown,
+
+    /// <summary>
+    /// Titles are still in the older folder layouts, so a save of the same name does not resume a failed rename until
+    /// the folder migration ends (row 567).
+    /// </summary>
+    RenameWaitsForMigration
 }

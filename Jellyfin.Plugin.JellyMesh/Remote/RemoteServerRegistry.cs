@@ -1732,7 +1732,8 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             RemoteFailure.Suspended or RemoteFailure.UnknownServer or RemoteFailure.InvalidServer or RemoteFailure.Busy
                 or RemoteFailure.ServerError or RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped
                 or RemoteFailure.ForgetFailed or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved or RemoteFailure.NameTaken
-                or RemoteFailure.RenameUnfinished or RemoteFailure.MigrationUnfinished or RemoteFailure.MigrationUnknown => null,
+                or RemoteFailure.RenameUnfinished or RemoteFailure.MigrationUnfinished or RemoteFailure.MigrationUnknown
+                or RemoteFailure.RenameWaitsForMigration => null,
             _ => true
         };
     }
