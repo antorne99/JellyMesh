@@ -106,7 +106,8 @@ public class ServerStubPlannerTests
         StubState? state = null,
         IReadOnlyList<RemoteServerInfo>? servers = null,
         LocalSeries? localSeries = null,
-        Func<Guid, string, TypeFolder, string>? placementOf = null)
+        Func<Guid, string, TypeFolder, string>? placementOf = null,
+        Func<string, bool>? isOnDisk = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = catalogs };
         return StubPlanner.PlanByServer(new StubPlanInput(
@@ -118,7 +119,8 @@ public class ServerStubPlannerTests
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
             _ => localSeries)
         {
-            PlacementOf = placementOf ?? StubPlanInput.DefaultPlacement
+            PlacementOf = placementOf ?? StubPlanInput.DefaultPlacement,
+            IsOnDisk = isOnDisk ?? (_ => true)
         });
     }
 
@@ -520,6 +522,151 @@ public class ServerStubPlannerTests
         Assert.Equal(2, group.StubIds.Count);
         Assert.DoesNotContain("flat", group.StubIds);
         Assert.Contains(flat, plan.State.Stubs);
+    }
+
+    // Row 555: the path of a stub that was never written because its name is too long changes, unless it is on the disk.
+    [Theory]
+    [InlineData(false, null, true)]
+    [InlineData(true, null, false)]
+    [InlineData(false, "hash", false)]
+    public void OnlyAStubThatWasNeverWrittenLeavesItsLongName(bool isOnDisk, string? contentHash, bool moves)
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m")) };
+        var first = Plan([Title("k", OnA("m"))], catalogs);
+        var kept = Path.Combine(A, Library, "Film", new string('漢', 120), "x.strm");
+        var state = first.State with { Stubs = [first.State.Stubs[0] with { RelativePath = kept, ContentHash = contentHash }] };
+
+        var stub = Assert.Single(Plan([Title("k", OnA("m"))], catalogs, state, isOnDisk: _ => isOnDisk).State.Stubs);
+
+        Assert.Equal(first.State.Stubs[0].Id, stub.Id);
+        Assert.Equal(moves ? first.State.Stubs[0].RelativePath : kept, stub.RelativePath);
+    }
+
+// Row 555 in the split titles of 0.6: every name taken from a title is cut in bytes.
+    [Fact]
+    public void ASplitTitleWithAVeryLongNameFitsInEachFolder()
+    {
+        var title = new string('漢', 500);
+        var plan = Plan(
+            [Title("k", OnA("m"), OnA("n"))],
+            [Catalog(_serverA, Film("m", title), Film("n", title) with { LibraryId = TestLibraries.FilmsB })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.All(plan.Stubs, stub =>
+        {
+            Assert.True(FederatedPaths.FitsInNames(stub.Entry.RelativePath));
+            Assert.Equal(new string('漢', 40) + " (2020)", Path.GetFileName(Path.GetDirectoryName(stub.Entry.RelativePath)));
+        });
+    }
+
+    [Fact]
+    public void ASplitSeriesWithAVeryLongNameFitsInEachFolder()
+    {
+        var title = new string('Ж', 500);
+        var plan = Plan(
+            [EpisodeTitle(1, OnA("e"), OnA("f"))],
+            [Catalog(
+                _serverA,
+                SeriesItem("s", title),
+                EpisodeItem("e", "s", 1) with { SeriesName = title },
+                SeriesItem("t", title) with { LibraryId = TestLibraries.ShowsB },
+                EpisodeItem("f", "t", 1) with { SeriesName = title, LibraryId = TestLibraries.ShowsB })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.Equal(2, plan.Series.Count);
+        Assert.All(plan.Stubs, stub => Assert.True(FederatedPaths.FitsInNames(stub.Entry.RelativePath)));
+        Assert.All(plan.Series, series => Assert.Equal(new string('Ж', 60) + " (2020)", Path.GetFileName(series.Entry.RelativePath)));
+    }
+
+    [Fact]
+    public void ASplitStubThatWasNeverWrittenLeavesItsLongName()
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m"), Film("n") with { LibraryId = TestLibraries.FilmsB }) };
+        var contents = new[] { Title("k", OnA("m"), OnA("n")) };
+        Func<Guid, string, TypeFolder, string> split = (_, library, type) => library + type.Name;
+        var first = Plan(contents, catalogs, placementOf: split);
+        var state = first.State with
+        {
+            Stubs = first.State.Stubs.Select(stub => stub with { RelativePath = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!, new string('漢', 120), "x.strm") }).ToList()
+        };
+
+        var plan = Plan(contents, catalogs, state, placementOf: split, isOnDisk: _ => false);
+
+        Assert.Equal(
+            first.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order(),
+            plan.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order());
+    }
+
+    [Fact]
+    public void ASplitSeriesThatWasNeverWrittenLeavesItsLongName()
+    {
+        var catalogs = new[]
+        {
+            Catalog(
+                _serverA,
+                SeriesItem("s"),
+                EpisodeItem("e", "s", 1),
+                SeriesItem("t") with { LibraryId = TestLibraries.ShowsB },
+                EpisodeItem("f", "t", 1) with { LibraryId = TestLibraries.ShowsB })
+        };
+        var contents = new[] { EpisodeTitle(1, OnA("e"), OnA("f")) };
+        Func<Guid, string, TypeFolder, string> split = (_, library, type) => library + type.Name;
+        var first = Plan(contents, catalogs, placementOf: split);
+        var longNames = first.State.Series.ToDictionary(series => series.RelativePath, series => Path.Combine(Path.GetDirectoryName(series.RelativePath)!, new string('漢', 120)));
+        string Long(string path) => longNames.Aggregate(path, (moved, folder) => moved.Replace(folder.Key, folder.Value, StringComparison.Ordinal));
+        var state = first.State with
+        {
+            Stubs = first.State.Stubs.Select(stub => stub with { RelativePath = Long(stub.RelativePath) }).ToList(),
+            Series = first.State.Series.Select(series => series with { RelativePath = Long(series.RelativePath) }).ToList()
+        };
+
+        var plan = Plan(contents, catalogs, state, placementOf: split, isOnDisk: _ => false);
+
+        Assert.Equal(
+            first.State.Series.Select(series => (series.Id, series.RelativePath)).Order(),
+            plan.State.Series.Select(series => (series.Id, series.RelativePath)).Order());
+        Assert.Equal(
+            first.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order(),
+            plan.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order());
+    }
+
+    // The server folders give a taken name a suffix, so the stub leaves its long name for a free one.
+    [Fact]
+    public void AStubLeavesItsLongNameForAFreeOneWhenTheShortOneIsOfAnotherStub()
+    {
+        var catalogs = new[] { Catalog(_serverA, SeriesItem("s"), EpisodeItem("e", "s", 1)) };
+        var first = Plan([EpisodeTitle(1, OnA("e"))], catalogs);
+        var episode = Assert.Single(first.State.Stubs);
+        var kept = Path.Combine(A, Shows, "Serie", new string('漢', 120), "Season 01", "x.strm");
+        var other = episode with { Id = "other", IdentityKey = "other", ContentHash = "hash", Sources = [] };
+        var state = first.State with { Stubs = [episode with { RelativePath = kept }, other] };
+
+        var moved = Assert.Single(Plan([EpisodeTitle(1, OnA("e"))], catalogs, state, isOnDisk: _ => false).Stubs).Entry.RelativePath;
+
+        Assert.NotEqual(other.RelativePath, moved);
+        Assert.Equal(Path.GetDirectoryName(other.RelativePath), Path.GetDirectoryName(moved));
+        Assert.True(FederatedPaths.FitsInNames(moved));
+    }
+
+    [Fact]
+    public void AStubKeepsItsLongNameWhenTheNewOneIsTooLongToo()
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m", new string('漢', 120))) };
+        var servers = new[] { Server(_serverA, new string('漢', 40)) };
+        var first = Plan([Title("k", OnA("m"))], catalogs, servers: servers);
+        var kept = Path.Combine(A, Library, "Film", new string('漢', 120), "x.strm");
+        var state = first.State with
+        {
+            Stubs = [first.State.Stubs[0] with { RelativePath = kept }],
+            Labels = new Dictionary<Guid, string> { [_serverA] = new string('漢', 60) }
+        };
+
+        var stub = Assert.Single(Plan([Title("k", OnA("m"))], catalogs, state, servers, isOnDisk: _ => false).State.Stubs);
+
+        Assert.Equal(first.State.Stubs[0].Id, stub.Id);
+        Assert.Equal(kept, stub.RelativePath);
     }
 
     [Fact]

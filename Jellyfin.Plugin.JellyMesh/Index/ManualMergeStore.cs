@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -43,6 +44,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
 
     private readonly IPluginDatabase _database;
     private readonly ILogger<ManualMergeStore> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Cached? _cache;
     private int _reported;
@@ -52,8 +54,10 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
     /// </summary>
     /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public ManualMergeStore(IPluginDatabase database, ILogger<ManualMergeStore> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public ManualMergeStore(IPluginDatabase database, ILogger<ManualMergeStore> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _logger = logger;
     }
@@ -205,7 +209,7 @@ public sealed class ManualMergeStore : IManualMergeStore, IDisposable
         {
             if (Interlocked.Exchange(ref _reported, 1) == 0)
             {
-                _logger.LogError("Cannot read the manual merges: {Error}. They are not applied until the database reads{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot read the manual merges: {Error}. They are not applied until the database reads{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
 
             return null;

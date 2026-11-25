@@ -881,7 +881,7 @@ public class FederationAdminControllerTests
 
         for (var call = 0; call < ErrorLogLimit.MaxPerMinute + 5; call++)
         {
-            await fixture.Registry.TestAsync(server.Id, CancellationToken.None);
+            await fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None);
         }
 
         var calls = fixture.Logger.Lines.Where(line => line.Contains("Call to remote server", StringComparison.Ordinal)).ToList();

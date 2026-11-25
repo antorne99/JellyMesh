@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Hosting;
@@ -34,6 +35,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
 
     private readonly IPluginDatabase _database;
     private readonly ILogger<LastServedSourceStore> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), Guid> _servers = new();
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), byte> _unsaved = new();
@@ -50,8 +52,10 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
     /// </summary>
     /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public LastServedSourceStore(IPluginDatabase database, ILogger<LastServedSourceStore> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LastServedSourceStore(IPluginDatabase database, ILogger<LastServedSourceStore> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _logger = logger;
     }
@@ -135,7 +139,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
 
                 if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
                 {
-                    _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                    _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
                 }
             }
         }
@@ -255,7 +259,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
             {
                 if (Interlocked.Exchange(ref _reported, 1) == 0)
                 {
-                    _logger.LogWarning("Cannot read the last servers that served each title for now: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                    _logger.LogWarning("Cannot read the last servers that served each title for now: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
                 }
 
                 return false;

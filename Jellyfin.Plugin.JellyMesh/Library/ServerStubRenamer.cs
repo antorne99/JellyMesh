@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -27,6 +28,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     private readonly IWatchStateCarrier _carrier;
     private readonly IVersionLinker _linker;
     private readonly ILogger<ServerStubRenamer> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly Action<string> _delete;
 
     // The moves whose old item could not leave its version group in the last finish, swapped whole so reads need no lock.
@@ -41,14 +43,16 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     /// <param name="carrier">The watch state carrier.</param>
     /// <param name="linker">The version linker, which detaches an old item before its file goes.</param>
     /// <param name="logger">The logger.</param>
-    public ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, IVersionLinker linker, ILogger<ServerStubRenamer> logger)
-        : this(registry, store, library, carrier, linker, logger, File.Delete)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, IVersionLinker linker, ILogger<ServerStubRenamer> logger, ErrorLogLimits? errorLogs = null)
+        : this(registry, store, library, carrier, linker, logger, File.Delete, errorLogs)
     {
     }
 
     // Takes how an old file is deleted, so that tests can make it fail.
-    internal ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, IVersionLinker linker, ILogger<ServerStubRenamer> logger, Action<string> delete)
+    internal ServerStubRenamer(StubRegistry registry, IPluginConfigurationStore store, ILibraryManager library, IWatchStateCarrier carrier, IVersionLinker linker, ILogger<ServerStubRenamer> logger, Action<string> delete, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _store = store;
         _library = library;
@@ -466,7 +470,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning("Cannot delete the old file of a renamed stub: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot delete the old file of a renamed stub: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }

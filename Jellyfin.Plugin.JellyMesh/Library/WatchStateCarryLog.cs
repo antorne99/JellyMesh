@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
     private readonly IPluginDatabase _database;
     private readonly ILogger<WatchStateCarryLog> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), DateTime?> _carries = new();
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), byte> _unsaved = new();
@@ -47,8 +49,10 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     /// </summary>
     /// <param name="database">The plugin database.</param>
     /// <param name="logger">The logger.</param>
-    public WatchStateCarryLog(IPluginDatabase database, ILogger<WatchStateCarryLog> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public WatchStateCarryLog(IPluginDatabase database, ILogger<WatchStateCarryLog> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _logger = logger;
     }
@@ -88,7 +92,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogWarning("Cannot read the watch state carries done for now: {Error}. Carries are suspended until the database reads{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Cannot read the watch state carries done for now: {Error}. Carries are suspended until the database reads{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally
@@ -214,7 +218,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
             if (exception is not OperationCanceledException && Interlocked.Exchange(ref _reported, 1) == 0)
             {
-                _logger.LogError("Cannot save the watch state carries done: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogError("Cannot save the watch state carries done: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
 
             return false;

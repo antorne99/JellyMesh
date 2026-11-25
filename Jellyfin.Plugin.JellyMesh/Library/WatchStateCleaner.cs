@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -18,6 +19,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public sealed class WatchStateCleaner
 {
     private readonly ILibraryManager _library;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IUserManager _users;
     private readonly IUserDataManager _userData;
     private readonly ILogger<WatchStateCleaner> _logger;
@@ -29,8 +31,10 @@ public sealed class WatchStateCleaner
     /// <param name="users">The user manager.</param>
     /// <param name="userData">The user data manager.</param>
     /// <param name="logger">The logger.</param>
-    public WatchStateCleaner(ILibraryManager library, IUserManager users, IUserDataManager userData, ILogger<WatchStateCleaner> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public WatchStateCleaner(ILibraryManager library, IUserManager users, IUserDataManager userData, ILogger<WatchStateCleaner> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _library = library;
         _users = users;
         _userData = userData;
@@ -94,7 +98,7 @@ public sealed class WatchStateCleaner
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot clear the watch state of a stub that now covers more episodes: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot clear the watch state of a stub that now covers more episodes: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
     }

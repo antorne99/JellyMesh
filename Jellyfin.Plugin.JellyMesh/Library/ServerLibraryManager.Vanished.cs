@@ -132,7 +132,7 @@ public sealed partial class ServerLibraryManager
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot delete the library {Library} of a vanished remote library: {Error}{Detail:l}", LogText.Clean(folder.Name), exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot delete the library {Library} of a vanished remote library: {Error}{Detail:l}", LogText.Clean(folder.Name), exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
 
@@ -185,7 +185,7 @@ public sealed partial class ServerLibraryManager
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                _logger.LogWarning("Cannot delete the folder of a vanished remote library: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+                _logger.LogWarning("Cannot delete the folder of a vanished remote library: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
     }

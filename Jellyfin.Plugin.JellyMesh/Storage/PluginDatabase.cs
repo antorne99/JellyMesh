@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -44,6 +45,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     private readonly string _connectionString;
     private readonly string _readOnlyConnectionString;
     private readonly ILogger<PluginDatabase> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IKeyFileGuard _guard;
     private readonly IReadOnlyList<SchemaMigration> _migrations;
     private readonly TimeProvider _time;
@@ -72,8 +74,9 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// <param name="folder">The plugin data folder.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="legacy">The migration of the 0.4 and 0.5 data, which runs at the first healthy open; none when null.</param>
-    public PluginDatabase(string folder, ILogger<PluginDatabase> logger, LegacyImport? legacy = null)
-        : this(folder, logger, KeyFileGuards.ForThisSystem(), SchemaMigrations.All, BusyTimeoutSeconds, legacy: legacy)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public PluginDatabase(string folder, ILogger<PluginDatabase> logger, LegacyImport? legacy = null, ErrorLogLimits? errorLogs = null)
+        : this(folder, logger, KeyFileGuards.ForThisSystem(), SchemaMigrations.All, BusyTimeoutSeconds, legacy: legacy, errorLogs: errorLogs)
     {
     }
 
@@ -87,7 +90,8 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
     /// <param name="busyTimeoutSeconds">How long a connection waits on another one's lock.</param>
     /// <param name="time">The clock that dates copies and damaged files; the system clock when <c>null</c>.</param>
     /// <param name="legacy">The migration of the 0.4 and 0.5 data, which runs at the first healthy open; none when null.</param>
-    internal PluginDatabase(string folder, ILogger<PluginDatabase> logger, IKeyFileGuard guard, IReadOnlyList<SchemaMigration> migrations, int busyTimeoutSeconds, TimeProvider? time = null, LegacyImport? legacy = null)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    internal PluginDatabase(string folder, ILogger<PluginDatabase> logger, IKeyFileGuard guard, IReadOnlyList<SchemaMigration> migrations, int busyTimeoutSeconds, TimeProvider? time = null, LegacyImport? legacy = null, ErrorLogLimits? errorLogs = null)
     {
         ArgumentNullException.ThrowIfNull(migrations);
         for (var index = 0; index < migrations.Count; index++)
@@ -101,6 +105,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         _folder = folder;
         _path = Path.Combine(folder, FileName);
         _logger = logger;
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _guard = guard;
         _migrations = migrations;
         _time = time ?? TimeProvider.System;
@@ -432,7 +437,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
 
         if (marked)
         {
-            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            _logger.LogWarning("SQLite reads the JellyMesh database as damaged: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             StartRecovery();
         }
 
@@ -468,7 +473,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "The damaged JellyMesh database cannot be replaced yet. Sync and remote playback stay suspended");
+            _logger.LogWarning("The damaged JellyMesh database cannot be replaced yet. Sync and remote playback stay suspended: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
         finally
         {
@@ -809,7 +814,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         {
             _writer.Dispose();
             _writer = null;
-            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            _logger.LogWarning("SQLite reads the JellyMesh database as damaged: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return ImportLegacy(Recover(new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception)), retried), retried, recovered: true);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -871,7 +876,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (SqliteException exception) when (IsDamage(exception))
         {
-            _logger.LogWarning(exception, "SQLite reads the JellyMesh database as damaged");
+            _logger.LogWarning("SQLite reads the JellyMesh database as damaged: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return new StoreHealth(StoreState.Damaged, "The database is damaged: " + ReasonOf(exception));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -897,7 +902,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "The times of the JellyMesh database recoveries cannot be read. Without a retry, sync and remote playback stay suspended");
+            _logger.LogWarning("The times of the JellyMesh database recoveries cannot be read. Without a retry, sync and remote playback stay suspended: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             if (!retried)
             {
                 return Hold(damage with { Reason = damage.Reason + " The times of its recoveries cannot be read: " + ReasonOf(exception) });
@@ -918,7 +923,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be written, so the damaged database is not set aside. Sync and remote playback stay suspended");
+            _logger.LogWarning("The JellyMesh database recovery note cannot be written, so the damaged database is not set aside. Sync and remote playback stay suspended: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return damage with { Reason = damage.Reason + " The recovery note cannot be written: " + ReasonOf(exception) };
         }
 
@@ -933,7 +938,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         {
             TryDeleteNote();
             Volatile.Write(ref _note, null);
-            _logger.LogWarning(exception, "The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended");
+            _logger.LogWarning("The damaged JellyMesh database cannot be set aside. Sync and remote playback stay suspended: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return damage with { Reason = damage.Reason + failure + ReasonOf(exception) };
         }
 
@@ -1048,7 +1053,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "A log of the damaged JellyMesh database cannot be put back next to it");
+            _logger.LogWarning("A log of the damaged JellyMesh database cannot be put back next to it: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -1079,7 +1084,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "A JellyMesh database file left by a recovery cut short cannot be deleted");
+            _logger.LogWarning("A JellyMesh database file left by a recovery cut short cannot be deleted: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -1099,7 +1104,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "That the JellyMesh database waits for a retry cannot be written, so it ends at a restart");
+            _logger.LogWarning("That the JellyMesh database waits for a retry cannot be written, so it ends at a restart: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
 
         return damage;
@@ -1120,7 +1125,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "Why the JellyMesh database waits for a retry cannot be read. Sync and remote playback stay suspended");
+            _logger.LogWarning("Why the JellyMesh database waits for a retry cannot be read. Sync and remote playback stay suspended: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return new StoreHealth(StoreState.Damaged, "The database was found damaged and stays so until a retry.");
         }
     }
@@ -1162,7 +1167,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                _logger.LogDebug(exception, "A temporary JellyMesh recovery file cannot be deleted");
+                _logger.LogDebug("A temporary JellyMesh recovery file cannot be deleted: {Error}{Detail:l}", exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.Local.Of(exception) : string.Empty);
             }
 
             throw;
@@ -1179,7 +1184,7 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database {What} cannot be deleted", what);
+            _logger.LogWarning("The JellyMesh database {What} cannot be deleted: {Error}{Detail:l}", what, exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -1197,14 +1202,14 @@ public sealed class PluginDatabase : IPluginDatabase, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database recovery note cannot be read and is ignored");
+            _logger.LogWarning("The JellyMesh database recovery note cannot be read and is ignored: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }
 
     private StoreHealth Unavailable(string reason, Exception? exception)
     {
-        _logger.LogWarning(exception, "{Reason}. Sync and remote playback stay suspended", reason);
+        _logger.LogWarning("{Reason}. Sync and remote playback stay suspended: {Error}{Detail:l}", reason, exception?.GetType().Name, _errorLogs.Local.Of(exception));
         return new StoreHealth(StoreState.Unavailable, exception is null ? reason + "." : reason + ": " + ReasonOf(exception));
     }
 

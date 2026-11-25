@@ -211,7 +211,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception)
         {
-            _logger.LogError("Migration to the server folders failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Migration to the server folders failed: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -250,7 +250,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception)
         {
-            _logger.LogError("The automatic migration to the server folders failed at the step {Step}: {Error}{Detail:l}", step, exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("The automatic migration to the server folders failed at the step {Step}: {Error}{Detail:l}", step, exception.GetType().Name, _errorLogs.Local.Of(exception));
             if (step != AutomaticMigrationStep.Done)
             {
                 TryStop(AutomaticMigrationError.Failed, null);
@@ -299,7 +299,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("Migration to the server folders: the plugin libraries move at the next sync: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogWarning("Migration to the server folders: the plugin libraries move at the next sync: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -317,7 +317,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("The sync before the scan of the automatic migration failed: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("The sync before the scan of the automatic migration failed: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -472,7 +472,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the old folders before removing them from the libraries: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the old folders before removing them from the libraries: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return true;
         }
     }
@@ -485,7 +485,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the libraries for the migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
     }
@@ -515,7 +515,7 @@ public sealed partial class LayoutMigration
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            _logger.LogError("Cannot save the error of the automatic migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot save the error of the automatic migration to the server folders: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

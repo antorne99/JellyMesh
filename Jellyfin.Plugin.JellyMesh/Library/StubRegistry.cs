@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -22,6 +23,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     private readonly IPluginDatabase _database;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<StubRegistry> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile Lookup _lookup;
     private long _generation;
@@ -44,10 +46,12 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <param name="database">The plugin database.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
-    public StubRegistry(IPluginDatabase database, IPluginConfigurationStore store, ILogger<StubRegistry> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public StubRegistry(IPluginDatabase database, IPluginConfigurationStore store, ILogger<StubRegistry> logger, ErrorLogLimits? errorLogs = null)
     {
         ArgumentNullException.ThrowIfNull(database);
 
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _store = store;
         _logger = logger;
@@ -367,7 +371,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot take back the removal mark of a server that stays: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -389,12 +393,12 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return null;
         }
         catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or InvalidOperationException or OverflowException)
         {
-            _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             return new LoadedState(StubState.Empty, null, generation);
         }
     }
@@ -431,7 +435,7 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Cannot read the stub registry again: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot read the stub registry again: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

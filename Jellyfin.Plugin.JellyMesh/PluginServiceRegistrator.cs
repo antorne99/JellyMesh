@@ -32,7 +32,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IActivityWriter, JellyfinActivityWriter>();
         serviceCollection.AddSingleton<ISecretKeySource>(provider => new FileSecretKeySource(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<FileSecretKeySource>>()));
+            provider.GetRequiredService<ILogger<FileSecretKeySource>>(),
+            provider.GetRequiredService<ErrorLogLimits>()));
         serviceCollection.AddSingleton<IFederatedRootSource, EnvironmentFederatedRootSource>();
         serviceCollection.AddSingleton<ILegacySecretKeySource, EnvironmentSecretKeySource>();
         serviceCollection.AddSingleton<ICredentialVault, CredentialVault>();
@@ -51,7 +52,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
                 folder,
                 Path.Combine(provider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath, LegacyImport.ConfigurationFileName),
                 provider.GetRequiredService<ILogger<LegacyImport>>());
-            return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy);
+            return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy, provider.GetRequiredService<ErrorLogLimits>());
         });
         serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
@@ -63,11 +64,13 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(provider => new StubRegistry(
             provider.GetRequiredService<IPluginDatabase>(),
             provider.GetRequiredService<IPluginConfigurationStore>(),
-            provider.GetRequiredService<ILogger<StubRegistry>>()));
+            provider.GetRequiredService<ILogger<StubRegistry>>(),
+            provider.GetRequiredService<ErrorLogLimits>()));
         serviceCollection.AddSingleton<IStubRegistry>(provider => provider.GetRequiredService<StubRegistry>());
         serviceCollection.AddSingleton(provider => new StrmSigner(
             Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<StrmSigner>>()));
+            provider.GetRequiredService<ILogger<StrmSigner>>(),
+            provider.GetRequiredService<ErrorLogLimits>()));
         serviceCollection.AddSingleton<StubUrlBuilder>();
         serviceCollection.AddSingleton<StubTechnicalData>();
         serviceCollection.AddSingleton<StubItemUpdater>();

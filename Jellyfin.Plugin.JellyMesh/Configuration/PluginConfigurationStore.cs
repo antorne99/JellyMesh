@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Extensions.Logging;
 
@@ -22,6 +23,7 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     private readonly IFederatedRootSource _rootSource;
     private readonly ILogger<PluginConfigurationStore> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly ErrorLogLimits _errorLogs;
     private PluginConfiguration _config = new();
 
     // After a failed read, no new attempt before this time, so that a locked database is not waited on by every request.
@@ -45,8 +47,10 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
     /// <param name="rootSource">The federated folder set by the environment, which wins over the saved one.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="timeProvider">The clock of the pause between two failed reads.</param>
-    public PluginConfigurationStore(IPluginDatabase database, IFederatedRootSource rootSource, ILogger<PluginConfigurationStore> logger, TimeProvider timeProvider)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public PluginConfigurationStore(IPluginDatabase database, IFederatedRootSource rootSource, ILogger<PluginConfigurationStore> logger, TimeProvider timeProvider, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _database = database;
         _rootSource = rootSource;
         _logger = logger;
@@ -152,7 +156,7 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "The JellyMesh database log could not be emptied of replaced credentials; the next save tries again");
+            _logger.LogWarning("The JellyMesh database log could not be emptied of replaced credentials; the next save tries again: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -187,11 +191,11 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
         {
             if (_loadFailure is null && loaded)
             {
-                _logger.LogWarning(exception, "The JellyMesh settings could not be read again from the database; the loaded ones stay until they can");
+                _logger.LogWarning("The JellyMesh settings could not be read again from the database; the loaded ones stay until they can: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
             else if (_loadFailure is null)
             {
-                _logger.LogWarning(exception, "The JellyMesh settings could not be read from the database; JellyMesh waits until they can");
+                _logger.LogWarning("The JellyMesh settings could not be read from the database; JellyMesh waits until they can: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
 
             _loadFailure = exception;
@@ -234,7 +238,7 @@ public sealed class PluginConfigurationStore : IPluginConfigurationStore
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning(exception, "The federated folder of {Variable} could not be saved; it is used anyway", EnvironmentFederatedRootSource.VariableName);
+            _logger.LogWarning("The federated folder of {Variable} could not be saved; it is used anyway: {Error}{Detail:l}", EnvironmentFederatedRootSource.VariableName, exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

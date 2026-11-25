@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,6 +18,7 @@ public sealed class LocalRefreshWatcher : IHostedService, IDisposable
     private readonly ILocalRefreshRequester _refreshes;
     private readonly ILocalTitleLinker _linker;
     private readonly ILogger<LocalRefreshWatcher> _logger;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly CancellationTokenSource _shutdown = new();
 
     /// <summary>
@@ -26,8 +28,10 @@ public sealed class LocalRefreshWatcher : IHostedService, IDisposable
     /// <param name="refreshes">The refreshes asked for.</param>
     /// <param name="linker">What links one title.</param>
     /// <param name="logger">The logger.</param>
-    public LocalRefreshWatcher(ILibraryManager library, ILocalRefreshRequester refreshes, ILocalTitleLinker linker, ILogger<LocalRefreshWatcher> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LocalRefreshWatcher(ILibraryManager library, ILocalRefreshRequester refreshes, ILocalTitleLinker linker, ILogger<LocalRefreshWatcher> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _library = library;
         _refreshes = refreshes;
         _linker = linker;
@@ -80,7 +84,7 @@ public sealed class LocalRefreshWatcher : IHostedService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Could not link a new local title yet, the next sync does: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Could not link a new local title yet, the next sync does: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -14,14 +15,17 @@ public sealed class LibraryRenameResumeService : BackgroundService
 {
     private readonly IServerLibraryManager _libraries;
     private readonly ILogger<LibraryRenameResumeService> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LibraryRenameResumeService"/> class.
     /// </summary>
     /// <param name="libraries">The automatic libraries, whose lock the renames share.</param>
     /// <param name="logger">The logger.</param>
-    public LibraryRenameResumeService(IServerLibraryManager libraries, ILogger<LibraryRenameResumeService> logger)
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
+    public LibraryRenameResumeService(IServerLibraryManager libraries, ILogger<LibraryRenameResumeService> logger, ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _libraries = libraries;
         _logger = logger;
     }
@@ -36,7 +40,7 @@ public sealed class LibraryRenameResumeService : BackgroundService
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // What escapes a hosted service stops the whole server; the next rename tries again.
-            _logger.LogError("Cannot finish the library renames left halfway: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
+            _logger.LogError("Cannot finish the library renames left halfway: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 }
