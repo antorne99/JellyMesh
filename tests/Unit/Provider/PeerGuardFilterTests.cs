@@ -1315,6 +1315,64 @@ public class PeerGuardFilterTests
         Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
+    // Row 565: a static stream of an admin's .strm would give its URL as the File route does.
+    [Theory]
+    [InlineData("Videos", "GetVideoStream", "?static=true")]
+    [InlineData("Videos", "GetVideoStreamByContainer", "?Static=True")]
+    [InlineData("Videos", "GetVideoStream", "?static=false&static=true")]
+    [InlineData("Videos", "GetVideoStream", "?static=1")]
+    [InlineData("Audio", "GetAudioStream", "?static=true")]
+    [InlineData("Audio", "GetAudioStreamByContainer", "?STATIC=true")]
+    [InlineData("Videos", "GetVideoStream", "?params=%3B%3Btrue")]
+    public async Task A_static_stream_of_the_strm_of_the_admin_is_never_given_to_a_peer(string controller, string action, string query)
+    {
+        var item = Guid.Parse("31000000-0000-0000-0000-000000000000");
+        _fixture.AddItem(item, new MediaBrowser.Controller.Entities.Movies.Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", item, query);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+        Assert.Equal(0, Slots);
+    }
+
+    [Theory]
+    [InlineData("?mediaSourceId=31000000000000000000000000000000&static=true")]
+    [InlineData("?MediaSourceId=31000000-0000-0000-0000-000000000000&static=true")]
+    public async Task A_static_stream_that_names_the_strm_of_the_admin_as_a_version_is_never_given_to_a_peer(string query)
+    {
+        var version = Guid.Parse("31000000-0000-0000-0000-000000000000");
+        _fixture.AddItem(version, new MediaBrowser.Controller.Entities.Movies.Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", ProviderFixture.SharedItem, query);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("?static=false")]
+    public async Task A_stream_of_the_strm_of_the_admin_that_is_not_static_goes_on(string query)
+    {
+        var item = Guid.Parse("31000000-0000-0000-0000-000000000000");
+        _fixture.AddItem(item, new MediaBrowser.Controller.Entities.Movies.Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var (_, ran) = await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", item, query);
+
+        Assert.True(ran);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("Audio", "GetAudioStream")]
+    public async Task A_static_stream_of_a_shared_file_is_given_to_a_peer(string controller, string action)
+    {
+        var (_, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", ProviderFixture.SharedItem, "?static=true");
+
+        Assert.True(ran);
+    }
+
     [Theory]
     [InlineData("GetFile")]
     [InlineData("GetDownload")]

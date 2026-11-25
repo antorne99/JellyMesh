@@ -29,6 +29,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private const string LegacyParameters = "params";
     private const string LiveStreamParameter = "liveStreamId";
     private const string VersionParameter = "mediaSourceId";
+    private const string StaticParameter = "static";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
     private const string StreamDevice = "JellyMesh.StreamDevice";
 
@@ -151,11 +152,12 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
         // A folder has no file to give, so a slot would be taken for nothing. The file of an admin's .strm is its text, a
-        // URL that may carry credentials, so no peer gets it (row 561).
+        // URL that may carry credentials, so no peer gets it, nor a static stream of it (rows 561 and 565).
         if (ItemIdOf(context.RouteData) is not { } itemId
             || _catalog.FindVisible(caller, itemId) is not { } item
-            || (action?.ControllerName == "Library" && (item.IsFolder || IsStrm(item.Path)))
-            || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version)))
+            || (action?.ControllerName == "Library" && (item.IsFolder || ProviderCatalog.IsStrm(item.Path)))
+            || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version))
+            || IsStaticStrm(caller, itemId, action, http, context.RouteData))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
@@ -354,7 +356,23 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         return null;
     }
 
-    // Tells whether a path is a .strm file, whatever the case of its extension.
-    private static bool IsStrm(string? path)
-        => string.Equals(System.IO.Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
+    // Tells whether a Videos or Audio stream that may be static reads an admin's .strm, as the item or as a version it names.
+    private bool IsStaticStrm(PeerCaller caller, Guid itemId, ControllerActionDescriptor? action, HttpContext http, RouteData route)
+    {
+        if (action?.ControllerName is not ("Videos" or "Audio") || !MayBeStatic(http))
+        {
+            return false;
+        }
+
+        return _catalog.IsStrmFile(caller, itemId)
+            || VersionsOf(http, route).Any(version => Guid.TryParse(version, out var id) && _catalog.IsStrmFile(caller, id));
+    }
+
+    // Any value of static under any case of the name counts, unless it reads as false. Legacy params may say it too, so a
+    // request with them counts as static.
+    private static bool MayBeStatic(HttpContext http)
+    {
+        return ValuesOf(http, StaticParameter).Any(value => !bool.TryParse(value, out var isStatic) || isStatic)
+            || ValuesOf(http, LegacyParameters).Any();
+    }
 }
