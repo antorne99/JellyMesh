@@ -185,8 +185,8 @@ public sealed class ProviderCatalog
         => string.Equals(Path.GetExtension(path), ".strm", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Clears the paths of a version and of its streams, and every other field that can hold the URL it reads, delivery URLs
-    /// included, when it is not a file of this server. Used by PlaybackInfo and the catalog (rows 566, 567, 568).
+    /// Clears the paths of a version and of its streams, keeping only the extension of a file of this server for the
+    /// consumer's container, and every field that can hold the URL a version reads. For PlaybackInfo and the catalog (rows 566-569).
     /// </summary>
     /// <param name="caller">The peer.</param>
     /// <param name="source">The version, cleared in place.</param>
@@ -195,18 +195,19 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(source);
 
-        source.Path = null;
+        var isUrl = IsUrlSource(caller, source);
+        source.Path = isUrl ? null : ExtensionOf(source.Path);
+        source.EncoderPath = null;
         foreach (var stream in source.MediaStreams ?? [])
         {
             stream.Path = null;
         }
 
-        if (!IsUrlSource(caller, source))
+        if (!isUrl)
         {
             return;
         }
 
-        source.EncoderPath = null;
         source.RequiredHttpHeaders = [];
         foreach (var stream in source.MediaStreams ?? [])
         {
@@ -546,7 +547,8 @@ public sealed class ProviderCatalog
         }
     }
 
-    // The consumer needs only the format of a book or a photo for its placeholder (D47), so no name or folder of this server leaves.
+    // The consumer needs only the format of a book or a photo for its placeholder (D47), or of a file for its container
+    // (row 569), so no name or folder of this server leaves.
     private static string? ExtensionOf(string? path)
     {
         var extension = Path.GetExtension(path);

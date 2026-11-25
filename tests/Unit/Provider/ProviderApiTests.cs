@@ -749,7 +749,7 @@ public class ProviderCatalogTests
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
         Assert.Null(dto.Path);
-        Assert.Null(dto.MediaSources[0].Path);
+        Assert.Equal(".mkv", dto.MediaSources[0].Path);
         Assert.Null(dto.MediaSources[0].MediaStreams[0].Path);
         Assert.Null(dto.Chapters[0].ImagePath);
         Assert.Equal("Intro", dto.Chapters[0].Name);
@@ -818,11 +818,13 @@ public class ProviderCatalogTests
         Assert.Null(source.MediaAttachments[0].DeliveryUrl);
     }
 
+    // Row 569: a file of this server gives only its extension, and no encoder path.
     [Fact]
     public void A_file_of_this_server_keeps_its_headers_and_delivery_urls_in_the_catalog()
     {
         const string Subtitle = "/Videos/a/a/Subtitles/1/0/Stream.vtt";
         var dto = ProviderFixture.DtoWith(new MediaStream { Type = MediaStreamType.Subtitle, IsExternal = true, Path = "/media/secret.srt", DeliveryUrl = Subtitle });
+        dto.MediaSources[0].EncoderPath = "/media/secret.mkv";
         dto.MediaSources[0].RequiredHttpHeaders = new() { ["X-Kept"] = "kept" };
         dto.MediaSources[0].MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = "/Videos/a/a/Attachments/7" }];
         _fixture.WithDtos(dto);
@@ -830,7 +832,8 @@ public class ProviderCatalogTests
         _fixture.Catalog.ReadItems(_fixture.PeerCaller, [ProviderFixture.SharedItem], RemoteItemType.Movie);
 
         var sent = Assert.Single(dto.MediaSources);
-        Assert.Null(sent.Path);
+        Assert.Equal(".mkv", sent.Path);
+        Assert.Null(sent.EncoderPath);
         Assert.Null(sent.MediaStreams[0].Path);
         Assert.Equal("kept", sent.RequiredHttpHeaders["X-Kept"]);
         Assert.Equal(Subtitle, sent.MediaStreams[0].DeliveryUrl);
