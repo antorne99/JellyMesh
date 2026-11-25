@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using MediaBrowser.Controller.Entities;
@@ -53,6 +55,115 @@ public class StubLookupTests
 
         Assert.True(Lookup().HasVersions(local.Id));
         Assert.False(Lookup().HasVersions(alone.Id));
+    }
+
+    // Row 514: D17 holds for a stub the registry lacks too; Jellyfin shows an item in no library to everyone.
+    [Theory]
+    [InlineData("/federata/S/Film/A/A.strm", false, false, false)]
+    [InlineData("/federata/S/Film/A/A.strm", true, false, true)]
+    [InlineData("/federata/S/Film/A/A.strm", false, true, true)]
+    [InlineData("/media/film/A.mkv", false, false, true)]
+    public void AStubTheRegistryLacksIsSeenOnlyInALibraryOrByAnAdmin(string path, bool inLibrary, bool admin, bool seen)
+    {
+        var user = new User("viewer", "auth", "reset");
+        user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, admin));
+        var item = Item(path);
+        _library.Setup(library => library.GetItemById<BaseItem>(item.Id, user)).Returns(item);
+        _library.Setup(library => library.GetCollectionFolders(item)).Returns(inLibrary ? [new Folder()] : []);
+
+        Assert.Equal(seen, Lookup().Sees(user, item.Id));
+    }
+
+    // Row 522: with no folder set nothing is in it, also a .strm left by a folder that was removed.
+    [Theory]
+    [InlineData("/media/film/A.strm")]
+    [InlineData("/federata/S/Film/A/A.strm")]
+    public void WithNoFolderSetAStrmIsNoStub(string path)
+    {
+        var user = new User("viewer", "auth", "reset");
+        var video = Item(path);
+        var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = path };
+        _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+        _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), user)).Returns(video);
+        _store.Configuration.FederatedFolderPath = string.Empty;
+
+        Assert.False(Lookup().IsStub(video.Id));
+        Assert.False(Lookup().IsStub(track.Id));
+        Assert.False(Lookup().IsAudioStub(track.Id));
+        Assert.Null(Lookup().FindFile(track.Id));
+        Assert.Null(Lookup().ResolvePlayable(track.Id, out _));
+        Assert.True(Lookup().Sees(user, video.Id));
+        Assert.True(Lookup().Sees(user, track.Id));
+    }
+
+    // A local .strm with versions keeps the rule of D17 with no folder set.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WithNoFolderSetALocalStrmWithVersionsIsSeenInALibrary(bool inLibrary)
+    {
+        var user = new User("viewer", "auth", "reset");
+        var stub = Item("/federata/S/Film/A/A.strm");
+        stub.ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature");
+        var local = Item("/media/film/A.strm");
+        local.LinkedAlternateVersions = [new LinkedChild { ItemId = stub.Id }];
+        _stubs.Setup(stubs => stubs.Find("stub")).Returns(new StubEntry { Id = "stub", Kind = StubKind.Movie, IdentityKey = "Movie|tmdb:1", Sources = [], RelativePath = "S/Film/A/A.strm" });
+        _library.Setup(library => library.GetItemById<BaseItem>(local.Id, user)).Returns(local);
+        _library.Setup(library => library.GetCollectionFolders(local)).Returns(inLibrary ? [new Folder()] : []);
+        _store.Configuration.FederatedFolderPath = string.Empty;
+
+        Assert.True(Lookup().HasVersions(local.Id));
+        Assert.Equal(inLibrary, Lookup().Sees(user, local.Id));
+    }
+
+    // Row 527: a stub the registry lacks counts as a version wherever its .strm is, and a .strm of the admin never does.
+    [Theory]
+    [InlineData("", true, true)]
+    [InlineData("/nuova", true, true)]
+    [InlineData("/federata", true, true)]
+    [InlineData("", false, false)]
+    [InlineData("/nuova", false, false)]
+    [InlineData("/nuova", null, false)]
+    public void AFilmLinkedToAStubTheRegistryLacksHasVersions(string folder, bool? pluginUrl, bool hasVersions)
+    {
+        var strm = Item("/federata/S/Film/A/A.strm");
+        strm.ShortcutPath = pluginUrl switch
+        {
+            true => PlaybackRoutes.StrmUrl(8096, null, "gone", "signature"),
+            false => "http://media.example/a.mkv",
+            null => null
+        };
+        var local = Item("/media/film/A.mkv");
+        local.LinkedAlternateVersions = [new LinkedChild { ItemId = strm.Id }];
+        strm.SetPrimaryVersionId(local.Id);
+        _store.Configuration.FederatedFolderPath = folder;
+
+        Assert.Equal(hasVersions, Lookup().HasVersions(local.Id));
+        Assert.Equal(hasVersions, Lookup().HasVersions(strm.Id));
+    }
+
+    [Fact]
+    public void AFilmLinkedToAnUnreadStrmReachedThroughALinkHasVersions()
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-real-").FullName;
+        try
+        {
+            var real = Path.Combine(temp, "federata");
+            Directory.CreateDirectory(Path.Combine(real, "S"));
+            File.WriteAllText(Path.Combine(real, "S", "A.strm"), "http://127.0.0.1/strm");
+            var alias = Path.Combine(temp, "alias");
+            Directory.CreateSymbolicLink(alias, real);
+            var strm = Item(Path.Combine(alias, "S", "A.strm"));
+            var local = Item("/media/film/A.mkv");
+            local.LinkedAlternateVersions = [new LinkedChild { ItemId = strm.Id }];
+            _store.Configuration.FederatedFolderPath = real;
+
+            Assert.True(Lookup().HasVersions(local.Id));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
     }
 
     // A track stub has no plugin URL: the file routes find it by its path, playback does not until F56.

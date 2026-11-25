@@ -178,8 +178,8 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub or a version
-    /// sits in a library, since Jellyfin shows an item with no library to everyone (D17).
+    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub, also one the
+    /// registry no longer knows (row 514), or a version sits in a library, as Jellyfin shows one with none to all (D17).
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="itemId">The item.</param>
@@ -194,7 +194,7 @@ public sealed class StubLookup
         }
 
         return user.HasPermission(PermissionKind.IsAdministrator)
-            || (Resolve(itemId, out var isUnknown) is null && !isUnknown && FindFile(itemId) is null && !HasVersions(itemId))
+            || (!IsStub(itemId) && Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
             || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 
@@ -204,15 +204,7 @@ public sealed class StubLookup
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>True for a stub.</returns>
-    public bool IsStub(Guid itemId)
-    {
-        return _libraryManager.GetItemById(itemId) switch
-        {
-            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
-            Audio audio => IsStrmInFolder(audio.Path),
-            var item => IsPlaceholder(item)
-        };
-    }
+    public bool IsStub(Guid itemId) => IsStub(_libraryManager.GetItemById(itemId));
 
     /// <summary>
     /// Tells whether an item is an audio stub: an audio <c>.strm</c> in the federated folder, which has no plugin URL.
@@ -336,10 +328,10 @@ public sealed class StubLookup
         return members;
     }
 
-    // A link only between local films stays stock; while the registry is unread, any of our URLs counts as a stub (row 552).
+    // A link only between local films stays stock; a stub the registry lacks counts too (row 527), and so does any of our
+    // URLs while the registry is unread (row 552).
     private bool IsLinkedToStub(Guid itemId)
     {
-        var isUnread = _stubs.IsUnread;
         var members = LinkedVersionsOf(itemId);
         if (members.Count < 2)
         {
@@ -347,16 +339,17 @@ public sealed class StubLookup
         }
 
         var root = _store.ReadOr(config => config.FederatedFolderPath, null);
-        foreach (var member in members.Values)
-        {
-            if ((root is null ? IsStrm(member.Path) : FederatedPaths.IsInside(root, member.Path))
-                || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && (isUnread || _stubs.Find(stubId) is not null)))
-            {
-                return true;
-            }
-        }
+        return members.Values.Any(member => FederatedPaths.IsInside(root, member.Path) || IsStub(member));
+    }
 
-        return false;
+    private bool IsStub(BaseItem? item)
+    {
+        return item switch
+        {
+            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
+            Audio audio => IsStrmInFolder(audio.Path),
+            _ => IsPlaceholder(item)
+        };
     }
 
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
@@ -374,7 +367,8 @@ public sealed class StubLookup
 
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
 
-    // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
+    // A .strm in the federated folder; while the settings cannot be read, any .strm, since stock would send its signed URL.
+    // With no folder set none is in it (row 522).
     private bool IsStrmInFolder(string? path) => PathInFolder(path) is not null;
 
     // The path of a .strm in the federated folder, also through an alias of it, spelled under the folder; else null.
@@ -385,12 +379,13 @@ public sealed class StubLookup
             return null;
         }
 
-        if (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path))
+        return _store.ReadOr(config => config.FederatedFolderPath, null) switch
         {
-            return path;
-        }
-
-        return RealPath.Rebase(root, path!);
+            null => path,
+            { Length: 0 } => null,
+            var root when FederatedPaths.IsInside(root, path) => path,
+            var root => RealPath.Rebase(root, path!)
+        };
     }
 
     // A .strm in the federated folder, or with our URL while the folder is not known or the registry is not read; while the

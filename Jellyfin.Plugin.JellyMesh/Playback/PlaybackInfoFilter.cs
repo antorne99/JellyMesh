@@ -119,6 +119,13 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         var routeStub = _stubs.ResolvePlayable(route, out var routeUnknown);
         if (routeStub is null && !routeUnknown && (asked is not { } named || named.Equals(route) || !IsFederated(named)) && !_stubs.HasVersions(route))
         {
+            // A stub the registry no longer knows still wants a user who reaches it (row 514), then it is stock's.
+            if (await RefuseUnreachableStubAsync(context.HttpContext, route, asked).ConfigureAwait(false) is { } refused)
+            {
+                context.Result = refused;
+                return;
+            }
+
             await next().ConfigureAwait(false);
             return;
         }
@@ -222,6 +229,24 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
                 await RefuseOrPlayLocalCopyAsync(context, next, request, outcome, user, route).ConfigureAwait(false);
                 break;
         }
+    }
+
+    // The refusal of a request that names a stub as the title or as the version: no user, or one who does not reach it.
+    private async Task<StatusCodeResult?> RefuseUnreachableStubAsync(HttpContext http, Guid route, Guid? asked)
+    {
+        var stubs = new[] { route, asked ?? route }.Distinct().Where(_stubs.IsStub).ToList();
+        if (stubs.Count == 0)
+        {
+            return null;
+        }
+
+        var authorization = await _authorization.GetAuthorizationInfo(http).ConfigureAwait(false);
+        if (authorization.User is not { } user || string.IsNullOrEmpty(authorization.Token))
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        return stubs.TrueForAll(stub => _stubs.Sees(user, stub)) ? null : new StatusCodeResult(StatusCodes.Status404NotFound);
     }
 
     // Keeps only the source of the version served: stock may list every version, and clients play the first one.
