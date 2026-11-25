@@ -9,12 +9,18 @@
 #   remote  $PREFIX-remote  $PORT+1  Casa: stock, remoto-standard; "Film 4K" lists the same films as "Film"
 #   peer    $PREFIX-peer    $PORT+2  Mare: stock, remoto-jellymesh
 # The older builds come from their tags with git archive, built in the SDK container of the project.
-# usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-f42] [PORT=8290] [CASES="auto manual flat half"] folders.sh
+# label: a 0.5 server whose label is over 40 bytes keeps it while the migration waits, refuses a rename, and has its stubs
+# renamed once at the first start after the migration ends, with the watch state kept (§10 rows 556, 564-567).
+# usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-f42] [PORT=8290] [CASES="auto manual flat half label"] folders.sh
 # The containers are stopped at the end, not removed; the next run makes them again.
 set -euo pipefail
 PREFIX=${PREFIX:-jm-f42}
 PORT=${PORT:-8290}
-CASES=${CASES:-auto manual flat half}
+CASES=${CASES:-auto manual flat half label}
+CASA_NAME=Casa
+# Within the 40 characters of 0.5 but over 40 bytes, so that the cut of row 564 falls inside a character.
+LONG_LABEL="JM Домашний медиасервер Антонио"
+SHORT_LABEL="JM Домашний медиасерве"
 V04=v0.4.3.0
 V05=v0.5.0.2
 source "$(dirname "${BASH_SOURCE[0]}")/../versions/lib.sh"
@@ -136,7 +142,7 @@ fresh_04() {
   ME=$(get local /Users/Me | jq -r .Id)
   install "$V04"
   old_settings local '.FederatedFolderPath = "/federata"' >/dev/null
-  CASA=$(add_remote local Casa "http://host.docker.internal:$((PORT + 1))" jellymesh)
+  CASA=$(add_remote local "$CASA_NAME" "http://host.docker.internal:$((PORT + 1))" jellymesh)
   MARE=$(add_remote local Mare "http://host.docker.internal:$((PORT + 2))" jellymesh)
   old_import_all "$CASA"
   old_import_all "$MARE"
@@ -219,6 +225,37 @@ by_itself() {
   echo "$(grep -c 'the automatic migration is done' <<<"$logs" || true) $(grep -c 'the admin chose' <<<"$logs" || true)"
 }
 
+# restart_local: a new start of the local server.
+restart_local() {
+  docker restart "$PREFIX-local" >/dev/null
+  sleep 3
+  wait_ready local
+  login local
+}
+# casa_stubs <text>: how many stubs of Casa have that text in their file name.
+casa_stubs() { docker exec "$PREFIX-local" sh -c "find '$(server_folder "$CASA")' -name '*.strm' | sed 's|.*/||' | grep -cF '$1' || true"; }
+# short_stubs: how many stubs of Casa have the cut label and not the whole one, which starts with it.
+short_stubs() { echo $(($(casa_stubs "$SHORT_LABEL") - $(casa_stubs "$LONG_LABEL"))); }
+older_layout() { get local /JellyMesh/Admin/Status | jq -c .OlderLayoutInUse; }
+casa_name() { get local /JellyMesh/Admin/Status | jq -r --arg id "$CASA" '.Servers[] | select(.Id == $id) | .Name'; }
+# rename_to <name>: the edit form of Casa saved with that name; prints the status, the field and the failure.
+rename_to() {
+  local body
+  body=$(save_server local "$CASA" "$(jq -nc --arg n "$1" '{Name: $n}')")
+  echo "$(status) $(jq -r '"\(.Field) \(.Failure)"' <<<"$body" 2>/dev/null)"
+}
+renamed_lines() { docker logs "$PREFIX-local" 2>&1 | grep -c 'Renamed the stubs of 1 servers whose label was over the limit' || true; }
+# page_lock: whether the edit form of Casa on the page locks the name, and its note, in English then Italian.
+page_lock() {
+  local me sid
+  me=$(get local /Users/Me | jq -r .Id)
+  sid=$(curl -fsS "http://127.0.0.1:$PORT/System/Info/Public" | jq -r .Id)
+  mkdir -p "$WORK/web"
+  cp "$S/renamelock.py" "$WORK/web/renamelock.py"
+  docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v "$PREFIX-pw:/pw" -e PYTHONPATH=/pw "$PW_IMAGE" \
+    bash -c 'test -d /pw/playwright || pip install -q --target /pw --no-warn-script-location playwright==1.48.0 2>/dev/null; exec python3 "$@"' _ \
+    /w/renamelock.py "http://host.docker.internal:$PORT" "$(token_of local)" "$me" "$sid" "$(casa_name)" | tee "$WORK/web/lock.out"
+}
 # verify: the end of a migration, with the state of alice on the new stubs.
 verify() {
   local tears sintel
@@ -322,6 +359,67 @@ for case in $CASES; do
       wait_run
       check "the run starts again without the error of 0.5 and ends with no choice" "1 0" "$(by_itself)"
       verify
+      ;;
+    label)
+      echo "--- a 0.5 server with a label over 40 bytes: no rename until the folder migration ends, then once [§10 rows 556, 564-567]"
+      CASA_NAME=$LONG_LABEL
+      fresh_04
+      CASA_NAME=Casa
+      to_05 Manual
+      to_06
+      check "the folder migration waits for the admin" "AddPaths Manual" "$(migration | jq -r '"\(.Step) \(.Mode)"')"
+      check "the status says the older layout is in use" true "$(older_layout)"
+      check "the stubs of the server carry the label of 0.5" true "$([ "$(casa_stubs "$LONG_LABEL")" -gt 0 ] && echo true || echo false)"
+      check "a new name is refused on the name while the migration has not ended (row 566)" "409 Name MigrationUnfinished" "$(rename_to Casa)"
+      check "the name is unchanged" "$LONG_LABEL" "$(casa_name)"
+      check "the same name still saves" "200" "$(rename_to "$LONG_LABEL" | cut -d' ' -f1)"
+      page_lock >/dev/null
+      check "the page locks the name, in English and Italian" "true true" "$(awk '$1 == "LOCK" { printf "%s%s", s, $3; s = " " }' "$WORK/web/lock.out")"
+      check "and says the migration has to end first" true "$(grep '^LOCK en' "$WORK/web/lock.out" | grep -qi 'migration' && echo true || echo false)"
+      restart_local
+      sleep 45
+      check "a start before the end of the migration renames nothing" "0 0" "$(renamed_lines) $(short_stubs)"
+      check "and the stubs keep the label of 0.5" true "$([ "$(casa_stubs "$LONG_LABEL")" -gt 0 ] && echo true || echo false)"
+
+      echo "--- the admin ends the migration: the next start renames the stubs once, with the state kept [§10 rows 564-565]"
+      while IFS=$'\t' read -r name path; do
+        link_folder local "$name" "$path" >/dev/null
+      done < <(migration | jq -r '.Libraries[] | .Name as $n | .MissingPaths[] | [$n, .] | @tsv')
+      scan_until RemoveOldPaths
+      while IFS=$'\t' read -r name path; do
+        unlink_folder local "$name" "$path" >/dev/null
+      done < <(migration | jq -r '.Libraries[] | .Name as $n | .OldPaths[] | [$n, .] | @tsv')
+      scan local
+      check "the banner is gone" null "$(migration)"
+      check "the status says the older layout is empty" false "$(older_layout)"
+      check "the end of the migration renames nothing by itself" 0 "$(renamed_lines)"
+      tears=$(film "$(server_folder "$CASA")" "Tears of Steel")
+      omonimo=$(film "$(server_folder "$CASA")" "Titolo Omonimo")
+      # A real play dates the row: the newest date wins over the row of 0.4 that Jellyfin reattaches by key.
+      twice=$(printf '{"Played":true,"PlayCount":2,"IsFavorite":true,"LastPlayedDate":"%s"}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+      check "alice watches Tears of Steel twice and likes it" 200 "$(set_data "$ALICE" "$tears" "$twice")"
+      check "alice is in the middle of Titolo Omonimo" 200 "$(set_data "$ALICE" "$omonimo" '{"PlaybackPositionTicks":300000000}')"
+      long=$(casa_stubs "$LONG_LABEL")
+      restart_local
+      for i in $(seq 1 90); do
+        [ "$(renamed_lines)" -ge 1 ] && break
+        sleep 4
+      done
+      check "the first start after the migration renames the stubs once" 1 "$(renamed_lines)"
+      check "no stub keeps the label of 0.5" 0 "$(casa_stubs "$LONG_LABEL")"
+      check "each stub takes the label cut to 40 bytes" "$long" "$(short_stubs)"
+      check "the label fits in 40 bytes" true "$([ "$(printf '%s' "$SHORT_LABEL" | wc -c)" -le 40 ] && echo true || echo false)"
+      scan local
+      tears=$(film "$(server_folder "$CASA")" "Tears of Steel")
+      omonimo=$(film "$(server_folder "$CASA")" "Titolo Omonimo")
+      check "the renamed Tears of Steel keeps the state of alice" "2 true true" "$(data "$ALICE" "$tears" | jq -r '"\(.PlayCount) \(.Played) \(.IsFavorite)"')"
+      check "and Titolo Omonimo its position" 300000000 "$(data "$ALICE" "$omonimo" | jq -r .PlaybackPositionTicks)"
+      check "the name of the server is unchanged" "$LONG_LABEL" "$(casa_name)"
+      before=$(docker exec "$PREFIX-local" sh -c "find '$(server_folder "$CASA")' -name '*.strm' | sort | md5sum")
+      restart_local
+      sleep 45
+      check "a later start renames nothing again" 1 "$(renamed_lines)"
+      check "and leaves the stubs where they are" "$before" "$(docker exec "$PREFIX-local" sh -c "find '$(server_folder "$CASA")' -name '*.strm' | sort | md5sum")"
       ;;
   esac
 done
