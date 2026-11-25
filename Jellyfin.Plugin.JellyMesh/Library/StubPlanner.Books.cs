@@ -64,7 +64,7 @@ public static partial class StubPlanner
     // folders share the names of the books, because the folder of a book goes whole with it.
     private static List<StubWork> AudioBookWorks(StubPlanInput input, IndexItemLookup catalog, Guid serverId, List<StubEntry> stubs, PathAllocator paths, bool legacy, HashSet<string> claimed)
     {
-        var works = legacy ? [] : TrackStubPlanner.Plan(input, catalog, serverId, StubKind.AudioBook, stubs, paths.AuthorFolder);
+        var works = legacy ? [] : TrackStubPlanner.Plan(input, catalog, serverId, StubKind.AudioBook, stubs, paths.ArtistFolder);
         claimed.UnionWith(legacy ? stubs.Select(stub => stub.Id) : works.Select(work => work.Entry.Id));
         return works;
     }

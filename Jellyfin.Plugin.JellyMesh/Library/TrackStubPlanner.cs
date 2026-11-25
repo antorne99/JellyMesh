@@ -43,7 +43,7 @@ internal static class TrackStubPlanner
         var tracks = input.Snapshot.Find(serverId)?.Items.Where(item => item.Kind == itemKind && item.Versions.Count > 0).ToList() ?? [];
         var albums = tracks.GroupBy(AlbumKeyOf, StringComparer.Ordinal).ToDictionary(group => group.Key, Album.Of, StringComparer.Ordinal);
         var keys = KeysOf(input.View, serverId);
-        var paths = new Paths(serverId, type, stubs, input.PlacementOf, artistFolder, stub => stub.Sources.Select(source => catalog.Find(serverId, source.ItemId)).OfType<IndexedItem>().Select(AlbumKeyOf).FirstOrDefault());
+        var paths = new Paths(serverId, type, stubs, input.PlacementOf, input.IgnoreRules, artistFolder, stub => stub.Sources.Select(source => catalog.Find(serverId, source.ItemId)).OfType<IndexedItem>().Select(AlbumKeyOf).FirstOrDefault());
 
         var works = new List<StubWork>();
         var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -173,6 +173,7 @@ internal static class TrackStubPlanner
         private readonly Guid _serverId;
         private readonly TypeFolder _type;
         private readonly Func<string, string, string, string> _artistFolder;
+        private readonly IServerIgnoreRules _rules;
         private readonly Dictionary<(string Placement, string ItemId), StubEntry> _byItem = [];
         private readonly Dictionary<(string TypeFolder, string Album), string> _albumFolders = [];
         private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
@@ -183,11 +184,13 @@ internal static class TrackStubPlanner
             TypeFolder type,
             IReadOnlyList<StubEntry> stubs,
             Func<Guid, string, TypeFolder, string> placementOf,
+            IServerIgnoreRules rules,
             Func<string, string, string, string> artistFolder,
             Func<StubEntry, string?> albumOf)
         {
             _serverId = serverId;
             _type = type;
+            _rules = rules;
             _artistFolder = artistFolder;
             foreach (var stub in stubs)
             {
@@ -214,23 +217,34 @@ internal static class TrackStubPlanner
         public StubEntry? Claim(string placement, string itemId)
             => _byItem.TryGetValue((placement, itemId), out var stub) && _claimed.Add(stub.Id) ? stub : null;
 
-        // The path of a new track: the folder of its album, made on first use, and a file name unique in it.
+        // The path of a new track: the folder of its album, made on first use, and a file name unique in it. A folder or file
+        // the server would skip gets the id (row 568).
         public string NewTrack(string library, Album album, string fileName, string id)
         {
             var typeFolder = FederatedPaths.TypeFolderOf(_serverId, library, _type);
             if (!_albumFolders.TryGetValue((typeFolder, album.Key), out var folder))
             {
-                folder = Unique(Path.Combine(_artistFolder(typeFolder, FederatedPaths.Sanitize(album.Artist), id), FederatedPaths.Sanitize(album.Name)), id);
+                var artist = _artistFolder(typeFolder, FederatedPaths.Sanitize(album.Artist), id);
+                var name = FederatedPaths.Sanitize(album.Name);
+                folder = Unique(Path.Combine(artist, name), id, StubPlanner.IsSkippedFolder(_rules, artist, name));
                 _albumFolders[(typeFolder, album.Key)] = folder;
             }
 
-            var path = Path.Combine(folder, fileName + ".strm");
-            return _taken.Add(path) ? path : Path.Combine(folder, string.Create(CultureInfo.InvariantCulture, $"{fileName} [{id[..8]}].strm"));
+            var file = fileName + ".strm";
+            var path = Path.Combine(folder, file);
+            if (!_rules.Ignores(folder, file, false) && _taken.Add(path))
+            {
+                return path;
+            }
+
+            var unique = Path.Combine(folder, string.Create(CultureInfo.InvariantCulture, $"{fileName} [{id[..8]}].strm"));
+            _taken.Add(unique);
+            return unique;
         }
 
-        private string Unique(string folder, string id)
+        private string Unique(string folder, string id, bool hidden)
         {
-            if (_taken.Add(folder))
+            if (!hidden && _taken.Add(folder))
             {
                 return folder;
             }

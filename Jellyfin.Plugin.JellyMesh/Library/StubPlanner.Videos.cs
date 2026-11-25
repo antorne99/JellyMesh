@@ -198,11 +198,14 @@ public static partial class StubPlanner
         var name = FederatedPaths.Sanitize(folder.Name);
         return _fileExtensions.Contains(Path.GetExtension(name))
             || _extraFolders.Contains(name)
-            || rules.Ignores(parent, name, true)
-            || rules.Ignores(Path.Combine(parent, name), ProbeFileName, false)
+            || IsSkippedFolder(rules, parent, name)
             ? string.Create(CultureInfo.InvariantCulture, $"{name} [{SafeId(folder.ItemId)}]")
             : name;
     }
+
+    // Whether the server would skip a new folder, or the files in it, because of the name of the folder.
+    internal static bool IsSkippedFolder(IServerIgnoreRules rules, string parent, string name)
+        => rules.Ignores(parent, name, true) || rules.Ignores(Path.Combine(parent, name), ProbeFileName, false);
 
     // Up to 8 letters and digits of a remote id, or of its hash when it has none, so that it is safe in a name.
     private static string SafeId(string id)

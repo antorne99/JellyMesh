@@ -39,7 +39,7 @@ public class AudioBookStubPlannerTests
         Versions = [new IndexedVersion { MediaSourceId = id, Container = "mp3" }]
     };
 
-    private static StubPlan Plan(IReadOnlyList<IndexedItem> items, StubState? state = null, bool isProtected = true, bool keepsOlderLayout = false)
+    private static StubPlan Plan(IReadOnlyList<IndexedItem> items, StubState? state = null, bool isProtected = true, bool keepsOlderLayout = false, IServerIgnoreRules? ignoreRules = null)
     {
         var catalog = new ServerCatalog { ServerId = _server, State = ServerSyncState.Complete, Items = items };
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [catalog] };
@@ -50,7 +50,7 @@ public class AudioBookStubPlannerTests
             [new RemoteServerInfo(_server, "Casa", "http://server", RemoteMode.Standard, 0, [Books], null, null)],
             isProtected,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null) { KeepsOlderLayout = keepsOlderLayout });
+            _ => null) { KeepsOlderLayout = keepsOlderLayout, IgnoreRules = ignoreRules ?? new FakeIgnoreRules() });
     }
 
     private static StubWork WorkOf(StubPlan plan, string itemId) => Assert.Single(plan.Stubs, work => work.Entry.Sources.Any(source => source.ItemId == itemId));
@@ -227,6 +227,35 @@ public class AudioBookStubPlannerTests
         Assert.StartsWith("Narrator [", folder, StringComparison.Ordinal);
         Assert.All(["p2", "p3", "p4"], id => Assert.Equal(folder, FolderOf(second, id)));
         Assert.Equal(folder, FolderOf(withoutBook, "p3"));
+    }
+
+    // Row 568: an author folder the server would skip gets an id, and every audiobook of that author goes into it.
+    [Fact]
+    public void AnAuthorFolderTheServerWouldSkipGetsItsIdAndKeepsEveryAudiobookOfTheAuthor()
+    {
+        var rules = new FakeIgnoreRules((_, name, isDirectory) => isDirectory && name == "@eaDir");
+        var first = Plan([Part("p1", "One", 1, "Story", "@eaDir"), Part("p2", "One", 1, "Tale", "@eaDir")], ignoreRules: rules);
+
+        var second = Plan([Part("p1", "One", 1, "Story", "@eaDir"), Part("p2", "One", 1, "Tale", "@eaDir"), Part("p3", "One", 1, "Saga", "@eaDir")], first.State, ignoreRules: rules);
+
+        var folder = FolderOf(first, "p1");
+        Assert.Matches("^@eaDir \\[[0-9a-f]{8}\\]$", folder);
+        Assert.Equal(folder, FolderOf(first, "p2"));
+        Assert.All(["p1", "p2", "p3"], id => Assert.Equal(folder, FolderOf(second, id)));
+        Assert.Equal(WorkOf(first, "p1").Entry.RelativePath, WorkOf(second, "p1").Entry.RelativePath);
+    }
+
+    [Fact]
+    public void ABookFolderOrAPartFileTheServerWouldSkipGetsItsId()
+    {
+        var rules = new FakeIgnoreRules((_, name, isDirectory) => (isDirectory && name == "extrafanart") || (!isDirectory && name == "01 - One.strm"));
+
+        var plan = Plan([Part("p1", "One", 1, "extrafanart"), Part("p2", "One", 1, "Tale")], ignoreRules: rules);
+
+        var hidden = WorkOf(plan, "p1").Entry;
+        var file = WorkOf(plan, "p2").Entry;
+        Assert.Equal(PathIn("Narrator", "extrafanart [" + hidden.Id[..8] + "]", "01 - One [" + hidden.Id[..8] + "].strm"), hidden.RelativePath);
+        Assert.Equal(PathIn("Narrator", "Tale", "01 - One [" + file.Id[..8] + "].strm"), file.RelativePath);
     }
 
     [Fact]

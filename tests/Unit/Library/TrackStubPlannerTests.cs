@@ -87,7 +87,8 @@ public class TrackStubPlannerTests
         bool isProtected = true,
         IReadOnlyList<ResolvedContent>? contents = null,
         IReadOnlyList<ResolvedContent>? tracks = null,
-        bool keepsOlderLayout = false)
+        bool keepsOlderLayout = false,
+        IServerIgnoreRules? ignoreRules = null)
     {
         var catalog = new ServerCatalog { ServerId = _server, State = ServerSyncState.Complete, Items = items };
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [catalog] };
@@ -98,8 +99,10 @@ public class TrackStubPlannerTests
             [new RemoteServerInfo(_server, "Casa", "http://server", RemoteMode.Standard, 0, [Films, Music], null, null)],
             isProtected,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null) { KeepsOlderLayout = keepsOlderLayout });
+            _ => null) { KeepsOlderLayout = keepsOlderLayout, IgnoreRules = ignoreRules ?? new FakeIgnoreRules() });
     }
+
+    private static string ArtistOf(StubPlan plan, string itemId) => Path.GetRelativePath(MusicFolder, WorkOf(plan, itemId).Entry.RelativePath).Split(Path.DirectorySeparatorChar)[0];
 
     private static StubWork WorkOf(StubPlan plan, string itemId) => Assert.Single(plan.Stubs, work => work.Entry.Sources.Any(source => source.ItemId == itemId));
 
@@ -328,6 +331,82 @@ public class TrackStubPlannerTests
         var plan = Plan([Track("t1")], keepsOlderLayout: true);
 
         Assert.DoesNotContain(plan.Stubs, work => work.Entry.Kind == StubKind.Track);
+    }
+
+    // Row 568: an artist folder the server would skip gets an id, and every album of that artist goes into it.
+    [Fact]
+    public void AnArtistFolderTheServerWouldSkipGetsItsIdAndKeepsEveryAlbumOfTheArtist()
+    {
+        var rules = new FakeIgnoreRules((_, name, isDirectory) => isDirectory && name == "@eaDir");
+        IndexedItem[] items = [Track("t1", "One", 1, albumArtists: ["@eaDir"]), Track("t2", "Two", 1, album: "Other", albumId: "album2", albumArtists: ["@eaDir"])];
+
+        var plan = Plan(items, ignoreRules: rules);
+
+        var folder = ArtistOf(plan, "t1");
+        Assert.Matches("^@eaDir \\[[0-9a-f]{8}\\]$", folder);
+        Assert.Contains(plan.Stubs, work => folder == "@eaDir [" + work.Entry.Id[..8] + "]");
+        Assert.Equal(folder, ArtistOf(plan, "t2"));
+        Assert.Equal(PathIn(folder, "Album", "01 - One.strm"), WorkOf(plan, "t1").Entry.RelativePath);
+        Assert.Equal(PathIn(folder, "Other", "01 - Two.strm"), WorkOf(plan, "t2").Entry.RelativePath);
+    }
+
+    [Fact]
+    public void ANewAlbumOfAnArtistGoesIntoTheFolderWithTheIdTheArtistAlreadyHas()
+    {
+        var rules = new FakeIgnoreRules((_, name, isDirectory) => isDirectory && name == "@eaDir");
+        var first = Plan([Track("t1", "One", 1, albumArtists: ["@eaDir"])], ignoreRules: rules);
+
+        var second = Plan([Track("t1", "One", 1, albumArtists: ["@eaDir"]), Track("t2", "Two", 1, album: "Other", albumId: "album2", albumArtists: ["@eaDir"])], first.State, ignoreRules: rules);
+
+        var folder = ArtistOf(first, "t1");
+        Assert.StartsWith("@eaDir [", folder, StringComparison.Ordinal);
+        Assert.Equal(WorkOf(first, "t1").Entry.RelativePath, WorkOf(second, "t1").Entry.RelativePath);
+        Assert.Equal(PathIn(folder, "Other", "01 - Two.strm"), WorkOf(second, "t2").Entry.RelativePath);
+    }
+
+    // Existing stubs keep their paths: a rule that comes later changes only the folders made after it.
+    [Fact]
+    public void ATrackThatExistsKeepsItsPathAndItsArtistFolderWhenTheServerStartsSkippingIt()
+    {
+        var first = Plan([Track("t1", "One", 1)]);
+        var rules = new FakeIgnoreRules("Artist", "Album", "01 - One.strm", "01 - Two.strm");
+
+        var second = Plan([Track("t1", "One", 1), Track("t2", "Two", 1, album: "Other", albumId: "album2")], first.State, ignoreRules: rules);
+
+        Assert.Equal(PathIn("Artist", "Album", "01 - One.strm"), WorkOf(second, "t1").Entry.RelativePath);
+        var other = WorkOf(second, "t2").Entry;
+        Assert.Equal(PathIn("Artist", "Other", "01 - Two [" + other.Id[..8] + "].strm"), other.RelativePath);
+        Assert.Empty(second.Removals);
+    }
+
+    [Fact]
+    public void AnAlbumFolderTheServerWouldSkipGetsItsId()
+    {
+        var work = Assert.Single(Plan([Track("t1", "Song", 1, album: "extrafanart")], ignoreRules: new FakeIgnoreRules((_, name, isDirectory) => isDirectory && name == "extrafanart")).Stubs);
+
+        Assert.Equal(PathIn("Artist", "extrafanart [" + work.Entry.Id[..8] + "]", "01 - Song.strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void AnAlbumFolderWhoseFilesTheServerWouldSkipGetsItsId()
+    {
+        var rules = new FakeIgnoreRules((folder, _, isDirectory) => !isDirectory && Path.GetFileName(folder) == "sample");
+
+        var work = Assert.Single(Plan([Track("t1", "Song", 1, album: "sample")], ignoreRules: rules).Stubs);
+
+        Assert.Equal(PathIn("Artist", "sample [" + work.Entry.Id[..8] + "]", "01 - Song.strm"), work.Entry.RelativePath);
+    }
+
+    [Fact]
+    public void ATrackFileTheServerWouldSkipGetsItsId()
+    {
+        var rules = new FakeIgnoreRules((_, name, isDirectory) => !isDirectory && name == "01 - Song.strm");
+
+        var plan = Plan([Track("t1", "Song", 1), Track("t2", "Other", 2)], ignoreRules: rules);
+
+        var work = WorkOf(plan, "t1").Entry;
+        Assert.Equal(PathIn("Artist", "Album", "01 - Song [" + work.Id[..8] + "].strm"), work.RelativePath);
+        Assert.Equal(PathIn("Artist", "Album", "02 - Other.strm"), WorkOf(plan, "t2").Entry.RelativePath);
     }
 
     // Row 555: the names taken from a title are cut at 120 UTF-8 bytes, so at 40 characters of three bytes.
