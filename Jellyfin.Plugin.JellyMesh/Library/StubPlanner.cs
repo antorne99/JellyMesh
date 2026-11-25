@@ -1270,8 +1270,14 @@ public static partial class StubPlanner
         }
 
         // A folder without the id Unique put after its name.
+        // Only 8 lowercase hex characters count as an id, as the planner writes them, so "Band [Explicit]" keeps its whole name.
         private static string WithoutId(string folder)
-            => folder.Length > IdSuffixLength && folder.EndsWith(']') && folder.AsSpan(folder.Length - IdSuffixLength).StartsWith(" [") ? folder[..^IdSuffixLength] : folder;
+            => folder.Length > IdSuffixLength
+                && folder.EndsWith(']')
+                && folder.AsSpan(folder.Length - IdSuffixLength).StartsWith(" [")
+                && folder[^(IdSuffixLength - 2)..^1].All(char.IsAsciiHexDigitLower)
+                ? folder[..^IdSuffixLength]
+                : folder;
 
         private string Unique(string typeFolder, string name, string id, bool hidden = false)
         {

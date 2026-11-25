@@ -379,6 +379,18 @@ public class TrackStubPlannerTests
         Assert.Empty(second.Removals);
     }
 
+    // A folder name that only looks like "name [id8]" is the whole name of its artist.
+    [Fact]
+    public void AnArtistFolderWhoseNameEndsInEightOtherCharactersInBracketsStaysTheFolderOfItsOwnArtist()
+    {
+        var first = Plan([Track("t1", "One", 1, albumArtists: ["Band [Explicit]"])]);
+
+        var second = Plan([Track("t1", "One", 1, albumArtists: ["Band [Explicit]"]), Track("t2", "Two", 1, album: "Other", albumId: "album2", albumArtists: ["Band"])], first.State);
+
+        Assert.Equal("Band [Explicit]", ArtistOf(second, "t1"));
+        Assert.Equal(PathIn("Band", "Other", "01 - Two.strm"), WorkOf(second, "t2").Entry.RelativePath);
+    }
+
     [Fact]
     public void AnAlbumFolderTheServerWouldSkipGetsItsId()
     {
