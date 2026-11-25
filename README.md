@@ -159,7 +159,7 @@ Each server's card has three buttons: **Edit**, **Test connection** and **Remove
 On save, JellyMesh first logs in to the remote with what you entered, checks that the same server answers, reads the libraries the user sees and works out what the change does. That check saves nothing. If anything follows from the change, such as a rename, libraries leaving the import, streams being stopped or a new library mode, the form lists it and asks **Save these changes?** first. Then it saves all the fields, or none of them. An error is shown on the field that caused it, and changes nothing.
 
 - If another server answers at the URL, the save is refused: remove this server and add the other one as a new server.
-- If the remote does not answer, you can still change the name and the library mode. The libraries are shown read-only, and the URL, user and password can change only while the remote answers.
+- If the remote does not answer, you can still change the name, unless the folder migration is not finished, and the library mode. The libraries are shown read-only, and the URL, user and password can change only while the remote answers.
 - If the saved password no longer decrypts, the form asks for the user and password again, and **Edit** is where you enter them.
 - A library the new user no longer sees is marked "no longer visible, will be removed", and leaves the import when you save. Its titles leave at the next sync.
 - A new user ends the streams of the server and the old user's login on the remote within a few seconds.
@@ -226,7 +226,8 @@ Change the name in the server's **Edit** form and save. The new name shows in th
 - The libraries are scanned twice before the rename is done. Until then the titles of this server may show twice among the versions.
 - The libraries JellyMesh made for it are renamed too, and JellyMesh updates the users allowed or blocked on them. Each one empties and fills again, and its sort order and view start over. On Jellyfin 12.1 its place in each user's home screen order and exclusions starts over too.
 - A renamed library keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.
-- If the rename stops halfway, the card says so and the name can't change: save the form again with the same name to finish it. **Cancel the pending rename** keeps the new name for the titles, deletes their old files at once, and loses the watch state not yet carried.
+- While the folder migration of 0.6 has not ended, or while JellyMesh cannot tell yet whether it has, the name can't change and the form says why; the other fields can still be saved.
+- If the rename stops halfway, the card says so and the name can't change: save the form again with the same name to finish it, once the folder migration has ended. **Cancel the pending rename** keeps the new name for the titles, deletes their old files at once, and loses the watch state not yet carried.
 
 ### Settings
 
@@ -363,7 +364,7 @@ Two local films, or two local series, can't be merged, so such cases aren't list
 **Your folders move to one folder per remote library.** Up to 0.5 each server had one `Film` and one `Serie` folder, and in 0.4 all servers shared them. 0.6 writes the new folders next to the old ones, and the plugin page shows a banner, **Choose how to move to the folders of each remote library**. A server on 0.4 moves to the new folders in one step.
 
 - If you chose **Migrate automatically** in 0.5, 0.6 migrates automatically without asking. If you chose to do it by hand, it stays by hand. Otherwise the banner offers **Migrate automatically** and **I'll do it by hand**, with no default.
-- Until the migration ends, the old titles stay as they are and keep playing, but no new titles arrive. Until it runs, each title shows twice in the libraries JellyMesh made for a server in library mode **By type**.
+- Until the migration ends, no server can be renamed, and the old titles stay as they are and keep playing, but no new titles arrive. Until it runs, each title shows twice in the libraries JellyMesh made for a server in library mode **By type**.
 - **Migrate automatically.** For each library that holds an old folder of a server, JellyMesh adds the new folders of the same type of that server, one for each library imported from it, waits for the sync and the scan, moves the watch state, takes the old folder out of the library and empties it. It touches no other folders or settings. The banner shows each step. If a step fails, the migration stops with the old folders still working, the banner shows the error and the steps left, and **Try again** resumes from that step; you can also do the steps left by hand.
 - **I'll do it by hand.** The banner lists, for each library, the folders to add and the old ones to remove. Add the new folders first; after the scan JellyMesh moves the watch state and empties the old folders, and the banner asks you to **Remove the old folders from the libraries**.
 - Each server gets a library mode: **By type** if its automatic libraries were on in 0.5, which keep their names, IDs and permissions and change only their folders, and **None** if they were off. Servers you add later start with **By type**, unless you change **Library mode of a server linked later**.

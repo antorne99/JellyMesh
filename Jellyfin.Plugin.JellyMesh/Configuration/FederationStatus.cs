@@ -53,4 +53,10 @@ public sealed record FederationStatus(
     /// Gets the state of the libraries of all servers (§10 row 442); <c>null</c> when it is not known.
     /// </summary>
     public SharedLibrariesState? SharedLibraries { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether titles are still in the older folder layouts, so that no server can be renamed until
+    /// the folder migration ends (row 566); <c>null</c> when it is not known, which also keeps the names.
+    /// </summary>
+    public bool? OlderLayoutInUse { get; init; }
 }
