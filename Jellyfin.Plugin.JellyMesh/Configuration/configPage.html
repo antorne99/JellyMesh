@@ -2289,6 +2289,8 @@
                     "What this server reads from other servers. Their titles appear in the libraries here.": "Cosa legge questo server dagli altri server. I loro titoli compaiono nelle librerie di qui.",
                     "audiobook file": "file di audiolibro",
                     "audiobook files": "file di audiolibro",
+                    "photo": "foto",
+                    "photos": "foto",
                     "book": "libro",
                     "books": "libri",
                     "book|library": "libri",
@@ -5437,6 +5439,10 @@
 
                     if (report.AudiobookFiles > 0) {
                         counts.push(count(report.AudiobookFiles, 'audiobook file', 'audiobook files'));
+                    }
+
+                    if (report.Photos > 0) {
+                        counts.push(count(report.Photos, 'photo', 'photos'));
                     }
 
                     return counts.join(', ');

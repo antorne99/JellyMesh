@@ -48,4 +48,7 @@ public sealed record ServerSyncReport(
 
     /// <summary>Gets the audiobook files in the index, where a book in several files has one entry per file.</summary>
     public int AudiobookFiles { get; init; }
+
+    /// <summary>Gets the photos in the index.</summary>
+    public int Photos { get; init; }
 }
