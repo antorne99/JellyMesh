@@ -34,11 +34,11 @@ echo "--- decision 13a: stubs"
 stubs fresh | grep "JM Serie Doppia " | sed 's/.*Season 01.//'
 check "stub names" "JM Serie Doppia S01E03-E04.strm,JM Serie Doppia S01E05-E06.strm,JM Serie Doppia S01E08.strm,JM Serie Doppia S01E09.strm,JM Serie Doppia S01E10.strm" \
   "$(stubs fresh | grep "JM Serie Doppia " | sed 's/.*Season 01.//' | sort | paste -sd, -)"
-docker exec jm-dedup-f sh -c 'cat "/federata/Serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E03-E04.nfo"' >"$WORK/double.nfo"
+docker exec "$PREFIX-f" sh -c 'cat "/federata/Serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E03-E04.nfo"' >"$WORK/double.nfo"
 check "the nfo holds the first number" 1 "$(grep -c '<episode>3</episode>' "$WORK/double.nfo")"
 check "the nfo holds the end" 1 "$(grep -c '<episodenumberend>4</episodenumberend>' "$WORK/double.nfo")"
 check "the nfo is locked" 1 "$(grep -c '<lockdata>true</lockdata>' "$WORK/double.nfo")"
-check "the nfo holds no address" 0 "$(grep -c -E 'jm-dedup|http' "$WORK/double.nfo" || true)"
+check "the nfo holds no address" 0 "$(grep -c -E "$PREFIX|http" "$WORK/double.nfo" || true)"
 check "the merged series as a client sees it" '["E1-2@local","E3-4@stub","E5-6@stub","E7@local","E8@stub","E9@stub","E10@stub"]' "$(doppia fresh)"
 
 echo "--- decision 13a: playback of a stub of a double"
@@ -46,9 +46,9 @@ id=$(episode_id fresh "S01E03-E04.strm")
 info=$(post fresh "/Items/$id/PlaybackInfo?userId=$(admin_id fresh)" "$DIRECT")
 check "PlaybackInfo answers" 200 "$(cat "$WORK/status")"
 source_id=$(echo "$info" | jq -r '.MediaSources[0].Id')
-code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: $AUTH, Token=\"$(token_of fresh)\"" -H "Range: bytes=0-1023" "http://127.0.0.1:18421/Videos/$id/stream?static=true&mediaSourceId=$source_id")
+code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: $AUTH, Token=\"$(token_of fresh)\"" -H "Range: bytes=0-1023" "http://127.0.0.1:$PORT/Videos/$id/stream?static=true&mediaSourceId=$source_id")
 check "the double streams from the remote" 206 "$code"
-check "no remote address in PlaybackInfo" 0 "$(echo "$info" | grep -c 'jm-dedup-' || true)"
+check "no remote address in PlaybackInfo" 0 "$(echo "$info" | grep -c "$PREFIX-" || true)"
 
 echo "--- NextUp walks past a stub of a double"
 uid=$(admin_id fresh)
@@ -72,9 +72,9 @@ configure fresh true
 sync_and_scan fresh
 
 echo "--- local copies arrive"
-docker exec jm-dedup-f sh -c 'mkdir -p "/extra/serie/JM Serie Doppia (2026)/Season 01"'
-docker cp "$MEDIA/locale/serie/JM Serie Doppia (2026)/tvshow.nfo" "jm-dedup-f:/extra/serie/JM Serie Doppia (2026)/tvshow.nfo"
-docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "jm-dedup-f:/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E03.mkv"
+docker exec "$PREFIX-f" sh -c 'mkdir -p "/extra/serie/JM Serie Doppia (2026)/Season 01"'
+docker cp "$MEDIA/locale/serie/JM Serie Doppia (2026)/tvshow.nfo" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/tvshow.nfo"
+docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E03.mkv"
 scan fresh
 settle fresh
 sync_and_scan fresh
@@ -82,7 +82,7 @@ check "E3 local: the stub of E03-E04 shrinks to E4 and stays" '["E1-2@local","E3
 check "the stub kept its path" 1 "$(stubs fresh | grep -c 'S01E03-E04.strm')"
 check "the stub kept its state" true "$(get fresh "/Users/$uid/Items/$id" | jq .UserData.Played)"
 
-docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "jm-dedup-f:/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E04.mkv"
+docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E04.mkv"
 scan fresh
 settle fresh
 check "E4 local too: the stub goes" 0 "$(stubs fresh | grep -c 'S01E03-E04.strm' || true)"
@@ -90,7 +90,7 @@ check "its state reached the local episode" true "$(get fresh "/Users/$uid/Items
 
 s56=$(episode_id fresh "S01E05-E06.strm")
 post fresh "/UserPlayedItems/$s56?userId=$uid" >/dev/null
-docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "jm-dedup-f:/extra/serie/JM Serie Doppia (2026)/Season 01/"
+docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/Season 01/"
 scan fresh
 settle fresh
 check "a local double replaces the stub of a double" '["E1-2@local","E3@local","E4@local","E5-6@local","E7@local","E8@stub","E9@stub","E10@stub"]' "$(doppia fresh)"

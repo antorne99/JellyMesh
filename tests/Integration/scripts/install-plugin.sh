@@ -6,7 +6,8 @@
 # usage: install-plugin.sh <container>
 #   e.g. install-plugin.sh jellymesh-test-locale-1
 #
-# NUGET_VOLUME names the Docker volume used as package cache.
+# NUGET_VOLUME names the Docker volume used as package cache. JM_PLUGIN_DLL names a plugin DLL
+# built beforehand, installed in place of a new build.
 
 set -euo pipefail
 
@@ -23,10 +24,16 @@ image=$(yaml_value image)
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 
-echo "building $version"
-docker run --rm -v "$repo":/src -v "$nuget_volume":/root/.nuget/packages -v "$out":/out -w /src \
-  mcr.microsoft.com/dotnet/sdk:10.0 \
-  dotnet build Jellyfin.Plugin.JellyMesh/Jellyfin.Plugin.JellyMesh.csproj -c Release -o /out/build --nologo -v quiet
+if [ -n "${JM_PLUGIN_DLL:-}" ]; then
+  echo "using the build $JM_PLUGIN_DLL"
+  mkdir -p "$out/build"
+  cp "$JM_PLUGIN_DLL" "$out/build/Jellyfin.Plugin.JellyMesh.dll"
+else
+  echo "building $version"
+  docker run --rm -v "$repo":/src -v "$nuget_volume":/root/.nuget/packages -v "$out":/out -w /src \
+    mcr.microsoft.com/dotnet/sdk:10.0 \
+    dotnet build Jellyfin.Plugin.JellyMesh/Jellyfin.Plugin.JellyMesh.csproj -c Release -o /out/build --nologo -v quiet
+fi
 
 jq -n \
   --arg guid "$(yaml_value guid)" --arg name "$(yaml_value name)" --arg version "$version" \

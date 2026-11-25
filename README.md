@@ -292,7 +292,7 @@ Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its num
 
 - **Playback:** your server answers the requests for a track and passes them to the remote, which decides between direct play and transcode as for films. Your server never transcodes a federated track. Clients see neither the remote's address nor its token.
 - **Lyrics** are read from the remote. They can't be uploaded, searched for or deleted on a federated track.
-- **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and a federated album shows next to the same album of yours. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album.
+- **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and a federated album shows next to the same album of yours. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album. Tried on 12.4 with the music folders of two servers in one library: each album both have shows twice, and a favourite or a play on one copy stays off the other.
 
 ### Ebooks, PDFs and comics
 

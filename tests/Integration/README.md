@@ -235,14 +235,14 @@ The spikes for points 2 to 7 run on private throwaway containers, never on this 
 
 ## Proof scripts
 
-Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. `dedup/` and `merge/` need clips that a media folder prepared earlier may lack, so run `prepare-media.sh` first; to keep new clips out of the shared stack's libraries, run it on a copy of the folder and point `MEDIA` there. Logins are fixed test values.
+Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. `dedup/` and `merge/` need clips that a media folder prepared earlier may lack, so run `prepare-media.sh` first; to keep new clips out of the shared stack's libraries, run it on a copy of the folder and point `MEDIA` there. Logins are fixed test values. To install a plugin built beforehand, for example from a `git archive` copy, set `JM_PLUGIN_DLL` to its DLL: `install-plugin.sh`, `play/permissions.sh` and `play/provider-types.sh` then build nothing.
 
 | Folder | Proves | Containers | Ports | Also needs |
 |---|---|---|---|---|
 | `materializer/` | Phase 4: stubs, metadata protection, watch state | `jm-mat` | 18310 | `remoto-standard` and `remoto-jellymesh` of this stack |
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `$PREFIX-a`, `$PREFIX-b` (default `jm-prov`), `$PREFIX-s` with `STOCK=own` | `PORT_A` and the next one (default 18410-18411), gates on the next three | `remoto-standard` of this stack unless `STOCK=own`, `python3`, `WORK` |
-| `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
+| `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424, see below | Nothing from this stack |
 | `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15). `permissions.sh`: integration 13 of the 0.6-0.7 spec. `provider-types.sh`: integration 16 of the 0.6-0.7 spec (row 460), on its own `jm-f62` set | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
@@ -256,7 +256,7 @@ bash materializer/s1.sh           # s1 to s5, see the comment at the top of each
 bash materializer/check.sh        # after s5: no remote password in the logs, no remote address in the index or the folder
 ```
 
-Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`.
+Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`. To run beside another stack, give every script the same `NAME` and `PORT` in place of `jm-mat` and 18310, and `STANDARD_URL` and `JELLYMESH_URL` for remotes other than those of this stack.
 
 ### `playback/`
 
@@ -269,7 +269,7 @@ bash playback/direct1.sh          # the direct-play fixture, then direct3.sh
 bash playback/final.sh            # the whole proof in order, then final2.sh, final3.sh and final4.sh
 ```
 
-`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
+`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. `gates.sh` takes `GATE_STANDARD` and `GATE_JELLYMESH` (default 18321 and 18322) for its ports, and `STANDARD_PORT` and `JELLYMESH_PORT` (default 8097 and 8098) for the remotes behind them; give `up.sh` the same gate ports. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
 
 ### `provider/`
 
@@ -294,7 +294,7 @@ bash provider/down.sh             # removes containers and volumes, and the reco
 
 ### `dedup/`
 
-Scratch files go in `WORK`.
+Scratch files go in `WORK`. `PREFIX` (default `jm-dedup`) names the containers, volumes and network, and `PORT` (default 18421) is the port of the consumer, with the other servers on the next three; give every script the same ones.
 
 ```sh
 bash dedup/up.sh                  # the two remotes and a consumer with the current build

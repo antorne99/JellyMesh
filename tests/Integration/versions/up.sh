@@ -5,6 +5,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 down
+# The logins of an earlier stack do not work on this one.
+rm -f "$WORK"/tok-*
 docker volume create "$PREFIX-media" >/dev/null
 
 for s in remote peer; do

@@ -6,7 +6,7 @@ source "$D/lib.sh"
 SRC=$MEDIA/remoto-standard
 MARIO=$(get /Users | jq -r '.[]|select(.Name=="mario")|.Id')
 set_folder true
-A=$(add_server Standard http://host.docker.internal:8097)
+A=$(add_server Standard "$STANDARD_URL")
 sync_and_scan
 echo "### Standard only"; series_view
 EP5=$(ep_id "JM Serie Divisa" 1 5 /federata)
@@ -15,7 +15,7 @@ RUN5=$(get "/Users/$USER_ID/Items/$EP5" | jq -c '{Run:.RunTimeTicks,H:.MediaSour
 post "/UserPlayedItems/$EP5?userId=$USER_ID" >/dev/null
 echo "E05 $EP5 tech=$RUN5 state=$(user_data "$EP5")"
 echo "### add JellyMesh: E05 winner moves to it, Season 2 appears"
-B=$(add_server JellyMeshRemote http://host.docker.internal:8098)
+B=$(add_server JellyMeshRemote "$JELLYMESH_URL")
 sync_and_scan
 series_view
 echo "E05 same id: $([ "$EP5" = "$(ep_id "JM Serie Divisa" 1 5 /federata)" ] && echo yes || echo no), same strm: $([ "$STRM5" = "$(docker exec "$NAME" sh -c 'cat "/federata/Serie/JM Serie Divisa (2026)/Season 01/JM Serie Divisa S01E05.strm"')" ] && echo yes || echo no), state=$(user_data "$EP5")"

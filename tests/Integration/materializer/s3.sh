@@ -4,8 +4,8 @@ D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$D/lib.sh"
 PLUGDIR=/config/plugins/Jellyfin.Plugin.JellyMesh
 set_folder true
-A=$(add_server Standard http://host.docker.internal:8097)
-B=$(add_server JellyMeshRemote http://host.docker.internal:8098)
+A=$(add_server Standard "$STANDARD_URL")
+B=$(add_server JellyMeshRemote "$JELLYMESH_URL")
 sync_and_scan
 echo "### .nfo hashes before anything"
 hashes() { docker exec "$NAME" sh -c 'cd /federata && find . -type f ! -name "*.jpg" | sort | xargs -d "\n" md5sum | md5sum'; }
