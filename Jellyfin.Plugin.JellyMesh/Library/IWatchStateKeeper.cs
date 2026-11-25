@@ -7,8 +7,8 @@ using Jellyfin.Plugin.JellyMesh.Dedup;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// Keeps the watch state of the titles of a removed server and puts it back when the same content appears again, from
-/// that server added back or from another one (row 412).
+/// Keeps the watch state of the titles of a removed server, or of a copy joined to another (row 565), and puts it back
+/// when the same content appears again, from that server added back or from another one (row 412).
 /// </summary>
 public interface IWatchStateKeeper
 {
@@ -26,6 +26,16 @@ public interface IWatchStateKeeper
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Whether the state is saved, so that the stubs may go.</returns>
     Task<bool> KeepAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves each user's watch state of the stubs about to go because another stub keeps their remote item: two copies of
+    /// a title joined again (row 565). The state goes back on the stub that stays.
+    /// </summary>
+    /// <param name="root">The federated folder.</param>
+    /// <param name="stubs">The joined stubs about to be removed.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the state is saved, so that the stubs may go.</returns>
+    Task<bool> KeepJoinedAsync(string root, IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken);
 
     /// <summary>
     /// Saves the manual merges a server about to leave them has copies in, so that its kept titles find every other copy

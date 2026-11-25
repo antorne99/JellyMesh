@@ -8,7 +8,7 @@ using Jellyfin.Plugin.JellyMesh.Storage;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// The watch state of the titles of removed servers, in the plugin database (Q412, Q414).
+/// The watch state of the titles of removed servers and of joined copies, in the plugin database (Q412, Q414, row 565).
 /// </summary>
 public interface IKeptWatchStateStore
 {

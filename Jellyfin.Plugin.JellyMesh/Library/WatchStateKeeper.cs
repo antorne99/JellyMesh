@@ -23,8 +23,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// <see cref="IWatchStateKeeper"/> over the user data of Jellyfin and a <see cref="IKeptWatchStateStore"/>. The identity
-/// of a title is that of the dedup (plan §4.1), read from the library item of the old stub, since the index has dropped
-/// the removed server by the time its stubs go.
+/// of a title is that of the dedup (plan §4.1) or of the rule of its type, read from the library item of the old stub,
+/// since the index has dropped the removed server by the time its stubs go; a joined stub is read the same way.
 /// </summary>
 public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 {
@@ -32,6 +32,10 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 
     // The most copies a kept title is put back on (row 542).
     private const int MaxCopies = 100;
+
+    // Which titles a save is of, as the log names them.
+    private const string RemovedTitles = "of removed servers";
+    private const string JoinedTitles = "joined to another copy";
 
     // How long a record nobody used is kept (row 412).
     private static readonly TimeSpan _keptFor = TimeSpan.FromDays(90);
@@ -123,7 +127,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         // State still to clear is not of the episodes of its stub (§10 row 543).
-        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, cancellationToken).ConfigureAwait(false);
+        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, RemovedTitles, cancellationToken).ConfigureAwait(false);
         foreach (var serverId in ServersOf(stubs, series))
         {
             if (kept)
@@ -137,6 +141,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         return kept;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> KeepJoinedAsync(string root, IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stubs);
+        var alone = stubs.Where(stub => stub.StateOfOneUntil is null).ToList();
+        return alone.Count == 0 || await SaveAsync(root, alone, [], JoinedTitles, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -240,8 +252,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     // Matching reads only these two IDs on a film.
     private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
 
-    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453 and 535), but
-    // photos, which have none yet (row 560).
+    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453, 535 and 565).
     private static bool IsInDedup(KeptTitle title) => !IsOfItsOwn(title.Kind);
 
     private static bool IsOfItsOwn(KeptTitleKind kind) => kind is KeptTitleKind.Track or KeptTitleKind.AudioBook or KeptTitleKind.Book or KeptTitleKind.HomeVideo or KeptTitleKind.Photo;
@@ -281,6 +292,15 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         Title = title.Title,
         Year = title.Year,
         RunTimeTicks = title.RunTimeTicks,
+        Folder = FolderOf(title.Place)
+    };
+
+    private static PhotoItem SavedPhoto(KeptTitle title) => new()
+    {
+        ServerId = SavedServer,
+        ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+        Title = title.Title,
+        Year = title.Year,
         Folder = FolderOf(title.Place)
     };
 
@@ -518,7 +538,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             .. Match("tracks", () => TrackDedup.Pair(Own(KeptTitleKind.Track, SavedTrack), current.Tracks, MaxCopies, cancellationToken)),
             .. Match("audiobooks", () => TrackDedup.Pair(Own(KeptTitleKind.AudioBook, SavedTrack), current.AudioBooks, MaxCopies, cancellationToken)),
             .. Match("books", () => BookIdentity.Pair(Own(KeptTitleKind.Book, SavedBook), current.Books, MaxCopies, cancellationToken)),
-            .. Match("home videos", () => HomeVideoIdentity.Pair(Own(KeptTitleKind.HomeVideo, SavedHomeVideo), current.HomeVideos, MaxCopies, cancellationToken))
+            .. Match("home videos", () => HomeVideoIdentity.Pair(Own(KeptTitleKind.HomeVideo, SavedHomeVideo), current.HomeVideos, MaxCopies, cancellationToken)),
+            .. Match("photos", () => PhotoIdentity.Pair(Own(KeptTitleKind.Photo, SavedPhoto), current.Photos, MaxCopies, cancellationToken))
         ];
         foreach (var match in pairs.GroupBy(pair => pair.Saved, StringComparer.Ordinal))
         {
@@ -670,7 +691,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         var oneFile = FoldersOfOneFile(state.Stubs);
-        var found = new CurrentTitles([], [], [], [], [], [], paths);
+        var found = new CurrentTitles([], [], [], [], [], [], [], paths);
         void AddOwn(StubEntry stub, StubSource source, IndexedItem item)
         {
             var serverId = source.ServerId.ToString("N");
@@ -707,8 +728,19 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                         Folder = FolderOf(PlaceOf(stub.RelativePath))
                     });
                     break;
+                case StubKind.Photo:
+                    found.Photos.Add(new PhotoItem
+                    {
+                        ServerId = serverId,
+                        ItemId = item.ItemId,
+                        Title = item.Name,
+
+                        // The year its library item has: a photo placeholder carries no date.
+                        Year = item.ProductionYear,
+                        Folder = FolderOf(PlaceOf(stub.RelativePath))
+                    });
+                    break;
                 default:
-                    // No rule of identity knows a photo again yet: its kept state stays (row 560).
                     return;
             }
 
@@ -753,8 +785,8 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         };
     }
 
-    // Saves the state of the titles, or says why not in the log; false when they must stay.
-    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken)
+    // Saves the state of the titles, or says why not in the log, naming which titles they are; false when they must stay.
+    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, string which, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -763,14 +795,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             var users = _users.GetUsers().ToList();
             if (users.Count == 0)
             {
-                _logger.LogWarning("The users cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                _logger.LogWarning("The users cannot be read for now: {Count} titles {Which:l} are kept until their watch state is saved", stubs.Count + series.Count, which);
                 return false;
             }
 
             // Without the merges a kept title would miss the copies that find it (D33): the titles stay until they read.
             if (_merges.IsDamaged)
             {
-                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles {Which:l} are kept until their watch state is saved", stubs.Count + series.Count, which);
                 return false;
             }
 
@@ -811,14 +843,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             await _kept.SaveAsync(titles, cancellationToken).ConfigureAwait(false);
             if (titles.Count > 0)
             {
-                _logger.LogInformation("Kept the watch state of {Count} titles of removed servers", titles.Count);
+                _logger.LogInformation("Kept the watch state of {Count} titles {Which:l}", titles.Count, which);
             }
 
             return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            _logger.LogError("Cannot keep the watch state of the titles {Which:l}, so they stay for now: {Error}{Detail:l}", which, exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally
@@ -835,5 +867,6 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         List<TrackItem> AudioBooks,
         List<BookItem> Books,
         List<HomeVideoItem> HomeVideos,
+        List<PhotoItem> Photos,
         Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>> Paths);
 }
