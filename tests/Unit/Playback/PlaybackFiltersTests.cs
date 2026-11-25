@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
@@ -58,6 +59,7 @@ public class PlaybackFiltersTests
     private readonly User _user = new("viewer", "auth", "reset");
     private readonly StreamSlots _peerSlots = new(TimeProvider.System, new InMemoryConfigurationStore());
     private readonly StubEntry _stub;
+    private readonly ErrorLogLimits _errorLogs = new();
     private SegmentOffer? _offer;
 
     public PlaybackFiltersTests()
@@ -101,7 +103,8 @@ public class PlaybackFiltersTests
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
             new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
             _offer,
-            _infoLog);
+            _infoLog,
+            _errorLogs);
     }
 
     private StubSegments Segments(StubLookup lookup, InMemoryConfigurationStore store)
@@ -122,7 +125,8 @@ public class PlaybackFiltersTests
             _transcodes.Object,
             _peerSlots,
             listFolder ?? StockRouteGuardFilter.ListFolder,
-            _guardLog);
+            _guardLog,
+            _errorLogs);
     }
 
     private static ActionExecutingContext Context(string controller, string action, params (string Key, object? Value)[] arguments)
@@ -1295,6 +1299,18 @@ public class PlaybackFiltersTests
     }
 
     [Fact]
+    public async Task Stock_failures_that_repeat_stop_filling_the_log()
+    {
+        for (var play = 0; play < ErrorLogLimit.MaxPerMinute + 5; play++)
+        {
+            await FailStockAsync(SegmentOfStub("local-play"), new FfmpegException("exited"));
+        }
+
+        Assert.Equal(ErrorLogLimit.MaxPerMinute + 5, _guardLog.Lines.Count(line => line.Contains("failed in stock: FfmpegException", StringComparison.Ordinal)));
+        Assert.Equal(ErrorLogLimit.MaxPerMinute, _guardLog.Lines.Count(line => line.Contains("FfmpegException: exited", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public async Task The_refusal_clears_the_failed_job_a_retry_would_wait_for()
     {
         await FileAtLimitAsync();
@@ -1314,7 +1330,7 @@ public class PlaybackFiltersTests
         Assert.Same(failure, executed.Exception);
         _transcodes.Verify(manager => manager.KillTranscodingJobs("device", "local-play", It.IsAny<Func<string, bool>>()), Times.Once);
         Assert.Contains(_guardLog.Lines, line => line.Contains("failed in stock: FfmpegException", StringComparison.Ordinal));
-        Assert.DoesNotContain(_guardLog.Lines, line => line.Contains("exited", StringComparison.Ordinal));
+        Assert.Contains(_guardLog.Lines, line => line.Contains("exited", StringComparison.Ordinal));
     }
 
     [Fact]

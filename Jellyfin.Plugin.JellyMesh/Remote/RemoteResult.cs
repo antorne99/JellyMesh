@@ -38,4 +38,14 @@ public static class RemoteResult
     /// <param name="status">The HTTP status.</param>
     /// <returns>The result.</returns>
     public static RemoteResult<T> FailWithStatus<T>(RemoteFailure failure, int status) => new(default, failure, status);
+
+    /// <summary>
+    /// Creates a failed result that keeps the whole story of the failure, for the logs and for administrators.
+    /// </summary>
+    /// <typeparam name="T">The value type.</typeparam>
+    /// <param name="failure">The failure.</param>
+    /// <param name="status">The HTTP status, if it decided the failure.</param>
+    /// <param name="error">The story.</param>
+    /// <returns>The result.</returns>
+    public static RemoteResult<T> FailWithError<T>(RemoteFailure failure, int? status, RemoteError? error) => new(default, failure, status, error);
 }

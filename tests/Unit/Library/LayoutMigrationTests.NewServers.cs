@@ -148,7 +148,7 @@ public sealed partial class LayoutMigrationTests
 
         Assert.Equal(AutomaticMigrationError.None, _store.Configuration.LayoutMigration.Error);
         Assert.DoesNotContain(_serverC, _store.Configuration.LayoutMigration.PlacedServers);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("/secret/path", StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains("/secret/path", StringComparison.Ordinal));
     }
 
     [Fact]

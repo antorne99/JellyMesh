@@ -9,6 +9,7 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Provider;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Common;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -90,6 +91,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly StreamSlots _peerSlots;
     private readonly Func<string, IReadOnlyList<string>> _listFolder;
     private readonly ILogger<StockRouteGuardFilter> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="StockRouteGuardFilter"/> class.
@@ -102,6 +104,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="transcodes">The transcode manager.</param>
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public StockRouteGuardFilter(
         StubLookup stubs,
         IAuthorizationContext authorization,
@@ -110,8 +113,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
-        ILogger<StockRouteGuardFilter> logger)
-        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder, logger)
+        ILogger<StockRouteGuardFilter> logger,
+        ErrorLogLimits? errorLogs = null)
+        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder, logger, errorLogs)
     {
     }
 
@@ -125,8 +129,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
         Func<string, IReadOnlyList<string>> listFolder,
-        ILogger<StockRouteGuardFilter>? logger = null)
+        ILogger<StockRouteGuardFilter>? logger = null,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _logger = logger ?? NullLogger<StockRouteGuardFilter>.Instance;
         _stubs = stubs;
         _authorization = authorization;
@@ -264,7 +270,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             // Stock leaves the failed job behind with a request that never ends, and a retry would wait for it for good.
             if (executed.Exception is not null && !executed.ExceptionHandled)
             {
-                _logger.LogWarning("{Controller}.{Action} of a federated title failed in stock: {Error}", controller, action, executed.Exception.GetType().Name);
+                _logger.LogWarning("{Controller}.{Action} of a federated title failed in stock: {Error}{Detail:l}", controller, action, executed.Exception.GetType().Name, _errorLogs.Playback.Of(executed.Exception));
             }
             else if (StatusOf(executed.Result) is >= 400 and var status)
             {

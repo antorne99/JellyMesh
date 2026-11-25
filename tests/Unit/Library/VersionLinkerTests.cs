@@ -781,7 +781,7 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal(local.Id, itemA.PrimaryVersionId);
         Assert.Equal([itemA.Id], ((Folder)failing).LinkedChildren.Select(child => child.ItemId!.Value));
         Assert.Equal([local.Id], ((Folder)other).LinkedChildren.Select(child => child.ItemId!.Value));
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1003,7 +1003,7 @@ public sealed class VersionLinkerTests : IDisposable
 
         Assert.Null(itemC.PrimaryVersionId);
         Assert.Empty(itemD.LinkedAlternateVersions);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 
@@ -1072,7 +1072,7 @@ public sealed class VersionLinkerTests : IDisposable
         await _linker.LinkAsync(false, CancellationToken.None);
 
         Assert.Equal(itemD.Id, itemC.PrimaryVersionId);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 
@@ -1222,7 +1222,7 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal([a], kept);
         Assert.Null(itemC.PrimaryVersionId);
         Assert.Empty(other.LinkedAlternateVersions);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
         Assert.Contains(_logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
     }
 

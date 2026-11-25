@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -25,6 +26,7 @@ public sealed class PlaybackSweeper : BackgroundService
     private readonly IPluginConfigurationStore _store;
     private readonly TimeProvider _clock;
     private readonly ILogger<PlaybackSweeper> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSweeper"/> class.
@@ -35,14 +37,17 @@ public sealed class PlaybackSweeper : BackgroundService
     /// <param name="store">The configuration store.</param>
     /// <param name="clock">The clock.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public PlaybackSweeper(
         PlaybackCoordinator coordinator,
         ISessionManager sessionManager,
         PlaybackSessionStore sessions,
         IPluginConfigurationStore store,
         TimeProvider clock,
-        ILogger<PlaybackSweeper> logger)
+        ILogger<PlaybackSweeper> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _coordinator = coordinator;
         _sessionManager = sessionManager;
         _sessions = sessions;
@@ -97,8 +102,7 @@ public sealed class PlaybackSweeper : BackgroundService
             catch (Exception exception) when (exception is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
 #pragma warning restore CA1031
             {
-                // The type only: a message could hold a remote address.
-                _logger.LogError("Could not sweep the playback sessions: {Error}", exception.GetType().Name);
+                _logger.LogError("Could not sweep the playback sessions: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
             }
         }
     }
@@ -118,8 +122,7 @@ public sealed class PlaybackSweeper : BackgroundService
             catch (Exception exception)
 #pragma warning restore CA1031
             {
-                // The type only: a message could hold a remote address.
-                _logger.LogError("Could not tell a remote that a client went or a source dropped: {Error}", exception.GetType().Name);
+                _logger.LogError("Could not tell a remote that a client went or a source dropped: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
             }
         }
     }
@@ -147,8 +150,7 @@ public sealed class PlaybackSweeper : BackgroundService
         catch (Exception exception)
 #pragma warning restore CA1031
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Could not close a playback session: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not close a playback session: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
         }
     }
 }

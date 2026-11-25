@@ -20,14 +20,13 @@ using Xunit;
 namespace Jellyfin.Plugin.JellyMesh.Tests.Security;
 
 /// <summary>
-/// What each failure leaves in the log. Exception text is the trap: a transport error names the address, and a test on
-/// the message format alone would pass with the exception attached.
+/// What each failure leaves in the log: the whole error, with the address (550), but no token and no password.
 /// </summary>
 public class LogLeakTests
 {
     private const string SecretText = "failed for http://" + TestValues.Host + ":8096/x?api_key=" + TestValues.Token;
 
-    private static readonly string[] _secrets = [TestValues.Token, TestValues.Password, TestValues.Host, "Authorization", "api_key"];
+    private static readonly string[] _secrets = [TestValues.Token, TestValues.Password, TestValues.Key];
 
     private static void AssertClean(IEnumerable<string> lines)
     {
@@ -48,7 +47,7 @@ public class LogLeakTests
 
     [Theory]
     [MemberData(nameof(Failures))]
-    public async Task No_transport_failure_reaches_the_log_with_its_text(int failure)
+    public async Task A_transport_failure_reaches_the_log_whole_without_its_token(int failure)
     {
         Exception exception = failure switch
         {
@@ -66,11 +65,12 @@ public class LogLeakTests
 
         Assert.False(result.IsSuccess);
         Assert.NotNull(capabilities);
+        Assert.Contains(fixture.Logger.Lines, line => line.Contains(exception.GetType().FullName!, StringComparison.Ordinal) && line.Contains("http://" + TestValues.Host + ":8096/x?api_key=" + ErrorText.Removed, StringComparison.Ordinal));
         AssertClean(fixture.Logger.Lines);
     }
 
     [Fact]
-    public async Task A_refused_login_says_only_that()
+    public async Task A_refused_login_logs_no_password()
     {
         using var fixture = new RegistryFixture(new StubHandler(_ => StubHandler.Status(HttpStatusCode.Unauthorized)));
 
@@ -81,7 +81,7 @@ public class LogLeakTests
     }
 
     [Fact]
-    public async Task A_failed_close_logs_the_kind_of_error_only()
+    public async Task A_failed_close_logs_the_error_without_its_token()
     {
         var logger = new CapturingLogger<PlaybackSweeper>();
         var sessions = new Mock<ISessionManager>();
@@ -103,12 +103,12 @@ public class LogLeakTests
         await stop.CancelAsync();
         await sweeper.StopAsync(CancellationToken.None);
 
-        Assert.Contains(logger.Lines, line => line.Contains(nameof(HttpRequestException), StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains(nameof(HttpRequestException) + ": failed for http://", StringComparison.Ordinal));
         AssertClean(logger.Lines);
     }
 
     [Fact]
-    public async Task A_refusal_that_cannot_be_sent_logs_the_kind_of_error_only()
+    public async Task A_refusal_that_cannot_be_sent_logs_the_error_without_its_token()
     {
         var logger = new CapturingLogger<PlaybackRefusal>();
         var sessions = new Mock<ISessionManager>();
@@ -121,7 +121,7 @@ public class LogLeakTests
         new PlaybackRefusal(sessions.Object, logger).Refuse(context, "device");
         await feature.CompleteAsync();
 
-        Assert.Contains(logger.Lines, line => line.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains(nameof(InvalidOperationException) + ": failed for http://", StringComparison.Ordinal));
         AssertClean(logger.Lines);
     }
 

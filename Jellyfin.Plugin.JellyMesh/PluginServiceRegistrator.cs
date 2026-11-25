@@ -34,6 +34,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ILegacySecretKeySource, EnvironmentSecretKeySource>();
         serviceCollection.AddSingleton<ICredentialVault, CredentialVault>();
         serviceCollection.AddSingleton<IJellyfinRemoteClient, JellyfinRemoteClient>();
+        serviceCollection.AddSingleton<ErrorLogLimits>();
         serviceCollection.AddSingleton<IRemoteServerRegistry, RemoteServerRegistry>();
         serviceCollection.AddSingleton<IFederatedFolderLinkChecker, FederatedFolderLinkChecker>();
 

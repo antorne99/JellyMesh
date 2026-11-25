@@ -5,7 +5,7 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 namespace Jellyfin.Plugin.JellyMesh.Sync;
 
 /// <summary>
-/// The sync state of a server, as shown on the configuration page. Holds no address.
+/// The sync state of a server, as shown on the configuration page, to administrators only.
 /// </summary>
 /// <param name="ServerId">The server.</param>
 /// <param name="ServerName">The display name.</param>
@@ -27,4 +27,10 @@ public sealed record ServerSyncReport(
     bool IsOffline,
     int Movies,
     int Series,
-    int Episodes);
+    int Episodes)
+{
+    /// <summary>
+    /// Gets the whole story of the failure, null when there is none or it was before a restart.
+    /// </summary>
+    public string? Detail { get; init; }
+}

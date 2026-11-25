@@ -131,7 +131,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the sync history: {Error}. The history starts empty", exception.GetType().Name);
+            _logger.LogError("Cannot read the file of the sync history: {Error}. The history starts empty{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         _isDamaged = true;
@@ -169,7 +169,7 @@ public sealed class SyncHistoryStore : ISyncHistory, IDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the sync history: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of the sync history: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

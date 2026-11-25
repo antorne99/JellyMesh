@@ -16,6 +16,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [Route("JellyMesh/Admin")]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Produces(MediaTypeNames.Application.Json)]
+[AdminErrors]
 public class FederationSyncController : ControllerBase
 {
     private readonly ICatalogSyncService _sync;

@@ -11,6 +11,11 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 public readonly record struct RelayResult(RelayEnd End, long Bytes, TimeSpan Elapsed)
 {
     /// <summary>
+    /// Gets what broke the copy, null when nothing did.
+    /// </summary>
+    public Exception? Error { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether the remote stopped serving, by breaking or going silent: not the client, nor the
     /// end, nor a break soon after a pause of the client.
     /// </summary>

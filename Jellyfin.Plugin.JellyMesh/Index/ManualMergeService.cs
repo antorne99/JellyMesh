@@ -205,7 +205,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot find the titles a manual merge joins: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot find the titles a manual merge joins: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return [];
         }
     }
@@ -224,8 +224,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Cannot carry the watch state of a manual merge: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot carry the watch state of a manual merge: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -270,8 +269,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Could not apply the undo of a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not apply the undo of a manual merge yet, a later sync or the nightly run does: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -288,8 +286,7 @@ public sealed class ManualMergeService
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not apply a manual merge yet, a later sync or the nightly run does: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 }

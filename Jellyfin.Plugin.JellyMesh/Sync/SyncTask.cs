@@ -56,7 +56,7 @@ public abstract class SyncTask : IScheduledTask
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             // Jellyfin stores and logs what a task throws, so it gets the type only: a message could hold a remote address.
-            _logger.LogError("{Task} stopped: {Error}", Name, exception.GetType().Name);
+            _logger.LogError("{Task} stopped: {Error}{Detail:l}", Name, exception.GetType().Name, ErrorText.Of(exception));
             throw new InvalidOperationException($"{Name} stopped: {exception.GetType().Name}");
         }
 

@@ -217,7 +217,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     }
 
     [Fact]
-    public async Task AHistoryThatCannotBeSaved_NeverFailsTheSync_AndLogsOnlyTheType()
+    public async Task AHistoryThatCannotBeSaved_NeverFailsTheSync_AndLogsTheWholeError()
     {
         Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
         var server = await _fixture.AddServerAsync("Friend", "films");
@@ -231,7 +231,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
         Assert.False(sync.GetStatus().IsRunning);
         Assert.Single(_fixture.Index.Snapshot.Find(server.Id)!.Items);
         Assert.Contains(_fixture.Logger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
-        Assert.DoesNotContain(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(_fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
 
     [Fact]

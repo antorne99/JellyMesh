@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 [Route("JellyMesh/Admin/Peers")]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Produces(MediaTypeNames.Application.Json)]
+[AdminErrors]
 public class PeerAdminController : ControllerBase
 {
     private readonly IPluginConfigurationStore _store;

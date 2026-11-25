@@ -131,7 +131,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             _unsaved = true;
-            _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
         catch
         {
@@ -192,7 +192,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
         catch (Exception exception) when (exception is not ObjectDisposedException)
         {
-            _logger.LogWarning("Cannot save the last server that served a title: {Error}", exception.GetType().Name);
+            _logger.LogWarning("Cannot save the last server that served a title: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -244,7 +244,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
         catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            _logger.LogError("Cannot read the file of the last servers that served each title: {Error}. It is set aside", exception.GetType().Name);
+            _logger.LogError("Cannot read the file of the last servers that served each title: {Error}. It is set aside{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         KeepDamagedCopy();
@@ -259,7 +259,7 @@ public sealed class LastServedSourceStore : ILastServedSourceStore, IHostedServi
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot keep a copy of the damaged file of the last servers: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot keep a copy of the damaged file of the last servers: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 

@@ -80,13 +80,14 @@ sync_now() {
 }
 last_failure() { get /JellyMesh/Admin/Sync | jq -r '.Servers[0].Failure'; }
 
-scan() {
+last_scan() { get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary" and .State == "Idle") | .LastExecutionResult | select(.Status == "Completed") | .EndTimeUtc'; }
+scan() { # Waits for a scan that completes: a refresh cancels the one that runs.
   local last new i
-  last=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | .LastExecutionResult.EndTimeUtc // ""')
+  last=$(last_scan)
   post /Library/Refresh >/dev/null
   for i in $(seq 1 120); do
-    new=$(get /ScheduledTasks | jq -r '.[] | select(.Key == "RefreshLibrary") | .LastExecutionResult.EndTimeUtc // ""')
-    [ "$new" != "$last" ] && { sleep 2; return 0; }
+    new=$(last_scan)
+    [ -n "$new" ] && [ "$new" != "$last" ] && { sleep 2; return 0; }
     sleep 1
   done
 }
@@ -182,7 +183,8 @@ check "catalog redirected: refused" RedirectRefused "$(last_failure)"
 set_mode redirect-all
 post "/JellyMesh/Admin/Servers/$server/Test" >/dev/null
 check "a call redirected to another host is refused" RedirectRefused "$(jq -r .Failure "$WORK/body")"
-clean_body "the answer to the administrator" "$WORK/body"
+check "the administrator reads the address" 1 "$(grep -c -F "host.docker.internal:$FAKE" "$WORK/body")"
+check "the answer to the administrator holds no token or password" 0 "$(grep -c -F -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD" "$WORK/body")"
 check "the third host saw nothing" 0 "$(third_hits)"
 
 echo "--- huge answers"
@@ -212,7 +214,7 @@ big=$(docker exec "$NAME" sh -c 'find /federata -type f -size +16M | wc -l' | tr
 check "no huge image on disk" 0 "$big"
 rm -f "$WORK/fourth"
 
-echo "--- error bodies are not read"
+echo "--- error bodies are read up to 64 KB"
 set_mode pi-error
 started=$SECONDS
 check "a 500 with a body of 2 GB: refused" 503 "$(open e1 "$film")"
@@ -337,10 +339,12 @@ check "the log is verbose" true "$([ "$(grep -c -E '\[(VRB|DBG)\]' "$WORK/server
 echo "verbose lines: $(grep -c -E '\[(VRB|DBG)\]' "$WORK/server.log")"
 KEY=$(docker exec "$NAME" sh -c 'cat "$(find /config -name credential.key | head -1)"')
 check "the credential key file exists" 64 "${#KEY}"
-for secret in "$REMOTE_TOKEN" "$REMOTE_PASSWORD" "$KEY" 'host.docker.internal' "$FAKE" "$THIRD" 'MediaBrowser Client="JellyMesh"'; do
+for secret in "$REMOTE_TOKEN" "$REMOTE_PASSWORD" "$KEY" 'MediaBrowser Client="JellyMesh"'; do
   check "the log holds no '$secret'" 0 "$(grep -c -F "$secret" "$WORK/server.log")"
 done
-grep -F -e "$FAKE" -e 'host.docker.internal' "$WORK/server.log" | head -5
+activity=$(get '/System/ActivityLog/Entries?limit=1000')
+check "the activity log was read" true "$(jq '.TotalRecordCount > 0' <<<"$activity")"
+check "the activity log names nothing of the remote" 0 "$(grep -c -E "host\.docker\.internal|$FAKE|$THIRD|$REMOTE_TOKEN|$REMOTE_PASSWORD" <<<"$activity")"
 check "plugin configuration holds no token or password" 0 "$(docker exec "$NAME" sh -c 'cat /config/plugins/configurations/*JellyMesh*.xml' | grep -c -F -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD")"
 
 exit "$FAILED"

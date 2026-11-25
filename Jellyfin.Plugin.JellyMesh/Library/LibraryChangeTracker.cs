@@ -125,7 +125,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            _logger.LogError("Cannot read the libraries to compare them with the last sync: {Error}", exception.GetType().Name);
+            _logger.LogError("Cannot read the libraries to compare them with the last sync: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }
@@ -144,7 +144,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}", LogText.Clean(library), exception.GetType().Name);
+            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }

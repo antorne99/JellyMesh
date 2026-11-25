@@ -346,6 +346,6 @@ public sealed class FederatedFolderLinkCheckerTests
         var report = new FederatedFolderLinkChecker(manager.Object, logger).Check(Folder, [_a]);
 
         Assert.Equal(FederatedFolderLinkState.NotChecked, report.State);
-        Assert.DoesNotContain(logger.Lines, line => line.Contains("/secret/path", StringComparison.Ordinal));
+        Assert.Contains(logger.Lines, line => line.Contains("/secret/path", StringComparison.Ordinal));
     }
 }

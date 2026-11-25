@@ -73,9 +73,4 @@ check "and the mode is still JellyMesh" JellyMesh "$(get b /JellyMesh/Admin/Stat
 check "open" 200 "$(timed_open n6 "$solo")"
 close_stream n6
 
-echo "--- nothing secret in the logs"
-for s in a b; do
-  check "no address of a remote in the log of $s" 0 "$(docker logs "$PREFIX-$s" 2>&1 | grep -c -E "host\.docker\.internal|:($GATE_A|$GATE_B|$GATE_STOCK)")"
-done
-
 exit "$FAILED"

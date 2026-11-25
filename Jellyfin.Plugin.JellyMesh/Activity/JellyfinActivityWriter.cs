@@ -68,8 +68,8 @@ public sealed class JellyfinActivityWriter : IActivityWriter, IDisposable
             }
             catch (Exception exception)
             {
-                // Also a cancellation: no token is passed, so it is not the caller's. The type only: a message could hold an address.
-                _logger.LogWarning("Cannot write {Type} to the activity log: {Error}", entry.Type, exception.GetType().Name);
+                // Also a cancellation: no token is passed, so it is not the caller's.
+                _logger.LogWarning("Cannot write {Type} to the activity log: {Error}{Detail:l}", entry.Type, exception.GetType().Name, ErrorText.Of(exception));
             }
         }
     }

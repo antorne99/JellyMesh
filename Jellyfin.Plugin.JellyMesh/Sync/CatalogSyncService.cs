@@ -56,6 +56,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
+    private readonly ConcurrentDictionary<Guid, string?> _failureDetails = new();
     private readonly ConcurrentDictionary<Guid, int> _runReads = new();
     private readonly UnreadablePasswords _unreadablePasswords = new();
 
@@ -242,8 +243,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Cleanup after removing a server stopped: {Error}", exception.GetType().Name);
+            _logger.LogError("Cleanup after removing a server stopped: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -259,7 +259,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         return new HashSet<string>(mark.LibraryIds, StringComparer.Ordinal).SetEquals(server.ImportedLibraryIds);
     }
 
-    private static ServerSyncReport ToReport(RemoteServerInfo server, ServerCatalog? catalog)
+    private ServerSyncReport ToReport(RemoteServerInfo server, ServerCatalog? catalog)
     {
         int Count(IndexedItemKind kind) => catalog?.Items.Count(item => item.Kind == kind) ?? 0;
 
@@ -273,7 +273,10 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             catalog is { State: ServerSyncState.Stale, LastFailure: RemoteFailure.Unreachable or RemoteFailure.Timeout },
             Count(IndexedItemKind.Movie),
             Count(IndexedItemKind.Series),
-            Count(IndexedItemKind.Episode));
+            Count(IndexedItemKind.Episode))
+        {
+            Detail = catalog?.LastFailure is null ? null : _failureDetails.GetValueOrDefault(server.Id)
+        };
     }
 
     private SyncStartResult TryClaim()
@@ -306,8 +309,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Catalog sync stopped: {Error}", exception.GetType().Name);
+            _logger.LogError("Catalog sync stopped: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -320,6 +322,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         foreach (var serverId in _feedCursors.Keys.Where(removed.Contains))
         {
             _feedCursors.TryRemove(serverId, out _);
+        }
+
+        foreach (var serverId in _failureDetails.Keys.Where(serverId => !configured.Contains(serverId)))
+        {
+            _failureDetails.TryRemove(serverId, out _);
         }
 
         await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
@@ -394,7 +401,6 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     // Saving the history never fails the sync, and a sync with no server is not recorded (decision 189).
-    // The type only: a message could hold a remote address.
     private async Task RecordAsync(SyncRunKind kind, DateTimeOffset started, IReadOnlyList<RemoteServerInfo> servers, Materialized materialized, SyncRunOutcome? stopped)
     {
         if (_history is null || servers.Count == 0)
@@ -424,7 +430,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Could not save the sync history: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not save the sync history: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -452,16 +458,22 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
                 ? server
                 : await _registry.RefreshCapabilitiesAsync(server.Id, limit.Token).ConfigureAwait(false) ?? server;
             await syncServer(current, limit.Token).ConfigureAwait(false);
+            if (_index.Snapshot.Find(server.Id)?.LastFailure is null)
+            {
+                _failureDetails.TryRemove(server.Id, out _);
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            await MarkFailedAsync(server, RemoteFailure.Timeout, cancellationToken).ConfigureAwait(false);
+            var detail = ErrorText.Of(exception);
+            _logger.LogWarning("Sync of remote server {ServerName} ran out of time{Detail:l}", LogText.Clean(server.Name), detail);
+            await MarkFailedAsync(server, RemoteFailure.Timeout, detail.TrimStart(), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}", LogText.Clean(server.Name), exception.GetType().Name);
-            await MarkFailedAsync(server, RemoteFailure.InvalidResponse, cancellationToken).ConfigureAwait(false);
+            var detail = ErrorText.Of(exception);
+            _logger.LogError("Sync of remote server {ServerName} stopped: {Error}{Detail:l}", LogText.Clean(server.Name), exception.GetType().Name, detail);
+            await MarkFailedAsync(server, RemoteFailure.InvalidResponse, detail.TrimStart(), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -516,8 +528,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a remote address.
-            _logger.LogError("Could not materialize the federated folder: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not materialize the federated folder: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
 
         if (_linker is null)
@@ -532,7 +543,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not link the versions of the titles: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not link the versions of the titles: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return (materialized, false);
         }
 
@@ -570,8 +581,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // The type only: a message could hold a path.
-            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not migrate the old stubs to the server folders: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -590,7 +600,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Could not follow the libraries of the servers: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not follow the libraries of the servers: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return false;
         }
     }
@@ -604,7 +614,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         catch (Exception exception)
         {
-            _logger.LogError("Could not mark the check of the server libraries as skipped: {Error}", exception.GetType().Name);
+            _logger.LogError("Could not mark the check of the server libraries as skipped: {Error}{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
         }
     }
 
@@ -613,7 +623,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
         if (!started.IsSuccess)
         {
-            await MarkFailedAsync(server, started.Failure, cancellationToken).ConfigureAwait(false);
+            await MarkFailedAsync(server, started.Failure, started.Error?.ToString(), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -624,7 +634,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             var position = await _reader.GetFeedPositionAsync(server, cancellationToken).ConfigureAwait(false);
             if (!position.IsSuccess)
             {
-                await MarkFailedAsync(server, position.Failure, cancellationToken).ConfigureAwait(false);
+                await MarkFailedAsync(server, position.Failure, position.Error?.ToString(), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -634,7 +644,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var read = await _reader.ReadAsync(server, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
-            await MarkFailedAsync(server, read.Failure, cancellationToken).ConfigureAwait(false);
+            await MarkFailedAsync(server, read.Failure, read.Error?.ToString(), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -665,7 +675,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
         if (!started.IsSuccess)
         {
-            await MarkFailedAsync(server, started.Failure, cancellationToken).ConfigureAwait(false);
+            await MarkFailedAsync(server, started.Failure, started.Error?.ToString(), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -673,7 +683,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var read = await _reader.ReadChangesAsync(server, mark.ReadStartedUtc - ChangeOverlap, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
-            await MarkFailedAsync(server, read.Failure, cancellationToken).ConfigureAwait(false);
+            await MarkFailedAsync(server, read.Failure, read.Error?.ToString(), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -696,7 +706,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
         if (!started.IsSuccess)
         {
-            await MarkFailedAsync(server, started.Failure, cancellationToken).ConfigureAwait(false);
+            await MarkFailedAsync(server, started.Failure, started.Error?.ToString(), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -704,7 +714,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var read = await _reader.ReadFeedAsync(server, cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
-            await MarkFailedAsync(server, read.Failure, cancellationToken).ConfigureAwait(false);
+            await MarkFailedAsync(server, read.Failure, read.Error?.ToString(), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -783,12 +793,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var clock = await _reader.GetServerTimeAsync(server, cancellationToken).ConfigureAwait(false);
         return clock.IsSuccess
             ? RemoteResult.Success(clock.Value ?? _timeProvider.GetUtcNow())
-            : RemoteResult.Fail<DateTimeOffset>(clock.Failure);
+            : clock.FailAs<DateTimeOffset>();
     }
 
     // A server already marked failed in the index, also before a restart, is not written to the activity log again.
-    private async Task MarkFailedAsync(RemoteServerInfo server, RemoteFailure failure, CancellationToken cancellationToken)
+    private async Task MarkFailedAsync(RemoteServerInfo server, RemoteFailure failure, string? detail, CancellationToken cancellationToken)
     {
+        _failureDetails[server.Id] = detail;
         _logger.LogWarning("Could not read the catalog of remote server {ServerName}: {Failure}. Its entries are kept", LogText.Clean(server.Name), failure);
         var wasFailing = _index.Snapshot.Find(server.Id) is { State: ServerSyncState.Stale, LastFailure: not null };
         _runFailures[server.Id] = KeyValuePair.Create(server.Name, failure);

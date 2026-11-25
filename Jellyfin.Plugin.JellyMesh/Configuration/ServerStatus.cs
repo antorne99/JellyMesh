@@ -34,6 +34,11 @@ public sealed record ServerStatus(
     public bool NeedsPassword { get; init; }
 
     /// <summary>
+    /// Gets the whole story of the last failure, null when the last call succeeded.
+    /// </summary>
+    public string? LastError { get; init; }
+
+    /// <summary>
     /// Gets the state of the Film and Serie libraries the plugin keeps for this server.
     /// </summary>
     public AutomaticLibrariesState? AutomaticLibraries { get; init; }

@@ -76,7 +76,7 @@ public sealed class FileSecretKeySource : ISecretKeySource
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or NotSupportedException or SecurityException)
         {
             // The access list calls also throw the last three, for example on a volume without access lists.
-            logger.LogError("Cannot keep the credential key file: {Error}. Sync and remote playback stay suspended", exception.GetType().Name);
+            logger.LogError("Cannot keep the credential key file: {Error}. Sync and remote playback stay suspended{Detail:l}", exception.GetType().Name, ErrorText.Of(exception));
             return null;
         }
     }

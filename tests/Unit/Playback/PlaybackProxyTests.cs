@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
@@ -34,6 +35,7 @@ public class PlaybackProxyTests
     private readonly CompletionFeature _response = new();
     private readonly PlaybackProxyController _controller;
     private readonly CapturingLogger<PlaybackProxyController> _logger = new();
+    private readonly ErrorLogLimits _errorLogs = new();
 
     public PlaybackProxyTests()
     {
@@ -49,16 +51,17 @@ public class PlaybackProxyTests
             _authorization.Object,
             _fixture.Clock,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
-            _logger)
+            _logger,
+            _errorLogs)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };
     }
 
-    private PlaybackSession Session(PlaybackStreamKind kind)
+    private PlaybackSession Session(PlaybackStreamKind kind, StubSource? source = null)
     {
         var identity = new PlaybackIdentity(_user.Id, "device", _item, "stub");
-        var session = new PlaybackSession(identity, PlaybackValues.Source(), PlaybackValues.RemotePlaySession, kind, PlaybackUrls.WithoutToken(PlaybackValues.Master), _fixture.Clock.GetUtcNow());
+        var session = new PlaybackSession(identity, source ?? PlaybackValues.Source(), PlaybackValues.RemotePlaySession, kind, PlaybackUrls.WithoutToken(PlaybackValues.Master), _fixture.Clock.GetUtcNow());
         _fixture.Sessions.Add(session);
         return session;
     }
@@ -278,6 +281,27 @@ public class PlaybackProxyTests
         Assert.Contains(_logger.Lines, line => line.Contains("broke off: RemoteBroke", StringComparison.Ordinal) && line.Contains("Ends the session: True", StringComparison.Ordinal));
         Assert.Single(_logger.Levels, level => level >= Microsoft.Extensions.Logging.LogLevel.Information);
         PlaybackLogAssert.NoRemoteValue(_logger.Lines);
+    }
+
+    [Fact]
+    public async Task Streams_that_keep_breaking_stop_filling_the_log()
+    {
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            System.Net.HttpStatusCode.OK,
+            new RemoteContentHeaders("video/mp4", null, null, null),
+            new DroppingStream())));
+
+        var source = PlaybackValues.Source();
+        for (var play = 0; play < ErrorLogLimit.MaxPerMinute + 5; play++)
+        {
+            await _controller.GetStream(Session(PlaybackStreamKind.Direct, source).Id, CancellationToken.None);
+        }
+
+        var broken = _logger.Lines.Where(line => line.Contains("broke off: RemoteBroke", StringComparison.Ordinal)).ToList();
+        Assert.Equal(ErrorLogLimit.MaxPerMinute + 5, broken.Count);
+        Assert.Equal(ErrorLogLimit.MaxPerMinute, broken.Count(line => line.Contains("The remote went away.", StringComparison.Ordinal)));
+        Assert.Equal("whole", _errorLogs.Playback.Of("whole"));
+        Assert.NotEqual("whole", _errorLogs.For(source.ServerId).Of("whole"));
     }
 
     [Fact]

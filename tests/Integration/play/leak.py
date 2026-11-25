@@ -45,8 +45,8 @@ for path in files:
     data = open(path, "rb").read()
     total += len(data)
     for label, values in (("token", tokens), ("item", items), ("server", servers), ("fixed", fixed)):
-        # The ID of a server is minted here and says nothing about it: only clients must not see it.
-        if label == "server" and path.endswith(".log"):
+        # A log holds the whole errors, with the addresses and the IDs of the remotes (row 550), but never a token.
+        if label != "token" and path.endswith(".log"):
             continue
         for value in values:
             at = data.find(value.encode())

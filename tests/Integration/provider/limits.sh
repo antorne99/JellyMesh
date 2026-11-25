@@ -643,7 +643,6 @@ sent_all() {
 }
 read_start() { curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -r 0-99 "$(stream_url "$1")"; }
 give_backs() { grep -c 'DELETE /JellyMesh/Provider/Streams/.* 204' "$WORK/gate-a.log"; }
-b_address_lines() { docker logs "$PREFIX-b" 2>&1 | grep -c -E "host\.docker\.internal|$GATE_A"; }
 slot_failures() { docker logs "$PREFIX-b" 2>&1 | grep -c 'Could not give a stream slot back'; }
 PROFILE_HLS_ENCODE=$(jq -c '. + {AllowVideoStreamCopy: false}' <<<"$PROFILE_HLS")
 
@@ -680,16 +679,14 @@ kill_reader
 close_stream c27
 check "free again" 0 "$(wait_free 15)"
 
-echo "--- b cannot reach a when it tells: the client notices nothing, and nothing of the remote is logged"
+echo "--- b cannot reach a when it tells: the client notices nothing"
 check "open" 200 "$(open_stream c28 "$tears" "$PROFILE_DIRECT")"
-addresses=$(b_address_lines)
 failures=$(slot_failures)
 give_up a "$(stream_url c28)"
 gate_mode a down
 sleep 8
 gate_mode a up
 check "b tried and failed" true "$([ "$(slot_failures)" -gt "$failures" ] && echo true || echo false)"
-check "the log names no remote" "$addresses" "$(b_address_lines)"
 check "the same URL still plays" 206 "$(read_start c28)"
 close_stream c28
 check "free again" 0 "$(wait_free 15)"

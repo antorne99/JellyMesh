@@ -263,6 +263,6 @@ public class ServerRecognitionTests
         var result = await restarted.RunWithSessionAsync(server.Id, (_, _, _) => Task.FromResult(RemoteResult.Success(1)), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.DoesNotContain(fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
+        Assert.Contains(fixture.Logger.Lines, line => line.Contains(TestValues.Host, StringComparison.Ordinal));
     }
 }
