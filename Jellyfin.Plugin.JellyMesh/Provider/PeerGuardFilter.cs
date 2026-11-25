@@ -30,6 +30,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private const string LiveStreamParameter = "liveStreamId";
     private const string VersionParameter = "mediaSourceId";
     private const string StaticParameter = "static";
+    private const string ItemParameter = "itemId";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
     private const string StreamDevice = "JellyMesh.StreamDevice";
 
@@ -152,9 +153,11 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
         // A folder has no file to give, so a slot would be taken for nothing. The file of an admin's .strm is its text, a
-        // URL that may carry credentials, so no peer gets it, nor a static stream of it (rows 561 and 565).
+        // URL that may carry credentials, so no peer gets it, nor a static stream of it (rows 561 and 565). An item of the
+        // query may be what stock acts on in place of the route's, so it must be that same item (row 568).
         if (ItemIdOf(context.RouteData) is not { } itemId
             || _catalog.FindVisible(caller, itemId) is not { } item
+            || !QueryItemsAre(http, itemId)
             || (action?.ControllerName == "Library" && (item.IsFolder || ProviderCatalog.IsStrm(item.Path)))
             || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version))
             || IsStaticStrm(caller, itemId, action, http, context.RouteData))
@@ -341,6 +344,15 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private static IEnumerable<string?> ValuesOf(HttpContext http, string name)
     {
         return http.Request.Query.Where(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).SelectMany(pair => pair.Value);
+    }
+
+    // Tells whether every item named by the query, under any case of the name and in every value, is the route's item.
+    // A value that is not a GUID cannot be checked, so it fails; a blank one names none, as for the versions.
+    private static bool QueryItemsAre(HttpContext http, Guid itemId)
+    {
+        return ValuesOf(http, ItemParameter)
+            .Where(value => !string.IsNullOrEmpty(value))
+            .All(value => Guid.TryParse(value, out var id) && id.Equals(itemId));
     }
 
     private static Guid? ItemIdOf(RouteData route)
