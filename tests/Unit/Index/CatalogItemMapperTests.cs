@@ -85,6 +85,21 @@ public class CatalogItemMapperTests
     }
 
     [Fact]
+    public void AMusicVideoEntersTheDedupAsOneTitle_WithItsArtistsIdsYearAndVersions()
+    {
+        var clip = Map(TestItems.Movie("v", "Clip", 2019, "9") with { Artists = ["Artist", "Guest"] }, RemoteItemType.MusicVideo);
+
+        var item = Assert.Single(CatalogItemMapper.ToCatalogItems(Catalog(clip)));
+
+        Assert.Equal(ContentKind.MusicVideo, item.Kind);
+        Assert.Equal(("v", "Clip", 2019), (item.ItemId, item.Title, item.Year));
+        Assert.Null(item.SeriesId);
+        Assert.Equal(["Artist", "Guest"], item.Artists);
+        Assert.Equal("9", item.Ids.Tmdb);
+        Assert.Equal(1080, Assert.Single(item.Versions).Quality.Height);
+    }
+
+    [Fact]
     public void AnEpisodeWithoutItsSeriesKeepsTheSeriesNameAndNoYear()
     {
         var episode = Map(TestItems.Episode("e", "gone", 1, 1), RemoteItemType.Episode);
@@ -98,14 +113,13 @@ public class CatalogItemMapperTests
 
     [Theory]
     [InlineData(RemoteItemType.Audio)]
-    [InlineData(RemoteItemType.MusicVideo)]
     [InlineData(RemoteItemType.Video)]
     [InlineData(RemoteItemType.Photo)]
     [InlineData(RemoteItemType.PhotoAlbum)]
     [InlineData(RemoteItemType.Folder)]
     [InlineData(RemoteItemType.Book)]
     [InlineData(RemoteItemType.AudioBook)]
-    public void AnEntryOfTheNewTypesStaysOutOfTheDedup(RemoteItemType type)
+    public void AnEntryOfTheNewTypesStaysOutOfTheDedup_ApartFromMusicVideos(RemoteItemType type)
     {
         var entry = Map(TestItems.Movie("n", "Same", 2020, "1"), type);
         var film = Map(TestItems.Movie("m", "Same", 2020, "1"), RemoteItemType.Movie);

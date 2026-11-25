@@ -32,9 +32,9 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
 
     private const string InsertTitle = """
         INSERT INTO kept_titles (old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres,
-            studios, people, season_number, episode_number, episode_number_end, saved_utc)
+            studios, people, season_number, episode_number, episode_number_end, saved_utc, artists)
         VALUES ($old, $kind, $title, $year, $tmdb, $imdb, $tvdb, $original, $runtime, $overview, $genres, $studios, $people, $season,
-            $episode, $episodeEnd, $saved)
+            $episode, $episodeEnd, $saved, $artists)
         RETURNING id;
         """;
 
@@ -46,7 +46,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
 
     private const string SelectTitles = """
         SELECT id, old_item_id, kind, title, year, tmdb, imdb, tvdb, original_title, run_time_ticks, overview, genres, studios, people,
-            season_number, episode_number, episode_number_end, saved_utc
+            season_number, episode_number, episode_number_end, saved_utc, artists
         FROM kept_titles ORDER BY id;
         """;
 
@@ -372,7 +372,8 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
             ("$season", title.SeasonNumber),
             ("$episode", title.EpisodeNumber),
             ("$episodeEnd", title.EpisodeNumberEnd),
-            ("$saved", savedTicks));
+            ("$saved", savedTicks),
+            ("$artists", Json(title.Artists)));
         return (long)command.ExecuteScalar()!;
     }
 
@@ -419,6 +420,7 @@ public sealed class KeptWatchStateStore : IKeptWatchStateStore
             EpisodeNumber = StoreSql.IntOrNull(reader, 15),
             EpisodeNumberEnd = StoreSql.IntOrNull(reader, 16),
             SavedUtc = new DateTime(reader.GetInt64(17), DateTimeKind.Utc),
+            Artists = List(reader.GetString(18)),
             Users = users.GetValueOrDefault(id) ?? []
         };
     }

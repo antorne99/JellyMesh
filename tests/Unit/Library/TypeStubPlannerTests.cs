@@ -74,7 +74,7 @@ public class TypeStubPlannerTests
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = [catalog] };
         var input = new StubPlanInput(
-            new FederationView(IndexHealth.Ok, 0, contents ?? [], []),
+            new FederationView(IndexHealth.Ok, 0, contents ?? ContentsOf(catalog), []),
             snapshot,
             state ?? StubState.Empty,
             [Server()],
@@ -83,6 +83,11 @@ public class TypeStubPlannerTests
             _ => null);
         return StubPlanner.PlanByServer(ignoreRules is null ? input : input with { IgnoreRules = ignoreRules });
     }
+
+    // The titles the dedup finds in the catalog alone; the planner reads its own copies from the index.
+    private static List<ResolvedContent> ContentsOf(ServerCatalog catalog) => DedupEngine.Resolve([], CatalogItemMapper.ToCatalogItems(catalog)).Decisions
+        .Select(decision => new ResolvedContent(decision.Identity, false, null, []) { RemoteItems = decision.RemoteItems.Select(item => new ResolvedItem(_serverA, item.ItemId)).ToList() })
+        .ToList();
 
     private static string In(string library, params string[] parts) => Path.Combine(FederatedPaths.LibraryFolder(_serverA, library), Path.Combine(parts));
 
@@ -117,9 +122,9 @@ public class TypeStubPlannerTests
     }
 
     [Fact]
-    public void TwoMusicVideosWithOneTitleGetTwoFolders()
+    public void TwoMusicVideosWithOneTitleByOtherArtistsGetTwoFolders()
     {
-        var works = Plan(Catalog(MusicVideo("m1"), MusicVideo("m2"))).Stubs;
+        var works = Plan(Catalog(MusicVideo("m1"), MusicVideo("m2") with { Artists = ["Other"] })).Stubs;
 
         Assert.Equal(2, works.Select(work => Path.GetDirectoryName(work.Entry.RelativePath)).Distinct().Count());
     }

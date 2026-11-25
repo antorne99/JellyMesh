@@ -44,7 +44,10 @@ public static class SchemaMigrations
 
         // No table changes: the index entries of the new kinds are JSON in the same rows (F50). The version keeps an older
         // build, which would take them for damage and empty the index, away from the file.
-        new(NewItemKindsVersion, static (_, _) => { })
+        new(NewItemKindsVersion, static (_, _) => { }),
+
+        // The artists of a kept music video (F53).
+        new(10, SmallStateSchema.AddKeptArtists)
     ];
 
     /// <summary>

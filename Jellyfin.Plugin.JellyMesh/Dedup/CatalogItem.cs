@@ -52,6 +52,11 @@ public sealed record CatalogItem
     public ContentIds Ids { get; init; } = ContentIds.None;
 
     /// <summary>
+    /// Gets the artists of a music video, which take part in its title match (D64). Empty for other kinds.
+    /// </summary>
+    public IReadOnlyList<string> Artists { get; init; } = [];
+
+    /// <summary>
     /// Gets what confirms a film copy that has no IDs (decision 13). Filled on films only.
     /// </summary>
     public ComparableMetadata Metadata { get; init; } = ComparableMetadata.None;

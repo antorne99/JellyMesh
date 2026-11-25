@@ -19,6 +19,7 @@ public class SplitSeriesStubPlannerTests
 
     private static readonly Guid _server = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
     private static readonly DateTimeOffset _now = new(2026, 11, 23, 0, 0, 0, TimeSpan.Zero);
+    private static readonly string _longName = new('a', 1000);
 
     private static RemoteItem Series(string id, string name = "Show", int? year = 2020, string? tvdb = null) => TestItems.Series(id, name) with
     {
@@ -60,7 +61,10 @@ public class SplitSeriesStubPlannerTests
             [new RemoteServerInfo(_server, "Casa", "http://server", RemoteMode.Standard, 0, [Shows], null, null)],
             true,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null);
+            _ => null)
+        {
+            IgnoreRules = new FakeIgnoreRules()
+        };
         var plan = isFlat ? StubPlanner.Plan(input) : StubPlanner.PlanByServer(input);
 
         // No two rows of one id, no two files of one path, and no row left without an episode.
@@ -129,6 +133,10 @@ public class SplitSeriesStubPlannerTests
     [Fact]
     public void AnotherName()
         => AssertSplits([Series("s1"), Series("s2")], [Series("s1"), Series("s2", "Other show")]);
+
+    [Fact]
+    public void ALongName()
+        => AssertSplits([Series("s1"), Series("s2")], [Series("s1", _longName), Series("s2", _longName)]);
 
     [Fact]
     public void AnotherProviderIdInTheFlatLayout()

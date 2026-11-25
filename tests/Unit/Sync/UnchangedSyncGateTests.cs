@@ -154,6 +154,20 @@ public sealed class UnchangedSyncGateTests : IDisposable
         Assert.Contains(BaseItemKind.Book, query!.IncludeItemTypes);
     }
 
+    // Row 454: a local music video suppresses the remote copies, so its item appearing must let the next sync run.
+    [Fact]
+    public void TheLocalIdsReadIncludeMusicVideos()
+    {
+        InternalItemsQuery? query = null;
+        _library.Setup(library => library.GetItemIds(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(read => query = read)
+            .Returns(() => [.. _localIds]);
+
+        _gate.Capture();
+
+        Assert.Contains(BaseItemKind.MusicVideo, query!.IncludeItemTypes);
+    }
+
     [Fact]
     public async Task ARunIsComparedWithTheRegistryAsItLeftIt()
     {

@@ -147,6 +147,19 @@ public static class SmallStateSchema
     }
 
     /// <summary>
+    /// Adds the artists of a kept music video (F53), inside the step's transaction. Titles kept before have none.
+    /// </summary>
+    /// <param name="connection">The open database.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddKeptArtists(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "ALTER TABLE kept_titles ADD COLUMN artists TEXT NOT NULL DEFAULT '[]';";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// Creates the tables, inside the step's transaction.
     /// </summary>
     /// <param name="connection">The writer connection.</param>

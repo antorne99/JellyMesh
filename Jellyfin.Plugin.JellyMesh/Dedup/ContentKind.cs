@@ -10,4 +10,7 @@ public enum ContentKind
 
     /// <summary>A series episode. Series and seasons are not items of their own here.</summary>
     Episode,
+
+    /// <summary>A music video, one title like a film (row 454).</summary>
+    MusicVideo,
 }

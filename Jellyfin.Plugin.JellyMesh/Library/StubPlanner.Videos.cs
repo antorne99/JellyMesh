@@ -15,7 +15,8 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// Plans the music videos and home videos of a server: one stub per remote item and local library, read from the index.
+/// Plans the home videos of a server: one stub per remote item and local library, read from the index. Music videos are
+/// titles, planned like films (row 454).
 /// </summary>
 public static partial class StubPlanner
 {
@@ -38,14 +39,14 @@ public static partial class StubPlanner
         _naming.VideoExtraRules.Where(rule => rule.RuleType == ExtraRuleType.DirectoryName).Select(rule => rule.Token),
         StringComparer.OrdinalIgnoreCase);
 
-    private static bool IsVideoKind(StubKind kind) => kind is StubKind.MusicVideo or StubKind.HomeVideo;
+    // Home videos, and in the older layout music videos too, which it keeps as they are.
+    private static bool IsUntitledVideo(StubKind kind, bool legacy) => kind == StubKind.HomeVideo || (legacy && kind == StubKind.MusicVideo);
 
-    // Plans the music videos and home videos of a server and claims their stubs; the others are left for the sweep.
+    // Plans the home videos of a server and claims their stubs; the others are left for the sweep.
     private static List<StubWork> VideoWorks(
         StubPlanInput input,
         IndexItemLookup catalog,
         RemoteServerInfo server,
-        string label,
         List<StubEntry> own,
         HashSet<string> claimed,
         HashSet<string> unplaceable)
@@ -68,10 +69,9 @@ public static partial class StubPlanner
             }
         }
 
-        var folders = new PathAllocator(own, [], input.IgnoreRules);
-        var files = new HashSet<string>(own.Where(stub => stub.Kind == StubKind.HomeVideo).Select(stub => Path.ChangeExtension(stub.RelativePath, null)), StringComparer.OrdinalIgnoreCase);
+        var files = new HashSet<string>(own.Select(stub => Path.ChangeExtension(stub.RelativePath, null)), StringComparer.OrdinalIgnoreCase);
         var items = serverCatalog.Items
-            .Where(item => item.Kind is IndexedItemKind.MusicVideo or IndexedItemKind.Video)
+            .Where(item => item.Kind == IndexedItemKind.Video)
             .OrderBy(item => item.ItemId, StringComparer.Ordinal);
         foreach (var item in items)
         {
@@ -82,8 +82,8 @@ public static partial class StubPlanner
                 continue;
             }
 
-            var kind = item.Kind == IndexedItemKind.MusicVideo ? StubKind.MusicVideo : StubKind.HomeVideo;
-            var type = TypeFolder.Of(kind);
+            const StubKind kind = StubKind.HomeVideo;
+            var type = TypeFolder.HomeVideos;
             var placements = LibrariesOf(item).GroupBy(library => input.PlacementOf(server.Id, library, type), StringComparer.Ordinal).ToList();
             if (placements.Count == 0)
             {
@@ -95,9 +95,7 @@ public static partial class StubPlanner
                 var stub = existing.GetValueOrDefault((kind, item.ItemId, placement.Key));
                 var typeFolder = FederatedPaths.TypeFolderOf(server.Id, placement.First(), type);
                 var sources = ranked.Select(source => new StubSource(server.Id, item.ItemId, source.MediaSourceId) { LibraryId = item.LibraryId }).ToList();
-                works.Add(kind == StubKind.MusicVideo
-                    ? MusicVideoWork(input, item, stub, sources, id => FederatedPaths.MovieStubIn(typeFolder, folders.MovieFolderName(typeFolder, item.Name, item.ProductionYear, id, label), label))
-                    : HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, input.IgnoreRules, id)));
+                works.Add(HomeVideoWork(input, item, stub, sources, id => HomeVideoPath(catalog, server.Id, item, typeFolder, files, input.IgnoreRules, id)));
                 if (stub is not null)
                 {
                     claimed.Add(stub.Id);
@@ -106,17 +104,6 @@ public static partial class StubPlanner
         }
 
         return works;
-    }
-
-    private static StubWork MusicVideoWork(StubPlanInput input, IndexedItem item, StubEntry? stub, List<StubSource> sources, Func<string, string> newPath)
-    {
-        var id = stub?.Id ?? NewId();
-        var relative = stub?.RelativePath ?? newPath(id);
-        var folder = Path.GetDirectoryName(relative)!;
-        var metadata = StubMetadata.From(item, input.IsProtected);
-        var nfo = NfoDocument.MusicVideo(metadata);
-        var slots = _titleImages.Select(image => (image.Type, Path.Combine(folder, image.Stem))).ToList();
-        return VideoWork(input, item, (stub ?? NewEntry(id, StubKind.MusicVideo, relative)) with { Sources = sources }, stub is null, metadata, nfo, slots);
     }
 
     private static StubWork HomeVideoWork(StubPlanInput input, IndexedItem item, StubEntry? stub, List<StubSource> sources, Func<string, string> newPath)

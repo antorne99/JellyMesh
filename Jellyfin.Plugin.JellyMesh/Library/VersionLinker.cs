@@ -200,7 +200,7 @@ public sealed class VersionLinker : IVersionLinker
         var remote = copies.Where(copy => !copy.IsLocal)
             .Select(copy => (Server: Guid.TryParse(copy.ServerId, out var server) ? server : Guid.Empty, copy.ItemId, copy.Kind))
             .ToList();
-        var episodes = remote.Where(copy => copy.Kind != ContentKind.Movie)
+        var episodes = remote.Where(copy => copy.Kind == ContentKind.Episode)
             .SelectMany(copy => _registry.FindEpisodesOfSeries(copy.Server, copy.ItemId))
             .Select(stub => stub.Id)
             .ToHashSet(StringComparer.Ordinal);
@@ -208,14 +208,18 @@ public sealed class VersionLinker : IVersionLinker
             .Select(copy => Guid.TryParse(copy.ItemId, out var id) ? id : Guid.Empty)
             .Where(id => id != Guid.Empty)
             .ToHashSet();
-        bool Holds(StubEntry stub) => episodes.Contains(stub.Id) || (stub.Kind == StubKind.Movie && stub.Sources.Any(source => remote.Exists(copy =>
-            copy.Kind == ContentKind.Movie && copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase))));
+        bool Holds(StubEntry stub) => episodes.Contains(stub.Id) || (stub.Kind is StubKind.Movie or StubKind.MusicVideo && stub.Sources.Any(source => remote.Exists(copy =>
+            IsKindOf(copy.Kind, stub.Kind) && copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase))));
 
         return _registry.State.Groups
             .Where(group => group.LocalItemIds.Any(local.Contains) || group.StubIds.Select(_registry.Find).OfType<StubEntry>().Any(Holds))
             .SelectMany(group => group.StubIds)
             .ToHashSet(StringComparer.Ordinal);
     }
+
+    // Whether a merged copy of this kind is named by a stub of that kind.
+    private static bool IsKindOf(ContentKind copy, StubKind stub)
+        => (copy == ContentKind.Movie && stub == StubKind.Movie) || (copy == ContentKind.MusicVideo && stub == StubKind.MusicVideo);
 
     /// <inheritdoc />
     public async Task DetachAsync(IReadOnlyCollection<string> stubIds, CancellationToken cancellationToken)

@@ -14,7 +14,7 @@ public static class CatalogItemMapper
     private const string SdrRange = "SDR";
 
     /// <summary>
-    /// Gets the films and episodes of a server. An episode takes title, year and IDs from its series, because Jellyfin
+    /// Gets the films, music videos and episodes of a server. An episode takes title, year and IDs from its series, because Jellyfin
     /// sends none on episodes. If the series is not in the catalog it keeps only the series name, so it is not hidden.
     /// </summary>
     /// <param name="catalog">The catalog of the server.</param>
@@ -30,7 +30,7 @@ public static class CatalogItemMapper
             .ToDictionary(item => item.ItemId, StringComparer.Ordinal);
 
         return catalog.Items
-            .Where(item => item.Kind is IndexedItemKind.Movie or IndexedItemKind.Episode)
+            .Where(item => item.Kind is IndexedItemKind.Movie or IndexedItemKind.Episode or IndexedItemKind.MusicVideo)
             .Select(item => ToCatalogItem(item, serverId, series))
             .ToList();
     }
@@ -38,14 +38,15 @@ public static class CatalogItemMapper
     private static CatalogItem ToCatalogItem(IndexedItem item, string serverId, Dictionary<string, IndexedItem> series)
     {
         var versions = item.Versions.Select(ToMediaVersion).ToList();
-        if (item.Kind == IndexedItemKind.Movie)
+        if (item.Kind is IndexedItemKind.Movie or IndexedItemKind.MusicVideo)
         {
             return new CatalogItem
             {
                 ServerId = serverId,
                 ItemId = item.ItemId,
-                Kind = ContentKind.Movie,
-                Title = item.Name,
+                Kind = item.Kind == IndexedItemKind.Movie ? ContentKind.Movie : ContentKind.MusicVideo,
+                Artists = ArtistsOf(item.Artists ?? []),
+                Title = TitleOf(item.Name),
                 Year = item.ProductionYear,
                 Ids = ContentIds.FromProviderIds(item.ProviderIds),
                 Metadata = new ComparableMetadata
@@ -68,7 +69,7 @@ public static class CatalogItemMapper
             ItemId = item.ItemId,
             Kind = ContentKind.Episode,
             SeriesId = item.SeriesId,
-            Title = parent?.Name ?? item.SeriesName,
+            Title = TitleOf(parent?.Name ?? item.SeriesName),
             Year = parent?.ProductionYear,
             Ids = ContentIds.FromProviderIds(parent?.ProviderIds),
             SeasonNumber = item.ParentIndexNumber,
@@ -91,6 +92,12 @@ public static class CatalogItemMapper
         var isSdr = string.Equals(version.VideoRange, SdrRange, StringComparison.OrdinalIgnoreCase);
         return new SourceQuality(version.Height, isHdr, version.BitRate, version.Codec) { IsRangeKnown = isHdr || isSdr };
     }
+
+    // A name that may have been cut is no title to match by, so that the item matches by its IDs only (row 529).
+    private static string? TitleOf(string? name) => RemoteName.MayBeCut(name) ? null : name;
+
+    // Gets no artist at all when one of them may have been cut, as TitleOf.
+    private static IReadOnlyList<string> ArtistsOf(IReadOnlyList<string> artists) => artists.Any(RemoteName.MayBeCut) ? [] : artists;
 
     private static MediaVersion ToMediaVersion(IndexedVersion version) => new(version.MediaSourceId, QualityOf(version));
 }
