@@ -389,7 +389,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Reads the lyrics of a track stub from the first source that answers, the one in use first.
+    /// Reads the lyrics of a track stub from the first source that answers, the one in use first. While the plugin database
+    /// cannot be used, none are read (row 561).
     /// </summary>
     /// <param name="stub">The stub.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -397,6 +398,12 @@ public sealed class PlaybackCoordinator
     public async Task<RemoteResult<RemoteLyrics>> ReadLyricsAsync(StubEntry stub, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stub);
+
+        if (IsSuspended)
+        {
+            _logger.LogWarning("The lyrics of track {StubId} are not read: the JellyMesh database cannot be used", stub.Id);
+            return RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Suspended);
+        }
 
         IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
         var failed = RemoteResult.Fail<RemoteLyrics>(RemoteFailure.UnknownServer);

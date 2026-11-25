@@ -134,7 +134,7 @@ public sealed class AudioStubRoutes
         var read = await _coordinator.ReadLyricsAsync(stub, http.RequestAborted).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
-            var offline = read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.UnknownServer;
+            var offline = read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.UnknownServer or RemoteFailure.Suspended;
             return _refusal.Refuse(http, deviceId, offline ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
         }
 

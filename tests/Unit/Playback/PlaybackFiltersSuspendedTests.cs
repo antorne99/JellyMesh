@@ -127,6 +127,22 @@ public partial class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
     }
 
+    // Row 561: lyrics come from a remote, so none are read while the database cannot be used.
+    [Fact]
+    public async Task With_the_database_damaged_the_lyrics_of_a_track_stub_are_refused_and_no_remote_is_asked()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Success(RemoteLyrics.None);
+        var store = TrackStub();
+        _fixture.Damage();
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
+        Assert.Empty(_fixture.Client.LyricsAsked);
+    }
+
     [Fact]
     public async Task With_the_database_damaged_the_local_transcode_that_runs_goes_on_and_no_other_stub_joins_it()
     {
