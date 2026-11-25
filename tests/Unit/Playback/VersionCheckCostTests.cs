@@ -21,6 +21,7 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Playback;
 
 // Costo (Q27, Q36): the request filter and the candidate check of 100 items stay under 50 ms with the registry of three
 // servers of 55,000 titles. Jellyfin's own lookups are a dictionary here: only JellyMesh's work is measured.
+[Collection(TimedTests.Name)]
 public sealed class VersionCheckCostTests : IDisposable
 {
     private const int Titles = 55_000;

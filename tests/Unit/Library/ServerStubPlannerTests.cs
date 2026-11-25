@@ -10,6 +10,7 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
+[Collection(TimedTests.Name)]
 public class ServerStubPlannerTests
 {
     private const string Library = TestLibraries.Films;
