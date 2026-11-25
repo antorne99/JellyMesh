@@ -132,23 +132,36 @@ public sealed class ServerRenamerTests : IDisposable
     [Fact]
     public async Task AServerWithALabelOverTheLimitIsRenamedUnderItsOwnName()
     {
-        _stubs.Setup(stubs => stubs.LongLabels()).Returns([_server]);
+        _stubs.SetupSequence(stubs => stubs.LongLabels()).Returns([_server]).Returns([]);
+        _libraries.Setup(libraries => libraries.WaitReadyAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("ready")).Returns(Task.CompletedTask);
 
         Assert.Equal(1, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
 
-        Assert.Equal(["name Casa", "stubs Casa"], _steps.GetRange(0, 2));
+        Assert.Equal(["ready", "name Casa", "stubs Casa"], _steps.GetRange(0, 3));
         Assert.Contains("scan", _steps);
         Assert.False(_renamer.GetState(_server).Busy);
     }
 
     [Fact]
-    public async Task WithNoLabelOverTheLimitNothingIsRenamed()
+    public async Task WithNoLabelOverTheLimitNothingIsRenamedAndTheLibrariesAreNotAwaited()
     {
         _stubs.Setup(stubs => stubs.LongLabels()).Returns([]);
 
         Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
 
         Assert.Empty(_steps);
+        _libraries.Verify(libraries => libraries.WaitReadyAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ARenameThatLeavesTheLabelOverTheLimitIsNotCounted()
+    {
+        _registry.Setup(registry => registry.Rename(_server, It.IsAny<string>())).Returns(false);
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([_server]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.False(_renamer.GetState(_server).Busy);
     }
 
     [Fact]

@@ -14,22 +14,20 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 public sealed class LongLabelRenameServiceTests
 {
     private readonly Mock<IServerRenamer> _renamer = new();
-    private readonly Mock<IServerLibraryManager> _libraries = new();
     private readonly Mock<IStubRegistry> _stubs = new();
     private readonly List<string> _steps = [];
 
     public LongLabelRenameServiceTests()
     {
-        _libraries.Setup(libraries => libraries.WaitReadyAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("ready")).Returns(Task.CompletedTask);
         _renamer.Setup(renamer => renamer.RenameLongLabelsAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("rename")).ReturnsAsync(1);
     }
 
     [Fact]
-    public async Task At_start_the_long_labels_are_renamed_once_the_libraries_are_ready()
+    public async Task At_start_the_long_labels_are_renamed()
     {
         await RunAsync();
 
-        Assert.Equal(["ready", "rename"], _steps);
+        Assert.Equal(["rename"], _steps);
     }
 
     [Fact]
@@ -45,7 +43,7 @@ public sealed class LongLabelRenameServiceTests
 
         await RunAsync();
 
-        Assert.Equal(["reload", "ready", "rename"], _steps);
+        Assert.Equal(["reload", "rename"], _steps);
     }
 
     [Fact]
@@ -58,7 +56,7 @@ public sealed class LongLabelRenameServiceTests
         await RunAsync();
 
         Assert.Equal(2, reads);
-        Assert.Equal(["ready", "rename"], _steps);
+        Assert.Equal(["rename"], _steps);
     }
 
     [Fact]
@@ -86,7 +84,7 @@ public sealed class LongLabelRenameServiceTests
         _renamer.Verify(renamer => renamer.RenameLongLabelsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private LongLabelRenameService NewService() => new(_renamer.Object, _libraries.Object, _stubs.Object, NullLogger<LongLabelRenameService>.Instance) { RetryDelay = TimeSpan.Zero };
+    private LongLabelRenameService NewService() => new(_renamer.Object, _stubs.Object, NullLogger<LongLabelRenameService>.Instance) { RetryDelay = TimeSpan.Zero };
 
     private async Task RunAsync()
     {

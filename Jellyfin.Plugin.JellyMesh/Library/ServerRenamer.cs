@@ -117,9 +117,17 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     /// <inheritdoc />
     public async Task<int> RenameLongLabelsAsync(CancellationToken cancellationToken)
     {
+        var longLabels = _stubs.LongLabels();
+        if (longLabels.Count == 0)
+        {
+            return 0;
+        }
+
+        // A rename scans, so it waits for the libraries as a sync does.
+        await _libraries.WaitReadyAsync(cancellationToken).ConfigureAwait(false);
         var servers = _registry.GetServers();
         var ran = 0;
-        foreach (var serverId in _stubs.LongLabels())
+        foreach (var serverId in longLabels)
         {
             if (servers.FirstOrDefault(server => server.Id == serverId) is not { } server)
             {
@@ -134,6 +142,12 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
             }
 
             await answer.Job.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (_stubs.LongLabels().Contains(serverId))
+            {
+                _logger.LogWarning("The rename of a server with a label over the limit did not change its label, so the next start tries again");
+                continue;
+            }
+
             ran++;
         }
 

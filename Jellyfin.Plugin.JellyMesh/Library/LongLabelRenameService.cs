@@ -15,7 +15,6 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public sealed class LongLabelRenameService : BackgroundService
 {
     private readonly IServerRenamer _renamer;
-    private readonly IServerLibraryManager _libraries;
     private readonly IStubRegistry _stubs;
     private readonly ILogger<LongLabelRenameService> _logger;
     private readonly ErrorLogLimits _errorLogs;
@@ -24,15 +23,13 @@ public sealed class LongLabelRenameService : BackgroundService
     /// Initializes a new instance of the <see cref="LongLabelRenameService"/> class.
     /// </summary>
     /// <param name="renamer">The server renamer.</param>
-    /// <param name="libraries">The automatic libraries, which must be ready before a scan.</param>
     /// <param name="stubs">The stub registry, which holds the saved labels.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
-    public LongLabelRenameService(IServerRenamer renamer, IServerLibraryManager libraries, IStubRegistry stubs, ILogger<LongLabelRenameService> logger, ErrorLogLimits? errorLogs = null)
+    public LongLabelRenameService(IServerRenamer renamer, IStubRegistry stubs, ILogger<LongLabelRenameService> logger, ErrorLogLimits? errorLogs = null)
     {
         _errorLogs = errorLogs ?? new ErrorLogLimits();
         _renamer = renamer;
-        _libraries = libraries;
         _stubs = stubs;
         _logger = logger;
     }
@@ -73,7 +70,6 @@ public sealed class LongLabelRenameService : BackgroundService
                 }
             }
 
-            await _libraries.WaitReadyAsync(cancellationToken).ConfigureAwait(false);
             var ran = await _renamer.RenameLongLabelsAsync(cancellationToken).ConfigureAwait(false);
             if (ran > 0)
             {

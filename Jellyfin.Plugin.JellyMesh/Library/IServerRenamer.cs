@@ -33,10 +33,11 @@ public interface IServerRenamer
 
     /// <summary>
     /// Renames under its current name each server whose saved label is over the byte limit, one after another, with the
-    /// steps of a rename (row 564). A server whose rename is refused is left for the next start.
+    /// steps of a rename (row 564), once the libraries are ready. A server whose rename is refused or keeps its label is left
+    /// for the next start.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>How many renames ran.</returns>
+    /// <returns>How many servers got a label within the limit.</returns>
     Task<int> RenameLongLabelsAsync(CancellationToken cancellationToken);
 
     /// <summary>
