@@ -154,20 +154,11 @@ variant=$(grep -v '^#' "$(last)" | head -1 | tr -d '\r')
 check "nodownload variant of master.m3u8" 200 "$(as nodownload GET "$(uri_of "$variant")")"
 
 scan=$WORK/leak
-rm -rf "$scan" && mkdir -p "$scan/remote-db"
+rm -rf "$scan" && mkdir -p "$scan/remote-db" "$scan/plugin-db"
 docker cp "$PREFIX-remote:/config/data/jellyfin.db" "$scan/remote-db/"
 docker cp "$PREFIX-remote:/config/data/jellyfin.db-wal" "$scan/remote-db/" 2>/dev/null || true
-# leak.py reads the sources of the stubs as the registry file of 0.5 held them.
-mkdir -p "$scan/db"
-docker cp "$PREFIX-local:$DATA/." "$scan/db/"
-python3 - "$scan/db/jellymesh.db" "$scan/federated-stubs.json" <<'PY'
-import json, sqlite3, sys
-rows = sqlite3.connect(sys.argv[1]).execute("select stub_id, server_id, item_id from stub_entry_sources").fetchall()
-stubs = {}
-for stub, server, item in rows:
-    stubs.setdefault(stub, []).append({"ServerId": server, "ItemId": item})
-json.dump({"Stubs": [{"Sources": sources} for sources in stubs.values()]}, open(sys.argv[2], "w"))
-PY
+docker cp "$PREFIX-local:$DATA/jellymesh.db" "$scan/plugin-db/"
+docker cp "$PREFIX-local:$DATA/jellymesh.db-wal" "$scan/plugin-db/" 2>/dev/null || true
 if REMOTE_PORT=$(port_of remote) python3 "$S/leak.py" "$scan" "$WORK/answers"; then check "no remote value in the answers" 0 0; else check "no remote value in the answers" 0 1; fi
 
 # The URL of a .strm is /JellyMesh/Play/<id>?sig=; the playlists name the proxy, /JellyMesh/Playback/, with the local token.
