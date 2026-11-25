@@ -83,7 +83,7 @@ public static partial class StubPlanner
             }
         }
 
-        var seriesWorks = SeriesWorks(input, seriesPlans.Values, catalog);
+        var seriesWorks = SeriesWorks(input, seriesPlans.Values, flatSeries, catalog);
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = flat.Where(stub => !matcher.IsClaimed(stub)).ToList();
 
@@ -184,7 +184,7 @@ public static partial class StubPlanner
                     }
                 }
 
-                seriesWorks.AddRange(SeriesWorks(input, seriesPlans.Values, catalog));
+                seriesWorks.AddRange(SeriesWorks(input, seriesPlans.Values, part.Series, catalog));
                 works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
                 claimed.UnionWith(part.Stubs.Where(matcher.IsClaimed).Select(stub => stub.Id));
                 merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
@@ -751,6 +751,11 @@ public static partial class StubPlanner
             TechnicalTag = (stub?.SeasonNumber, stub?.EpisodeNumber, stub?.EpisodeNumberEnd) == (season, number, last) ? stub!.TechnicalTag : null
         };
 
+        if (entry.SeriesStubId is { } row && !string.Equals(row, series.Entry.Id, StringComparison.Ordinal))
+        {
+            series.OtherRows.Add(row);
+        }
+
         var metadata = StubMetadata.From(winner, input.IsProtected) with { SeasonNumber = season, EpisodeNumber = number, EpisodeNumberEnd = last };
         var nfo = NfoDocument.Episode(metadata);
         var url = input.StrmUrl(id);
@@ -876,12 +881,40 @@ public static partial class StubPlanner
         return plan;
     }
 
-    // The work of each series. A new one whose stubs all stay in the folder of another series gets none.
-    private static List<SeriesWork> SeriesWorks(StubPlanInput input, IReadOnlyCollection<SeriesPlan> plans, IndexItemLookup catalog)
+    // The work of each series. A new one whose stubs all stay in the folder of another series gets none. A row of no plan
+    // that stubs of a plan stay in, a second folder of its title, gets the tvshow.nfo of the first such plan (§10 row 562).
+    private static List<SeriesWork> SeriesWorks(StubPlanInput input, IReadOnlyCollection<SeriesPlan> plans, IReadOnlyList<SeriesStub> existing, IndexItemLookup catalog)
     {
         var folders = plans.Select(plan => plan.Entry.RelativePath).ToHashSet(StringComparer.Ordinal);
-        return plans.Where(plan => plan.HasStubs || !plan.Work.IsNew).Select(plan => WithSeasons(input, plan, folders, catalog)).ToList();
+        var works = plans.Where(plan => plan.HasStubs || !plan.Work.IsNew).Select(plan => WithSeasons(input, plan, folders, catalog)).ToList();
+        var planned = plans.Select(plan => plan.Entry.Id).ToHashSet(StringComparer.Ordinal);
+        var others = existing.Where(entry => !planned.Contains(entry.Id)).DistinctBy(entry => entry.Id, StringComparer.Ordinal).ToDictionary(entry => entry.Id, StringComparer.Ordinal);
+        foreach (var plan in plans)
+        {
+            foreach (var id in plan.OtherRows.Order(StringComparer.Ordinal))
+            {
+                if (others.Remove(id, out var row))
+                {
+                    works.Add(OtherFolderWork(plan, row));
+                }
+            }
+        }
+
+        return works;
     }
+
+    // The tvshow.nfo of a plan in the folder of another row of its title. The images and seasons of that folder stay with
+    // the plan, so the row gets none.
+    private static SeriesWork OtherFolderWork(SeriesPlan plan, SeriesStub row) => plan.Work with
+    {
+        Entry = row,
+        IsNew = false,
+        NfoPath = Path.Combine(row.RelativePath, "tvshow.nfo"),
+        Images = [],
+        ImageTag = row.ImageTag ?? string.Empty,
+        RemovedImages = [],
+        Seasons = []
+    };
 
     // One season work per season folder that gets episode work, in no folder of another series of the plan. A season that has
     // none now is forgotten, so that it is written again. A series merged with a local one gets none (Q248).
@@ -1086,6 +1119,9 @@ public static partial class StubPlanner
 
         // Whether a stub has this series as its own.
         public bool HasStubs { get; set; }
+
+        // The other rows whose folders stubs of this series stay in.
+        public HashSet<string> OtherRows { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<string> ItemIds, int First, int Last);
@@ -1130,14 +1166,13 @@ public static partial class StubPlanner
     {
         private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
 
-        // Finds the series stub of a work by its key, then by a remote series among those no other work has, written ones first.
+        // Finds the series stub of a work by its key, then by a remote series among those no other work has, in their order.
         public SeriesStub? Claim(string workKey, List<(Guid ServerId, IndexedItem Item)> known)
         {
             var stub = Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
-                ?? Existing.Where(entry => !Contents.Contains(entry.WorkKey)
+                ?? Existing.FirstOrDefault(entry => !Contents.Contains(entry.WorkKey)
                     && !_claimed.Contains(entry.Id)
-                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)))
-                    .MinBy(entry => entry.ContentHash is null);
+                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
             if (stub is not null)
             {
                 _claimed.Add(stub.Id);

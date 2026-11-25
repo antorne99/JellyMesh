@@ -50,7 +50,9 @@ public sealed class ProviderCatalog
         ItemFields.Chapters,
         ItemFields.RemoteTrailers,
         ItemFields.ParentId,
-        ItemFields.Path
+        ItemFields.Path,
+        ItemFields.Width,
+        ItemFields.Height
     ];
 
     private readonly ILibraryManager _library;
@@ -426,7 +428,7 @@ public sealed class ProviderCatalog
         }
     }
 
-    // The consumer needs only the format of a book for its placeholder (D47), so no name or folder of this server leaves.
+    // The consumer needs only the format of a book or a photo for its placeholder (D47), so no name or folder of this server leaves.
     private static string? ExtensionOf(string? path)
     {
         var extension = Path.GetExtension(path);
@@ -478,11 +480,15 @@ public sealed class ProviderCatalog
             }
         }
 
-        // Watch state stays on this server (decision 41), even if a DTO came back with it.
+        // Watch state stays on this server (decision 41), even if a DTO came back with it. No place a photo was taken
+        // leaves either (row 560).
         foreach (var dto in dtos)
         {
             dto.UserData = null;
-            dto.Path = dto.Type == BaseItemKind.Book ? ExtensionOf(dto.Path) : null;
+            dto.Path = dto.Type is BaseItemKind.Book or BaseItemKind.Photo ? ExtensionOf(dto.Path) : null;
+            dto.Latitude = null;
+            dto.Longitude = null;
+            dto.Altitude = null;
         }
 
         // The file of a chapter image is a path of this server too.

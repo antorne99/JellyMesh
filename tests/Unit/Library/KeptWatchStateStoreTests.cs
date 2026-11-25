@@ -114,6 +114,7 @@ public sealed class KeptWatchStateStoreTests : IDisposable
     [InlineData(KeptTitleKind.AudioBook)]
     [InlineData(KeptTitleKind.Book)]
     [InlineData(KeptTitleKind.HomeVideo)]
+    [InlineData(KeptTitleKind.Photo)]
     public async Task ATitleOfATypeOfItsOwnComesBackWithItsData(KeptTitleKind kind)
     {
         var kept = new KeptTitle

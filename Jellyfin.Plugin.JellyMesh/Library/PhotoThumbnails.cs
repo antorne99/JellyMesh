@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Frozen;
 using System.IO;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using MediaBrowser.Controller.Entities;
@@ -23,6 +24,11 @@ public static class PhotoThumbnails
     private const byte EndOfImage = 0xD9;
     private const byte StartOfScan = 0xDA;
 
+    private const string RefusedMark = "refused|";
+
+    // The formats whose thumbnail a remote may give in its own format, so not as a JPEG (row 560).
+    private static readonly FrozenSet<string> _readOnce = new[] { ".gif", ".tif", ".tiff", ".avif" }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Gives the path of the thumbnail of a photo stub.</summary>
     /// <param name="root">The federated folder.</param>
     /// <param name="stubId">The stub.</param>
@@ -36,6 +42,19 @@ public static class PhotoThumbnails
             ? null
             : Path.Combine(root, FolderName, stubId + Extension);
     }
+
+    /// <summary>
+    /// Tells whether a photo stub whose thumbnail was not a clean JPEG is read again only when its remote image changes
+    /// (row 560): a GIF, TIFF or AVIF.
+    /// </summary>
+    /// <param name="relativePath">The path of the photo stub.</param>
+    /// <returns>True for such a format.</returns>
+    public static bool IsReadOnceWhenRefused(string relativePath) => _readOnce.Contains(Path.GetExtension(relativePath));
+
+    /// <summary>Gives the technical tag a photo stub keeps after the thumbnail of a remote image was refused.</summary>
+    /// <param name="tag">The remote Primary tag.</param>
+    /// <returns>The tag, marked as refused.</returns>
+    public static string Refused(string tag) => RefusedMark + tag;
 
     /// <summary>Tells whether a path is a file of a thumbnail folder, whatever the federated folder is.</summary>
     /// <param name="path">The path.</param>

@@ -351,7 +351,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        // A box to fill is asked alone; an exact size, as the largest one, so that rounding a side never distorts the photo.
+        // A box to fill is asked with only the limit of each side (row 560); an exact size, as the largest one, so that
+        // rounding a side never distorts the photo.
         var (fillWidth, fillHeight) = (StepOf(size.FillWidth), StepOf(size.FillHeight));
         var fills = fillWidth is not null || fillHeight is not null;
         var maxWidth = fills ? PhotoImageSide : SmallerStep(size.MaxWidth, size.Width);

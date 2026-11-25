@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
+using Jellyfin.Plugin.JellyMesh.Index;
 
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
@@ -168,10 +169,16 @@ public static class TrackDedup
         }
     }
 
-    // The normalized album artists, album, disc, number and title, or null when one is missing or there is no real duration.
+    // The normalized album artists, album, disc, number and title, or null when one is missing, may have been cut (row 562)
+    // or there is no real duration.
     private static string? PositionOf(TrackItem track, int? trackNumber, Dictionary<string, string> names)
     {
         var artists = track.AlbumArtists.Any(name => !string.IsNullOrWhiteSpace(name)) ? track.AlbumArtists : track.Artists;
+        if (RemoteName.MayBeCut(track.Title) || RemoteName.MayBeCut(track.Album) || artists.Any(RemoteName.MayBeCut))
+        {
+            return null;
+        }
+
         var artist = string.Join('\t', artists.Select(name => Normalized(name, names)).Where(name => name.Length > 0));
         var album = Normalized(track.Album, names);
         var title = TitleNormalizer.Normalize(track.Title, null);

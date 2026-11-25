@@ -146,6 +146,59 @@ public class TrackDedupTests
         Assert.Equal(2, decisions.Count);
     }
 
+    // Row 562: a name that may have been cut matches by ID only, as for films (row 529).
+    [Theory]
+    [InlineData("title")]
+    [InlineData("album")]
+    [InlineData("albumArtist")]
+    [InlineData("artist")]
+    public void ANameThatMayHaveBeenCutKeepsTwoCopiesApartByTheirTags(string tag)
+    {
+        var cut = new string('x', 999);
+        TrackItem Copy(string server) => Track(
+            server,
+            server + "1",
+            title: tag == "title" ? cut : "Song",
+            album: tag == "album" ? cut : "Album",
+            albumArtists: tag switch { "albumArtist" => [cut], "artist" => [], _ => null },
+            artists: tag == "artist" ? [cut] : null);
+
+        var decisions = TrackDedup.Resolve([Copy("a"), Copy("b")]);
+
+        Assert.Equal(2, decisions.Count);
+        Assert.All(decisions, decision => Assert.Equal(MatchKind.ItemOnly, decision.Identity.Match));
+    }
+
+    [Fact]
+    public void ANameThatMayHaveBeenCutStillMatchesByItsRecording()
+    {
+        var cut = new string('x', 1000);
+
+        var decision = Assert.Single(TrackDedup.Resolve([Track("a", "a1", recording: "rec-1", title: cut), Track("b", "b1", recording: "rec-1", title: cut)]));
+
+        Assert.Equal(MatchKind.ProviderId, decision.Identity.Match);
+    }
+
+    [Fact]
+    public void ANameOneShorterThanACutOneStillMatchesByItsTags()
+    {
+        var name = new string('x', 998);
+
+        Assert.Single(TrackDedup.Resolve([Track("a", "a1", title: name), Track("b", "b1", title: name)]));
+    }
+
+    [Fact]
+    public void AKeptTrackWithANameThatMayHaveBeenCutIsPairedByItsIdOnly()
+    {
+        var cut = new string('x', 999);
+        var saved = Track("saved", "1", title: cut, playable: false);
+        var byId = Track("saved", "2", recording: "rec-1", title: cut, playable: false);
+
+        var found = TrackDedup.Pair([saved, byId], [Track("a", "a1", title: cut), Track("b", "b1", recording: "rec-1", title: cut)], 100, CancellationToken.None);
+
+        Assert.Equal([("2", "b1")], found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ItemId)));
+    }
+
     [Theory]
     [InlineData(182, 1)]
     [InlineData(183, 2)]

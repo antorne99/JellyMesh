@@ -12,14 +12,13 @@ namespace Jellyfin.Plugin.JellyMesh.Provider;
 /// </summary>
 public static class ProviderLibraryTypes
 {
-    // Photos wait for F60, their albums with them since their cover is made of photos: F60 adds Photo and PhotoAlbum.
     private static readonly (CollectionTypeOptions Type, string Name, RemoteItemType[] Items)[] _types =
     [
         (CollectionTypeOptions.movies, "movies", [RemoteItemType.Movie]),
         (CollectionTypeOptions.tvshows, "tvshows", [RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode]),
         (CollectionTypeOptions.music, "music", [RemoteItemType.Audio]),
         (CollectionTypeOptions.musicvideos, "musicvideos", [RemoteItemType.MusicVideo]),
-        (CollectionTypeOptions.homevideos, "homevideos", [RemoteItemType.Video, RemoteItemType.Folder]),
+        (CollectionTypeOptions.homevideos, "homevideos", [RemoteItemType.Video, RemoteItemType.Photo, RemoteItemType.PhotoAlbum, RemoteItemType.Folder]),
         (CollectionTypeOptions.books, "books", [RemoteItemType.Book, RemoteItemType.AudioBook]),
         (CollectionTypeOptions.mixed, "mixed", [RemoteItemType.Movie, RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode])
     ];
@@ -56,7 +55,7 @@ public static class ProviderLibraryTypes
 
     /// <summary>
     /// Tells whether a library of a type gives a peer an item of a kind: one it reads from it, or the album of the tracks
-    /// it reads, which reaches the peer as a cover. Any other kind, the photos until F60 among them, it never gives.
+    /// it reads, which reaches the peer as a cover. Any other kind it never gives.
     /// </summary>
     /// <param name="type">The library type, null for a library without one.</param>
     /// <param name="kind">The kind of the item.</param>

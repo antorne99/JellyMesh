@@ -24,6 +24,11 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 /// <summary>One title of a server in two remote libraries, as the local libraries hold their folders (§10 rows 439 and 507).</summary>
 public sealed class SplitTitleTests : IDisposable
 {
+    private const string MusicB = "a0d1000000000000000000000000000b";
+    private const string MusicVideosB = "c11b000000000000000000000000000b";
+    private const string HomeVideosB = "40e0000000000000000000000000000b";
+    private const string BooksB = "b00c000000000000000000000000000b";
+
     private static readonly DateTime _day = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
     private readonly StubFixture _fixture = new();
@@ -177,6 +182,34 @@ public sealed class SplitTitleTests : IDisposable
         await ScanAsync();
         Assert.False(Row(_anna, PathOf(added)).IsFavorite);
         Assert.False(Row(_anna, PathOf(added)).Played);
+    }
+
+    // Row 507 holds for every type, with no special cases (§10 row 562).
+    [Theory]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.MusicVideo)]
+    [InlineData(StubKind.HomeVideo)]
+    [InlineData(StubKind.Photo)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.AudioBook)]
+    public async Task ATitleOfAnyTypeThatSplitsGivesItsNewStubTheFullState(StubKind kind)
+    {
+        var type = TypeFolder.Of(kind);
+        var (first, second) = await AddTitleAsync(kind);
+        Together(type, first, second);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+        var old = Assert.Single(Stubs, stub => stub.Kind == kind);
+        Give(_anna, PathOf(old), Full());
+        Apart(type, first, second);
+        await _fixture.SyncAndMaterializeAsync();
+        await ScanAsync();
+
+        var added = Assert.Single(Stubs, stub => stub.Kind == kind && stub.Id != old.Id);
+        Assert.NotEqual(FederatedPaths.RemoteLibraryOf(old.RelativePath), FederatedPaths.RemoteLibraryOf(added.RelativePath));
+        AssertFull(Row(_anna, PathOf(added)));
+        AssertFull(Row(_anna, PathOf(old)));
+        Assert.Empty(_fixture.Registry.State.Splits);
     }
 
     [Fact]
@@ -1168,6 +1201,28 @@ public sealed class SplitTitleTests : IDisposable
         return data;
     }
 
+    // A track or a part of an audiobook, of one audio stream.
+    private static RemoteItem Sound(string id, string name, string album, string artist, string container) => new()
+    {
+        Id = id,
+        Name = name,
+        IndexNumber = 1,
+        ProductionYear = 2020,
+        Album = album,
+        AlbumId = "al",
+        Artists = [artist],
+        AlbumArtists = [new RemoteNamedItem(artist)],
+        MediaSources =
+        [
+            new RemoteMediaSource
+            {
+                Id = id,
+                Container = container,
+                MediaStreams = [new RemoteStreamInfo("Audio", container, null, null, 320_000, null, null, true) { Index = 0 }]
+            }
+        ]
+    };
+
     private UserItemData Row(User user, string path) => _rows.GetValueOrDefault((user.Id, path)) ?? new UserItemData { Key = "k" };
 
     private void Give(User user, string path, UserItemData data) => _rows[(user.Id, path)] = data;
@@ -1319,6 +1374,56 @@ public sealed class SplitTitleTests : IDisposable
         _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Film", 2020, "1"));
         _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Film", 2020, "1"));
         _server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsB);
+    }
+
+    // One title of a kind as the same item in two remote libraries of its type.
+    private async Task<(string First, string Second)> AddTitleAsync(StubKind kind)
+    {
+        var (first, second, collection) = kind switch
+        {
+            StubKind.Track => (TestLibraries.Music, MusicB, "music"),
+            StubKind.MusicVideo => (TestLibraries.MusicVideos, MusicVideosB, "musicvideos"),
+            StubKind.HomeVideo or StubKind.Photo => (TestLibraries.HomeVideos, HomeVideosB, "homevideos"),
+            _ => (TestLibraries.Books, BooksB, "books")
+        };
+        (RemoteItemType Type, RemoteItem Item)[] items = kind switch
+        {
+            StubKind.Track => [(RemoteItemType.Audio, Sound("t", "Song", "Album", "Artist", "flac"))],
+            StubKind.AudioBook => [(RemoteItemType.AudioBook, Sound("p", "Part", "Story", "Narrator", "mp3"))],
+            StubKind.MusicVideo => [(RemoteItemType.MusicVideo, new RemoteItem
+            {
+                Id = "mv",
+                Name = "Song",
+                ProductionYear = 2019,
+                Artists = ["Singer"],
+                MediaSources = [TestItems.Source("mv", 1080, 5_000_000)]
+            })],
+            StubKind.HomeVideo => [(RemoteItemType.Video, new RemoteItem
+            {
+                Id = "v",
+                Name = "Beach day",
+                ParentId = first,
+                PremiereDate = _day,
+                MediaSources = [TestItems.Source("v", 1080, 5_000_000)]
+            })],
+            StubKind.Photo =>
+            [
+                (RemoteItemType.PhotoAlbum, new RemoteItem { Id = "al", Name = "Trips", ParentId = first }),
+                (RemoteItemType.Photo, new RemoteItem { Id = "ph", Name = "IMG_0001", ParentId = "al", Path = "/home/Trips/IMG_0001.JPG", Width = 4000, Height = 3000 })
+            ],
+            _ => [(RemoteItemType.Book, new RemoteItem { Id = "bk", Name = "Dune", ProductionYear = 1965, Path = "/books/Dune/Dune.epub" })]
+        };
+        foreach (var library in new[] { first, second })
+        {
+            _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(library, library == first ? "Uno" : "Due", collection));
+            foreach (var (type, item) in items)
+            {
+                _fixture.Sync.Client.Add(library, type, item);
+            }
+        }
+
+        _server = await _fixture.Sync.AddServerAsync("A", first, second);
+        return (first, second);
     }
 
     private async Task AddSeriesAsync(params (string Id, string Library, int Season, int Number)[] episodes)

@@ -27,5 +27,8 @@ public enum KeptTitleKind
     Book,
 
     /// <summary>A home video.</summary>
-    HomeVideo
+    HomeVideo,
+
+    /// <summary>A photo.</summary>
+    Photo
 }

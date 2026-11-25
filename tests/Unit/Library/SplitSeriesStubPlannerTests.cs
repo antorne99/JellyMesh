@@ -344,9 +344,10 @@ public class SplitSeriesStubPlannerTests
         AssertInTheirFolder(second.State);
         Assert.Equal(2, second.State.Series.Count);
 
-        // The work stays with one of them.
+        // The work stays with one of them, and the other gets its tvshow.nfo (§10 row 562).
         var third = Plan(false, second.State, series, episodes);
-        Assert.Equal(Assert.Single(second.Series).Entry.Id, Assert.Single(third.Series).Entry.Id);
+        Assert.Equal(Claimed(second).Entry.Id, Claimed(third).Entry.Id);
+        Assert.Equal(2, third.Series.Count);
         AssertKept(second.State, third.State);
     }
 
@@ -403,22 +404,86 @@ public class SplitSeriesStubPlannerTests
         Assert.Single(next.Series);
     }
 
-    [Fact]
-    public void AWorkOfAnotherKeyKeepsItsRowBeforeOneMadeAgain()
+    // On a tie of source the rows keep their order, written or not (§10 row 562).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AWorkOfAnotherKeyTakesTheFirstRowOfItsSource(bool writtenFirst)
     {
         RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2)];
         var first = Sync(StubState.Empty, [Series("s1")], episodes);
         var old = first with
         {
-            Series = first.Series.Select(entry => entry with { ContentHash = "written" }).ToList(),
             Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { SeriesStubId = "gone", RelativePath = stub.RelativePath.Replace("Show (2020)", "Show", StringComparison.Ordinal) } : stub).ToList()
         };
         var second = Sync(old, [Series("s1")], episodes);
-        Assert.Equal(2, second.Series.Count);
+        var written = Assert.Single(second.Series, entry => entry.Id == first.Series[0].Id) with { ContentHash = "written" };
+        var made = Assert.Single(second.Series, entry => entry.Id != first.Series[0].Id) with { ContentHash = null };
+        SeriesStub[] rows = writtenFirst ? [written, made] : [made, written];
 
-        var third = Plan(false, second, [Series("s1", tvdb: "71")], episodes);
+        var third = Plan(false, second with { Series = rows }, [Series("s1", tvdb: "71")], episodes);
 
-        Assert.Equal(first.Series[0].Id, Assert.Single(third.Series).Entry.Id);
+        Assert.Equal(rows[0].Id, Claimed(third).Entry.Id);
+        Assert.Equal(rows[1].Id, Assert.Single(third.Series, work => work.Entry.Id != rows[0].Id).Entry.Id);
+    }
+
+    // A second folder of one title keeps its row and gets the tvshow.nfo of the title, once (§10 row 562).
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ASecondFolderOfATitleGetsItsTvshowNfoOnce(bool isFlat)
+    {
+        RemoteItem[] series = [Series("s1")];
+        RemoteItem[] episodes = [Episode("s1", 1), Episode("s1", 2)];
+        var first = WithoutRows(Sync(isFlat, StubState.Empty, series, episodes));
+        var old = first with
+        {
+            Stubs = first.Stubs.Select(stub => stub.EpisodeNumber == 2 ? stub with { RelativePath = stub.RelativePath.Replace("Show (2020)", "Show", StringComparison.Ordinal) } : stub).ToList()
+        };
+
+        var second = Plan(isFlat, old, series, episodes);
+
+        var claimed = Claimed(second);
+        var other = Assert.Single(second.Series, work => work.Entry.Id != claimed.Entry.Id);
+        Assert.False(other.IsNew);
+        Assert.Equal(Path.Combine(other.Entry.RelativePath, "tvshow.nfo"), other.NfoPath);
+        Assert.Equal((claimed.Nfo, claimed.ContentHash), (other.Nfo, other.ContentHash));
+        Assert.Empty(other.Images);
+        Assert.Empty(other.Seasons);
+        Assert.Equal(2, claimed.Seasons.Count);
+        Assert.Contains(second.State.Stubs, stub => stub.SeriesStubId == other.Entry.Id);
+
+        // Once written, the next plan writes nothing again.
+        var written = second.State with
+        {
+            Series = second.State.Series.Select(entry => entry with { ContentHash = Assert.Single(second.Series, work => work.Entry.Id == entry.Id).ContentHash }).ToList()
+        };
+        var third = Plan(isFlat, written, series, episodes);
+        Assert.Equal(2, third.Series.Count);
+        Assert.All(third.Series, work => Assert.Equal(work.Entry.ContentHash, work.ContentHash));
+    }
+
+    // A stub with no work, in no series folder, names no row once its own is gone (§10 row 562).
+    [Fact]
+    public void AWaitingStubWhoseRowIsGoneNamesNone()
+    {
+        RemoteItem[] series = [Series("s1")];
+        var first = Sync(StubState.Empty, series, [Episode("s1", 1), Episode("s1", 2)]);
+        var sources = Assert.Single(first.Stubs, stub => stub.EpisodeNumber == 1).Sources;
+        var waiting = Assert.Single(first.Stubs, stub => stub.EpisodeNumber == 2) with
+        {
+            IdentityKey = "old",
+            Sources = sources,
+            SeriesStubId = "gone"
+        };
+        waiting = waiting with { RelativePath = waiting.RelativePath.Replace(Path.Combine("Serie", "Show (2020)"), "Serie", StringComparison.Ordinal) };
+        var old = first with { Stubs = first.Stubs.Select(stub => stub.Id == waiting.Id ? waiting : stub).ToList() };
+
+        var next = Sync(old, series, [Episode("s1", 1)]);
+
+        var kept = Assert.Single(next.Stubs, stub => stub.Id == waiting.Id);
+        Assert.Equal(waiting.RelativePath, kept.RelativePath);
+        Assert.Null(kept.SeriesStubId);
     }
 
     private static void AssertInTheirFolder(StubState state)
@@ -430,6 +495,9 @@ public class SplitSeriesStubPlannerTests
         Series = [],
         Stubs = other is null ? state.Stubs : state.Stubs.Select(stub => stub with { RelativePath = stub.RelativePath.Replace(folder, other, StringComparison.Ordinal) }).ToList()
     };
+
+    // The work of the row a plan takes: the row of a second folder gets only its tvshow.nfo, with no season (§10 row 562).
+    private static SeriesWork Claimed(StubPlan plan) => Assert.Single(plan.Series, work => work.Seasons.Count > 0);
 
     private static string FolderOf(StubEntry stub) => Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!;
 

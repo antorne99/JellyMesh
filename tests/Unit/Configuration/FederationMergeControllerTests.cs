@@ -102,7 +102,7 @@ public sealed class FederationMergeControllerTests
         var result = await Controller().Merge(new MergeRequest(["key0", "key1"]), CancellationToken.None);
 
         var failure = Assert.IsType<FailureResponse>(Assert.IsType<BadRequestObjectResult>(result).Value);
-        Assert.Equal("Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.", failure.Message);
+        Assert.Equal("Two local films cannot be merged: JellyMesh does not change local files. Select at most one film with a local copy.", failure.Message);
     }
 
     [Fact]

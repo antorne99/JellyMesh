@@ -55,6 +55,10 @@ public sealed partial class LibraryMaterializer
             {
                 entry = entry with { TechnicalTag = work.TechnicalTag };
             }
+            else if (run.RefusedThumbnails.ContainsKey(entry.Id))
+            {
+                entry = entry with { TechnicalTag = PhotoThumbnails.Refused(work.TechnicalTag) };
+            }
 
             if (repointed)
             {
