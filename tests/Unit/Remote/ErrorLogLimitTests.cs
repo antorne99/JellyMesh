@@ -4,7 +4,9 @@ using System.Net;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -120,6 +122,15 @@ public class ErrorLogLimitTests
         Assert.All(holders, type => Assert.Contains(
             type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
             constructor => constructor.GetParameters().Any(parameter => parameter.ParameterType == typeof(ErrorLogLimits))));
+    }
+
+    // Row 554: the database and the settings store are local log points of 0.6.
+    [Fact]
+    public void TheDatabaseAndTheSettingsStoreLogTheirErrorsWithinTheLimits()
+    {
+        Assert.All(
+            new[] { typeof(PluginDatabase), typeof(PluginConfigurationStore) },
+            type => Assert.Contains(type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic), field => field.FieldType == typeof(ErrorLogLimits)));
     }
 
     [Fact]

@@ -52,7 +52,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
                 folder,
                 Path.Combine(provider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath, LegacyImport.ConfigurationFileName),
                 provider.GetRequiredService<ILogger<LegacyImport>>());
-            return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy);
+            return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy, provider.GetRequiredService<ErrorLogLimits>());
         });
         serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
