@@ -78,6 +78,10 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<Guid> LongLabels() =>
+        _registry.State.Labels.Where(entry => FederatedPaths.IsLabelOverLimit(entry.Key, entry.Value)).Select(entry => entry.Key).ToList();
+
+    /// <inheritdoc />
     public Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken) => RelabelAsync(serverId, name, false, cancellationToken);
 
     /// <inheritdoc />

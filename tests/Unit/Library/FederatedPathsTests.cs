@@ -191,10 +191,55 @@ public class FederatedPathsTests
         Assert.Equal("1a2b3c4d", Label("trailer 3d"));
     }
 
-    [Fact]
-    public void ALongLabelIsCut()
+    // Row 556: the label is cut in UTF-8 bytes, as the title is.
+    [Theory]
+    [InlineData("x", 40)]
+    [InlineData("Ж", 20)]
+    [InlineData("漢", 13)]
+    public void ALongLabelIsCutAtItsBytes(string character, int characters)
     {
-        Assert.True(Label(new string('x', 500)).Length <= 40);
+        Assert.Equal(string.Concat(Enumerable.Repeat(character, characters)), Label(string.Concat(Enumerable.Repeat(character, 500))));
+    }
+
+    // Row 564: a saved label over 40 bytes is renamed, the start of the GUID it may end with left out.
+    [Theory]
+    [InlineData("x", 40, false)]
+    [InlineData("x", 41, true)]
+    [InlineData("Ж", 20, false)]
+    [InlineData("Ж", 21, true)]
+    [InlineData("漢", 13, false)]
+    [InlineData("漢", 14, true)]
+    public void ASavedLabelIsOverTheLimitPastFortyBytes(string character, int characters, bool over)
+    {
+        var label = string.Concat(Enumerable.Repeat(character, characters));
+
+        Assert.Equal(over, FederatedPaths.IsLabelOverLimit(_server, label));
+        Assert.Equal(over, FederatedPaths.IsLabelOverLimit(_server, label + " " + FederatedPaths.GuidStart(_server)));
+    }
+
+    [Fact]
+    public void TheGuidOfAnotherServerCountsInTheLabel()
+    {
+        Assert.True(FederatedPaths.IsLabelOverLimit(_server, new string('x', 40) + " " + FederatedPaths.GuidStart(_other)));
+    }
+
+    [Fact]
+    public void ALabelCutAtItsBytesIsNotOverTheLimit()
+    {
+        Assert.False(FederatedPaths.IsLabelOverLimit(_server, Label(new string('Ж', 500))));
+    }
+
+    [Fact]
+    public void TheLongestNamesOfALongLabelFitInAFileName()
+    {
+        var name = new string('漢', 500);
+        var label = FederatedPaths.Labels([(_other, name), (_server, name)], new Dictionary<Guid, string>())[_server];
+        var episode = FederatedPaths.EpisodeStub("Serie", name, 2024, 1000, 1001, label, "0123456789abcdef");
+        var film = FederatedPaths.MovieStub(_server, FederatedPaths.TitleFolder(name, 2020) + " [01234567]", label);
+
+        Assert.EndsWith(" " + FederatedPaths.GuidStart(_server), label, StringComparison.Ordinal);
+        Assert.InRange(Encoding.UTF8.GetByteCount(Path.GetFileNameWithoutExtension(episode) + "-thumb.webp"), 1, 255);
+        Assert.InRange(Encoding.UTF8.GetByteCount(Path.GetFileName(film)), 1, 255);
     }
 
     [Fact]

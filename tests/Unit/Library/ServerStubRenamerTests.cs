@@ -212,6 +212,33 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal("Casa", _registry.State.Labels[_server]);
     }
 
+    // Row 564: only a saved label over 40 bytes, without the GUID digits, is renamed at start.
+    [Fact]
+    public async Task OnlyTheServersWithASavedLabelOverTheLimitAreListed()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")));
+        await SaveAsync(_registry.State with { Labels = new Dictionary<Guid, string> { [_server] = new string('Ж', 21), [_other] = new string('Ж', 20) + " 5e6f7a8b" } });
+
+        Assert.Equal([_server], _renamer.LongLabels());
+    }
+
+    [Fact]
+    public async Task ASavedLabelOverTheLimitMovesToItsCutLabelUnderTheSameName()
+    {
+        var name = new string('Ж', 30);
+        await SeedAsync(Film("f", FilmPath(name)), Film("o", FilmPath("Altro", _other)));
+        await SaveAsync(_registry.State with { Labels = new Dictionary<Guid, string> { [_server] = name, [_other] = "Altro" } });
+        Write(FilmPath(name), "url-f");
+
+        Assert.Equal(1, await _renamer.RelabelAsync(_server, name, CancellationToken.None));
+
+        Assert.Equal(new string('Ж', 20), _registry.State.Labels[_server]);
+        Assert.Equal("url-f", Read(FilmPath(new string('Ж', 20))));
+        Assert.True(File.Exists(Full(FilmPath(name))));
+        Assert.Equal(FilmPath(name), _registry.State.Renames.Single().OldPath);
+        Assert.Empty(_renamer.LongLabels());
+    }
+
     [Fact]
     public async Task AHomeVideoWhoseNameEndsWithTheLabelKeepsItsFiles()
     {
