@@ -227,7 +227,7 @@ Change the name in the server's **Edit** form and save. The new name shows in th
 - The libraries JellyMesh made for it are renamed too, and JellyMesh updates the users allowed or blocked on them. Each one empties and fills again, and its sort order and view start over. On Jellyfin 12.1 its place in each user's home screen order and exclusions starts over too.
 - A renamed library keeps its old ID until Jellyfin restarts: until then, users who open it by that ID get an error. Restart Jellyfin when you can.
 - While the folder migration of 0.6 has not ended, or while JellyMesh cannot tell yet whether it has, the name can't change and the form says why; the other fields can still be saved.
-- If the rename stops halfway, the card says so and the name can't change: save the form again with the same name to finish it. **Cancel the pending rename** keeps the new name for the titles, deletes their old files at once, and loses the watch state not yet carried.
+- If the rename stops halfway, the card says so and the name can't change: save the form again with the same name to finish it, once the folder migration has ended. **Cancel the pending rename** keeps the new name for the titles, deletes their old files at once, and loses the watch state not yet carried.
 
 ### Settings
 
