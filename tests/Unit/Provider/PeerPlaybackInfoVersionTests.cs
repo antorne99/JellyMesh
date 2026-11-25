@@ -219,21 +219,29 @@ public class PeerPlaybackInfoVersionTests
         Assert.DoesNotContain(TextsOf(answer.Value), text => text.Contains("strm-secret", StringComparison.Ordinal));
     }
 
+    // Row 568: no path of this server leaves, as in the catalog; what a consumer needs to play the file stays.
     [Fact]
-    public async Task The_answer_for_a_file_of_this_server_is_left_as_stock_gives_it()
+    public async Task The_answer_for_a_file_of_this_server_gives_no_path_and_keeps_the_rest()
     {
         const string Subtitle = "/Videos/a/a/Subtitles/1/0/Stream.vtt";
         var source = Source(ProviderFixture.SharedItem);
         source.Path = "/media/film/a.mkv";
-        source.MediaStreams = [new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, DeliveryUrl = Subtitle }];
+        source.RequiredHttpHeaders = new() { ["X-Kept"] = "kept" };
+        source.MediaStreams =
+        [
+            new MediaStream { Index = 0, Type = MediaStreamType.Video, Path = "/media/film/a.mkv" },
+            new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, Path = "/media/film/a.it.srt", DeliveryUrl = Subtitle }
+        ];
         source.MediaAttachments = [new MediaAttachment { Index = 7, DeliveryUrl = "/Videos/a/a/Attachments/7" }];
         var answer = Answer(source);
 
         await RunAsync(answer, new PostedBody());
 
         var sent = Assert.Single(((PlaybackInfoResponse)answer.Value!).MediaSources);
-        Assert.Equal("/media/film/a.mkv", sent.Path);
-        Assert.Equal(Subtitle, sent.MediaStreams[0].DeliveryUrl);
+        Assert.Null(sent.Path);
+        Assert.All(sent.MediaStreams, stream => Assert.Null(stream.Path));
+        Assert.Equal("kept", sent.RequiredHttpHeaders["X-Kept"]);
+        Assert.Equal(Subtitle, sent.MediaStreams[1].DeliveryUrl);
         Assert.Equal("/Videos/a/a/Attachments/7", sent.MediaAttachments[0].DeliveryUrl);
     }
 
