@@ -734,7 +734,9 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                         ServerId = serverId,
                         ItemId = item.ItemId,
                         Title = item.Name,
-                        Year = item.ProductionYear ?? item.PremiereDate?.Year,
+
+                        // The year its library item has: a photo placeholder carries no date.
+                        Year = item.ProductionYear,
                         Folder = FolderOf(PlaceOf(stub.RelativePath))
                     });
                     break;
