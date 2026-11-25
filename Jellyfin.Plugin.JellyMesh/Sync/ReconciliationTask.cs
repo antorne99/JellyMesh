@@ -19,6 +19,7 @@ public sealed class ReconciliationTask : SyncTask
     private readonly ICatalogSyncService _sync;
     private readonly IPluginDatabase _database;
     private readonly ILogger<ReconciliationTask> _logger;
+    private readonly ErrorLogLimits _errorLogs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReconciliationTask"/> class.
@@ -34,6 +35,7 @@ public sealed class ReconciliationTask : SyncTask
         _sync = sync;
         _database = database;
         _logger = logger;
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
     }
 
     /// <inheritdoc />
@@ -88,7 +90,7 @@ public sealed class ReconciliationTask : SyncTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("The nightly copy of the JellyMesh database failed: {Error}", exception.Message);
+            _logger.LogWarning("The nightly copy of the JellyMesh database failed: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -108,7 +110,7 @@ public sealed class ReconciliationTask : SyncTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("The JellyMesh database log could not be emptied: {Error}", exception.Message);
+            _logger.LogWarning("The JellyMesh database log could not be emptied: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -125,7 +127,7 @@ public sealed class ReconciliationTask : SyncTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("The expired damaged JellyMesh database files cannot be deleted: {Error}", exception.Message);
+            _logger.LogWarning("The expired damaged JellyMesh database files cannot be deleted: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 
@@ -142,7 +144,7 @@ public sealed class ReconciliationTask : SyncTask
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogWarning("The files of the older JellyMesh version cannot be deleted: {Error}", exception.Message);
+            _logger.LogWarning("The files of the older JellyMesh version cannot be deleted: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
         }
     }
 

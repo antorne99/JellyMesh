@@ -51,7 +51,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             var legacy = new LegacyImport(
                 folder,
                 Path.Combine(provider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath, LegacyImport.ConfigurationFileName),
-                provider.GetRequiredService<ILogger<LegacyImport>>());
+                provider.GetRequiredService<ILogger<LegacyImport>>(),
+                provider.GetRequiredService<ErrorLogLimits>());
             return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy, provider.GetRequiredService<ErrorLogLimits>());
         });
         serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
