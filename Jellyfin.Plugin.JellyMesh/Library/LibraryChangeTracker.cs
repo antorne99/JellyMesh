@@ -148,7 +148,7 @@ public sealed class LibraryChangeTracker : ILibraryChangeTracker
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, _errorLogs.Local.Of(exception));
+            _logger.LogDebug("Skipping a location of the library {Library} that is not a valid path: {Error}{Detail:l}", LogText.Clean(library), exception.GetType().Name, _logger.IsEnabled(LogLevel.Debug) ? _errorLogs.Local.Of(exception) : string.Empty);
             return false;
         }
     }
