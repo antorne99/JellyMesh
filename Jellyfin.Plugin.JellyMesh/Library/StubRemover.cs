@@ -20,6 +20,9 @@ public sealed class StubRemover
 
     private static readonly DeleteOptions _keepFiles = new() { DeleteFileLocation = false };
 
+    // The lyric files Jellyfin saves next to a track, in the formats it reads.
+    private static readonly string[] _lyricExtensions = [".lrc", ".elrc", ".txt"];
+
     private readonly ILibraryManager _library;
 
     /// <summary>
@@ -250,8 +253,13 @@ public sealed class StubRemover
         }
         else if (stub.Kind == StubKind.Track)
         {
-            // Track names are the remote's, so files sharing the stem, the album cover included, are not the track's.
+            // Track names are the remote's, so files sharing the stem, the album cover included, are not the track's. Only the
+            // lyrics Jellyfin saves next to it are.
             File.Delete(strm);
+            foreach (var extension in _lyricExtensions)
+            {
+                File.Delete(Path.ChangeExtension(strm, extension));
+            }
         }
         else
         {

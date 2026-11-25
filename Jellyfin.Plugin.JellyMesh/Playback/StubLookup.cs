@@ -269,8 +269,16 @@ public sealed class StubLookup
     }
 
     /// <summary>
+    /// Finds the stub a playback of an item reaches, as <see cref="Resolve"/> does, and also an audio stub by its path.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <param name="isUnknown">Whether the item is a federated <c>.strm</c> with no stub in the registry.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? ResolvePlayable(Guid itemId, out bool isUnknown) => Resolve(itemId, out isUnknown) ?? (IsAudioStub(itemId) ? FindFile(itemId) : null);
+
+    /// <summary>
     /// Finds the stub of an item for its file and its visibility: a video stub, or an audio stub or book placeholder by its
-    /// path, which playback does not reach (F56).
+    /// path.
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>The stub, null for anything else.</returns>

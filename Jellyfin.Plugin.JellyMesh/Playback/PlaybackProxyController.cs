@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -22,18 +21,15 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 [Authorize]
 public class PlaybackProxyController : ControllerBase
 {
-    private const string PlaylistType = "application/vnd.apple.mpegurl";
     private const string MasterToFolder = "f/";
     private const string FolderToFolder = "../";
 
     private readonly PlaybackSessionStore _sessions;
-    private readonly PlaybackCoordinator _coordinator;
     private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
     private readonly TimeProvider _clock;
-    private readonly PlaybackRefusal _refusal;
     private readonly ILogger<PlaybackProxyController> _logger;
-    private readonly ErrorLogLimits _errorLogs;
+    private readonly SessionRelay _relay;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackProxyController"/> class.
@@ -56,14 +52,12 @@ public class PlaybackProxyController : ControllerBase
         ILogger<PlaybackProxyController> logger,
         ErrorLogLimits? errorLogs = null)
     {
-        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _logger = logger;
         _sessions = sessions;
-        _coordinator = coordinator;
         _stubs = stubs;
         _authorization = authorization;
         _clock = clock;
-        _refusal = refusal;
+        _relay = new SessionRelay(coordinator, refusal, clock, logger, errorLogs);
     }
 
     /// <summary>
@@ -169,21 +163,6 @@ public class PlaybackProxyController : ControllerBase
         return await RelayStreamAsync(session, upstream, cancellationToken).ConfigureAwait(false);
     }
 
-    // Names the part of a stream a path is, for the logs.
-    private static string PartOf(string path, bool isMaster = false)
-    {
-        var plain = path.Split('?')[0];
-        return isMaster ? "master playlist"
-            : IsSubtitle(path) ? "subtitle"
-            : plain.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase) ? "playlist"
-            : "segment";
-    }
-
-    private static bool IsSubtitle(string path)
-    {
-        return path.Split('?')[0].Contains("/Subtitles/", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static string FolderOf(string path)
     {
         var plain = path.Split('?')[0];
@@ -214,116 +193,20 @@ public class PlaybackProxyController : ControllerBase
         return new SessionAccess(session, authorization.Token);
     }
 
-    private async Task<ActionResult> RelayPlaylistAsync(PlaybackSession session, string path, string remoteFolder, string prefix, string token, CancellationToken cancellationToken)
+    private Task<ActionResult> RelayPlaylistAsync(PlaybackSession session, string path, string remoteFolder, string prefix, string token, CancellationToken cancellationToken)
     {
-        var part = PartOf(path, prefix == MasterToFolder);
-        if (session.HasFailed)
-        {
-            return FailedBefore(session, part);
-        }
-
-        var playlist = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, path, cancellationToken).ConfigureAwait(false);
-        if (!playlist.IsSuccess)
-        {
-            return RelayFailed(session, path, part, playlist);
-        }
-
-        var text = HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session));
-        if (text is null)
-        {
-            _logger.LogWarning("The {Part} of play session {PlaySessionId} on server {ServerId} could not be rewritten for the client: 502", part, session.Id, session.Source.ServerId);
-            return StatusCode(StatusCodes.Status502BadGateway);
-        }
-
-        return Content(text, PlaylistType);
+        return _relay.PlaylistAsync(HttpContext, session, path, remoteFolder, prefix, token, SessionRelay.PlaylistType, cancellationToken);
     }
 
-    private async Task<ActionResult> RelayStreamAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
+    private Task<ActionResult> RelayStreamAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
     {
-        var part = path == session.UpstreamPath ? "stream" : PartOf(path);
-        if (session.HasFailed)
-        {
-            return FailedBefore(session, part);
-        }
-
-        var method = HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get;
-        var range = Request.Headers.Range.ToString();
-        var request = new RemoteStreamRequest(method, path, string.IsNullOrEmpty(range) ? null : range);
-        var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
-        if (!opened.IsSuccess)
-        {
-            return RelayFailed(session, path, part, opened);
-        }
-
-        using var stream = opened.Value!;
-        var relayed = await StreamRelay.RelayAsync(stream, HttpContext, _coordinator.StallLimit, cancellationToken, _clock).ConfigureAwait(false);
-        var ends = relayed.CountsAsFailure && !IsSubtitle(path);
-        if (relayed.IsAbnormal)
-        {
-            var level = ends ? LogLevel.Warning : relayed.End == RelayEnd.ClientDropped ? LogLevel.Debug : LogLevel.Information;
-            _logger.Log(
-                level,
-                "The {Part} of play session {PlaySessionId} ({Kind}, server {ServerId}) broke off: {End} after {Bytes} bytes in {Elapsed}, {Playing} into playback. Ends the session: {Ends}{Detail:l}",
-                part,
-                session.Id,
-                session.Kind,
-                session.Source.ServerId,
-                relayed.End,
-                relayed.Bytes,
-                relayed.Elapsed,
-                _clock.GetUtcNow() - session.Opened,
-                ends,
-                _logger.IsEnabled(level) ? _errorLogs.For(session.Source.ServerId).Of(relayed.Error) : string.Empty);
-        }
-
-        if (ends)
-        {
-            _coordinator.ReportFailure(session);
-        }
-
-        return new EmptyResult();
-    }
-
-    // A retry of the player after its session failed (row 57): it gets 502 until it asks PlaybackInfo again.
-    private StatusCodeResult FailedBefore(PlaybackSession session, string part)
-    {
-        _logger.LogDebug("The {Part} of failed play session {PlaySessionId} is refused: 502", part, session.Id);
-        return StatusCode(StatusCodes.Status502BadGateway);
+        return _relay.StreamAsync(HttpContext, session, path, cancellationToken);
     }
 
     private StatusCodeResult TooManyRequests(PlaybackSession session)
     {
         _logger.LogWarning("Play session {PlaySessionId} already has {Count} requests running: one more is refused with 503", session.Id, PlaybackLimits.RequestsPerSession);
         return StatusCode(StatusCodes.Status503ServiceUnavailable);
-    }
-
-    // A stream that lost its slot and came back to a full server: the same refusal as a new PlaybackInfo gets. Any other
-    // failure but a missing subtitle or a full queue here ends the session, so that the player reconnects (row 57).
-    private ActionResult RelayFailed<T>(PlaybackSession session, string path, string part, RemoteResult<T> result)
-    {
-        var failure = result.Failure;
-        var ends = failure is not (RemoteFailure.StreamLimitReached or RemoteFailure.Busy) && !IsSubtitle(path);
-        _logger.Log(
-            ends ? LogLevel.Warning : LogLevel.Information,
-            "The {Part} of play session {PlaySessionId} ({Kind}, server {ServerId}) did not open: {Failure}, {Playing} into playback. Ends the session: {Ends}",
-            part,
-            session.Id,
-            session.Kind,
-            session.Source.ServerId,
-            result.Describe(),
-            _clock.GetUtcNow() - session.Opened,
-            ends);
-        if (failure == RemoteFailure.StreamLimitReached)
-        {
-            return _refusal.Refuse(HttpContext, session.Identity.DeviceId, PlaybackRefusal.LimitText);
-        }
-
-        if (ends)
-        {
-            _coordinator.ReportFailure(session);
-        }
-
-        return StatusCode(StatusCodes.Status502BadGateway);
     }
 
     private sealed record SessionAccess(PlaybackSession? Session, string Token);

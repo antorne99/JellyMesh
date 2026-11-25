@@ -164,6 +164,42 @@ public sealed class StubRemoverTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_root, kept.RelativePath)));
     }
 
+    // Jellyfin saves the lyrics of a track next to its .strm, under its stem.
+    [Fact]
+    public void ARemovedTrackTakesTheLyricsJellyfinSavedNextToIt()
+    {
+        var server = Guid.NewGuid();
+        var gone = Track(server, "t1", "Artist", "Album", "folder");
+        var kept = Track(server, "t2", "Artist", "Album", "folder.live");
+        var album = Path.Combine(_root, Path.GetDirectoryName(gone.RelativePath)!);
+        string[] lyrics = ["folder.lrc", "folder.elrc", "folder.txt"];
+        foreach (var name in lyrics.Append("folder.live.lrc").Append("folder.jpg"))
+        {
+            File.WriteAllText(Path.Combine(album, name), "lyrics");
+        }
+
+        _remover.RemoveAll(_root, new StubState { Stubs = [gone, kept] }, [gone]);
+
+        Assert.All(lyrics, name => Assert.False(File.Exists(Path.Combine(album, name))));
+        Assert.True(File.Exists(Path.Combine(album, "folder.live.lrc")));
+        Assert.True(File.Exists(Path.Combine(album, "folder.jpg")));
+    }
+
+    // Lyrics left in an album, such as those of a track gone before, do not make it look like the admin's content.
+    [Fact]
+    public void LyricsInAnAlbumDoNotKeepItsFolder()
+    {
+        var server = Guid.NewGuid();
+        var gone = Track(server, "t1", "Artist", "Album", "01 - One");
+        var album = Path.Combine(_root, Path.GetDirectoryName(gone.RelativePath)!);
+        File.WriteAllText(Path.Combine(album, "00 - Intro.lrc"), "lyrics");
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [gone] }, [gone]);
+
+        Assert.Empty(removal.State.Stubs);
+        Assert.False(Directory.Exists(Path.GetDirectoryName(album)));
+    }
+
     // On a disk that ignores case "Artist" and "artist" are one folder, so a track left in either keeps it.
     [Fact]
     public void AnArtistFolderHeldUnderAnotherCaseStays()

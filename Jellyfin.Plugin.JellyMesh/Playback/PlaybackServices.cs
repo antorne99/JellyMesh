@@ -34,6 +34,7 @@ public static class PlaybackServices
         services.AddSingleton<LocalCopyLookup>();
         services.AddSingleton<PlaybackVersions>();
         services.AddSingleton<PlaybackInfoFilter>();
+        services.AddSingleton<AudioStubRoutes>();
         services.AddSingleton<StockRouteGuardFilter>();
         services.AddSingleton<StubSegments>();
         services.AddSingleton<IMediaSegmentProvider, StubSegmentProvider>();

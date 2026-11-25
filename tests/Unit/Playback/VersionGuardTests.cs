@@ -124,6 +124,7 @@ public class VersionGuardTests
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, NullLogger<AudioStubRoutes>.Instance),
             _log);
     }
 

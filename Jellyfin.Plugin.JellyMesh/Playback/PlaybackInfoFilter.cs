@@ -116,7 +116,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // R:versioni §5: the version comes from the query, else from the body, as the stock action merges them.
         var arguments = new ArgumentReader(context.ActionArguments);
         var asked = arguments.Version(MediaSourceArgument);
-        var routeStub = _stubs.Resolve(route, out var routeUnknown);
+        var routeStub = _stubs.ResolvePlayable(route, out var routeUnknown);
         if (routeStub is null && !routeUnknown && (asked is not { } named || named.Equals(route) || !IsFederated(named)) && !_stubs.HasVersions(route))
         {
             await next().ConfigureAwait(false);
@@ -149,7 +149,7 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         var target = asked ?? (routeStub is not null ? _versions.Choose(route, routeStub, user) : routeUnknown ? _versions.LinkedLocalCopy(route, user) ?? route : route);
-        var targetStub = _stubs.Resolve(target, out var targetUnknown);
+        var targetStub = _stubs.ResolvePlayable(target, out var targetUnknown);
         if (targetUnknown)
         {
             _logger.LogWarning("PlaybackInfo of item {ItemId} is refused: the registry does not hold the stub of version {VersionId}", route, target);
@@ -199,8 +199,16 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         var outcome = await _coordinator.OpenAsync(request, http.RequestAborted).ConfigureAwait(false);
+        var track = _stubs.IsAudioStub(request.Identity.ItemId);
         switch (outcome.Kind)
         {
+            case PlaybackOutcomeKind.Remote when track:
+                context.Result = new OkObjectResult(outcome.Response);
+                break;
+            case PlaybackOutcomeKind.LocalTranscode or PlaybackOutcomeKind.Unavailable when track:
+                // No local audio transcode: the end of the chain is a clear error.
+                context.Result = _refusal.Refuse(http, deviceId, outcome.Kind == PlaybackOutcomeKind.LocalTranscode ? PlaybackRefusal.FailedText : PlaybackRefusal.TextOf(outcome));
+                break;
             case PlaybackOutcomeKind.Remote:
                 _segments.OfferOnRemote(outcome.Response!, outcome.Served, route);
                 context.Result = new OkObjectResult(outcome.Response);

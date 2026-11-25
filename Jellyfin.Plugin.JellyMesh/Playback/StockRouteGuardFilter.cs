@@ -39,6 +39,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
     private const string StopEncodingAction = "StopEncodingProcess";
 
+    private const string LyricsController = "Lyrics";
+
+    private const string GetLyricsAction = "GetLyrics";
+
     private const string DownloadAction = "GetDownload";
 
     private const string LegacySegmentAction = "GetHlsVideoSegmentLegacy";
@@ -93,6 +97,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly ITranscodeManager _transcodes;
     private readonly StreamSlots _peerSlots;
     private readonly Func<string, IReadOnlyList<string>> _listFolder;
+    private readonly AudioStubRoutes _audio;
     private readonly ILogger<StockRouteGuardFilter> _logger;
     private readonly ErrorLogLimits _errorLogs;
 
@@ -106,6 +111,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="refusal">The refusal.</param>
     /// <param name="transcodes">The transcode manager.</param>
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
+    /// <param name="audio">The audio routes of track stubs.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
     public StockRouteGuardFilter(
@@ -116,9 +122,10 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
+        AudioStubRoutes audio,
         ILogger<StockRouteGuardFilter> logger,
         ErrorLogLimits? errorLogs = null)
-        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder, logger, errorLogs)
+        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, audio, ListFolder, logger, errorLogs)
     {
     }
 
@@ -131,6 +138,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
+        AudioStubRoutes audio,
         Func<string, IReadOnlyList<string>> listFolder,
         ILogger<StockRouteGuardFilter>? logger = null,
         ErrorLogLimits? errorLogs = null)
@@ -145,6 +153,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         _transcodes = transcodes;
         _peerSlots = peerSlots;
         _listFolder = listFolder;
+        _audio = audio;
     }
 
     /// <inheritdoc />
@@ -238,10 +247,16 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             context.Result = await FileResultAsync(context, action, fileId).ConfigureAwait(false);
             return;
         }
+        else if (controller == LyricsController && StubLookup.ItemIdOf(context) is { } lyricsId && _stubs.IsAudioStub(lyricsId))
+        {
+            // The lyrics of a track stub come from its remote; stock would write managed ones inside the federated folder.
+            context.Result = await AudioStubResultAsync(context, controller, action, [lyricsId]).ConfigureAwait(false);
+            return;
+        }
         else if (_streamControllers.Contains(controller) && StubLookup.NamedItemIdsOf(context).Where(_stubs.IsAudioStub).ToList() is { Count: > 0 } tracks)
         {
             // Stock cannot play an audio .strm and would send its text, with the signed loopback URL, so it is never reached.
-            context.Result = await AudioStubRefusalAsync(context, tracks).ConfigureAwait(false);
+            context.Result = await AudioStubResultAsync(context, controller, action, tracks).ConfigureAwait(false);
             return;
         }
         else if (IsMedia(controller, action)
@@ -438,17 +453,41 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return Path.GetFileNameWithoutExtension(relativePath) + extension;
     }
 
-    // Refuses a stock media route on audio stubs: 401 without a user, 404 for one who cannot see them, else a bare 503.
-    private async Task<IActionResult> AudioStubRefusalAsync(ActionExecutingContext context, List<Guid> tracks)
+    // Serves a stock route on audio stubs: 401 without a user, 404 for one who cannot see them. Lyrics are read, never
+    // managed; a static stream is the file; the other audio routes go through a session, anything else is a bare 503.
+    private async Task<IActionResult> AudioStubResultAsync(ActionExecutingContext context, string controller, string action, List<Guid> tracks)
     {
-        if ((await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false)).User is not { } user)
+        var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
+        if (authorization.User is not { } user)
         {
             return new StatusCodeResult(StatusCodes.Status401Unauthorized);
         }
 
-        return tracks.TrueForAll(id => _stubs.Sees(user, id))
-            ? new StatusCodeResult(StatusCodes.Status503ServiceUnavailable)
-            : new StatusCodeResult(StatusCodes.Status404NotFound);
+        if (!tracks.TrueForAll(id => _stubs.Sees(user, id)))
+        {
+            return new StatusCodeResult(StatusCodes.Status404NotFound);
+        }
+
+        if (controller == LyricsController)
+        {
+            return action != GetLyricsAction
+                ? new StatusCodeResult(StatusCodes.Status403Forbidden)
+                : _stubs.FindFile(tracks[0]) is { } lyricsStub
+                    ? await _audio.LyricsAsync(context.HttpContext, authorization.DeviceId ?? string.Empty, lyricsStub).ConfigureAwait(false)
+                    : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        if (tracks is not [var track] || StubLookup.ItemIdOf(context) != track || _stubs.FindFile(track) is not { } stub || string.IsNullOrEmpty(authorization.Token))
+        {
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        if (controller == "Audio" && context.ActionArguments.TryGetValue("static", out var isStatic) && isStatic is true)
+        {
+            return await FileResultAsync(context, action, track).ConfigureAwait(false);
+        }
+
+        return await _audio.ServeAsync(context, new AudioAccess(user.Id, authorization.DeviceId ?? string.Empty, authorization.Token, track), stub).ConfigureAwait(false);
     }
 
     // A 503, with a text for a book placeholder, whose readers show it.
