@@ -36,6 +36,10 @@ public class SplitSeriesStubPlannerTests
         => Plan(isFlat, state, series, episodes, merges).State;
 
     private static StubPlan Plan(bool isFlat, StubState state, RemoteItem[] series, RemoteItem[] episodes, params ManualMerge[] merges)
+        => Checked(Unchecked(isFlat, state, series, episodes, merges));
+
+    // Plans one sync of the server without checking the plan.
+    private static StubPlan Unchecked(bool isFlat, StubState state, RemoteItem[] series, RemoteItem[] episodes, params ManualMerge[] merges)
     {
         var catalog = new ServerCatalog
         {
@@ -65,8 +69,12 @@ public class SplitSeriesStubPlannerTests
         {
             IgnoreRules = new FakeIgnoreRules()
         };
-        var plan = isFlat ? StubPlanner.Plan(input) : StubPlanner.PlanByServer(input);
+        return isFlat ? StubPlanner.Plan(input) : StubPlanner.PlanByServer(input);
+    }
 
+    // Checks a plan; a waiting stub may name no row (row 562).
+    private static StubPlan Checked(StubPlan plan, string? waitingId = null)
+    {
         // No two rows of one id, no two files of one path, and no row left without an episode.
         Assert.Equal(plan.Series.Count, plan.Series.Select(work => work.Entry.Id).Distinct().Count());
         var written = plan.Series.Select(work => work.NfoPath)
@@ -78,7 +86,7 @@ public class SplitSeriesStubPlannerTests
         Assert.Equal(next.Series.Count, next.Series.Select(entry => entry.Id).Distinct().Count());
         Assert.Equal(next.Stubs.Count, next.Stubs.Select(stub => stub.RelativePath).Distinct().Count());
         Assert.All(next.Series, entry => Assert.Contains(next.Stubs, stub => stub.SeriesStubId == entry.Id));
-        Assert.All(next.Stubs, stub => Assert.Contains(next.Series, entry => entry.Id == stub.SeriesStubId));
+        Assert.All(next.Stubs.Where(stub => stub.Id != waitingId), stub => Assert.Contains(next.Series, entry => entry.Id == stub.SeriesStubId));
         return plan;
     }
 
@@ -479,7 +487,7 @@ public class SplitSeriesStubPlannerTests
         waiting = waiting with { RelativePath = waiting.RelativePath.Replace(Path.Combine("Serie", "Show (2020)"), "Serie", StringComparison.Ordinal) };
         var old = first with { Stubs = first.Stubs.Select(stub => stub.Id == waiting.Id ? waiting : stub).ToList() };
 
-        var next = Sync(old, series, [Episode("s1", 1)]);
+        var next = Checked(Unchecked(false, old, series, [Episode("s1", 1)]), waiting.Id).State;
 
         var kept = Assert.Single(next.Stubs, stub => stub.Id == waiting.Id);
         Assert.Equal(waiting.RelativePath, kept.RelativePath);

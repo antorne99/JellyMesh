@@ -31,6 +31,7 @@ public class PeerGuardFilterTests
     public PeerGuardFilterTests()
     {
         _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer, _fixture.Database.Object);
+        _fixture.WithAudioLibraries();
     }
 
     private static string Route(Guid id) => id.ToString("N");
@@ -1037,7 +1038,7 @@ public class PeerGuardFilterTests
     public async Task An_audiobook_read_holds_the_slot_of_its_device()
     {
         var book = Guid.Parse("61000000-0000-0000-0000-000000000000");
-        _fixture.AddItem(book, new MediaBrowser.Controller.Entities.AudioBook { Path = "/media/music/book.m4b" }, ProviderFixture.SharedLibrary);
+        _fixture.AddItem(book, new MediaBrowser.Controller.Entities.AudioBook { Path = "/media/books/book.m4b" }, ProviderFixture.SharedBooks);
 
         Assert.True(await FileAsync(DeviceOne, book));
         Assert.True(await FileAsync(DeviceOne, book));

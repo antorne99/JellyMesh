@@ -63,7 +63,10 @@ public class PeerVersionGuardTests
         { "GET", "DynamicHls", "GetHlsVideoSegment" },
         { "GET", "Subtitle", "GetSubtitle" },
         { "GET", "Subtitle", "GetSubtitleWithTicks" },
-        { "GET", "Subtitle", "GetSubtitlePlaylist" }
+        { "GET", "Subtitle", "GetSubtitlePlaylist" },
+        { "GET", "Library", "GetFile" },
+        { "GET", "Library", "GetDownload" },
+        { "GET", "Audio", "GetAudioStream" }
     };
 
     public static TheoryData<string> Hidden => new(_hidden);
@@ -235,10 +238,7 @@ public class PeerVersionGuardTests
     [InlineData("VideoAttachments", "GetAttachment")]
     [InlineData("Trickplay", "GetTrickplayTileImage")]
     [InlineData("Trickplay", "GetTrickplayHlsPlaylist")]
-    [InlineData("Library", "GetFile")]
-    [InlineData("Library", "GetDownload")]
     [InlineData("HlsSegment", "GetHlsVideoSegmentLegacy")]
-    [InlineData("Audio", "GetAudioStream")]
     public async Task A_route_closed_to_a_peer_stays_closed_whatever_version_it_names(string controller, string action)
     {
         foreach (var id in new[] { ProviderFixture.StubItem, _version })
