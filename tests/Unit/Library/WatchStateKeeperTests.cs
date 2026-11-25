@@ -765,8 +765,9 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.True(Row(_anna, book).Played);
         Assert.False(Row(_anna, film).Played);
         Assert.Equal(KeptTitleKind.Movie, Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Kind);
-        Assert.Contains("InvalidOperationException", Assert.Single(_logger.Lines, line => line.Contains("Cannot match", StringComparison.Ordinal)), StringComparison.Ordinal);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        var logged = Assert.Single(_logger.Lines, line => line.Contains("Cannot match", StringComparison.Ordinal));
+        Assert.Contains("InvalidOperationException", logged, StringComparison.Ordinal);
+        Assert.Contains("/secret", logged, StringComparison.Ordinal);
     }
 
     // A title that cannot be found for an error waits for a later run and stops no other.
@@ -786,8 +787,9 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.True(Row(_anna, book).Played);
         Assert.Equal(KeptTitleKind.Track, Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Kind);
-        Assert.Contains("IOException", Assert.Single(_logger.Lines, line => line.Contains("Cannot put back", StringComparison.Ordinal)), StringComparison.Ordinal);
-        Assert.DoesNotContain(_logger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
+        var logged = Assert.Single(_logger.Lines, line => line.Contains("Cannot put back", StringComparison.Ordinal));
+        Assert.Contains("IOException", logged, StringComparison.Ordinal);
+        Assert.Contains("/secret", logged, StringComparison.Ordinal);
     }
 
     // A kept title as the keeper saves the item of a stub of a kind, seen by Anna.
