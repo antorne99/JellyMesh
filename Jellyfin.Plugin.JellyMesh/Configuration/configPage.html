@@ -3107,8 +3107,12 @@
 
                 // Tells whether a failed rename resumes only after the folder migration, or while it cannot be read (row 567).
                 function resumeWaits(state) {
-                    var layout = statusSection.data ? statusSection.data.OlderLayoutInUse : null;
-                    return !!state.Failed && !state.Busy && layout !== false;
+                    return !!state.Failed && !state.Busy && migrationUnended();
+                }
+
+                // Tells whether the folder migration has not ended, or whether that cannot be read yet (rows 566, 567).
+                function migrationUnended() {
+                    return (statusSection.data ? statusSection.data.OlderLayoutInUse : null) !== false;
                 }
 
                 // Adds a Jellyfin input with its label and an optional description to a grid, and returns the input.
@@ -3665,7 +3669,10 @@
                         var ownNames = ownCurrent.Libraries.map(function (library) {
                             return library.Adopted ? t('{library} (adopted)', { library: library.Name }) : library.Name;
                         }).join(', ');
-                        var ownError = ownErrors[ownCurrent.Error] || '';
+                        // A library rename that failed resumes only after the folder migration, so the text says so (row 567).
+                        var ownError = ownCurrent.Error === 'RenameFailed' && migrationUnended()
+                            ? t('The rename did not finish. It resumes after the folder migration ends: save the edit of this server with the same name then.')
+                            : ownErrors[ownCurrent.Error] || '';
                         setText(own, ownCurrent.Busy ? t('Being updated') : ((ownNames || t('None')) + (ownError ? ' ' + ownError : '')));
                         renderOwnNotes(ownNotes, ownCurrent, function () {
                             // The saved mode, read again, sent alone makes the missing libraries again; with no name it

@@ -223,6 +223,17 @@ public class PageTranslationsTests
         Assert.DoesNotContain("RecognizedAs", _script, StringComparison.Ordinal);
     }
 
+    // Row 567: while the folder migration has not ended, a library rename that failed says it resumes after it.
+    [Fact]
+    public void A_failed_library_rename_says_it_resumes_after_the_folder_migration()
+    {
+        const string Text = "The rename did not finish. It resumes after the folder migration ends: save the edit of this server with the same name then.";
+
+        Assert.Contains("ownCurrent.Error === 'RenameFailed' && migrationUnended()\n                            ? t('" + Text + "')", _script, StringComparison.Ordinal);
+        Assert.Contains("(statusSection.data ? statusSection.data.OlderLayoutInUse : null) !== false", _script, StringComparison.Ordinal);
+        Assert.Contains("migrazione delle cartelle", _languages["it"][Text], StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(@"create\('[a-z0-9]+', '[A-Z]")]
     [InlineData(@"\bbutton\('")]
