@@ -34,6 +34,16 @@ public sealed class PlaybackRefusal
     /// </summary>
     public const string FailedText = "Riproduzione non disponibile al momento. Riprova più tardi.";
 
+    /// <summary>
+    /// The body of the 503 on <c>Download</c> and <c>File</c> of a book placeholder whose remote file is out of reach (931).
+    /// </summary>
+    public const string FileOfflineText = "File non disponibile: il server di origine non è raggiungibile. Riprova più tardi.";
+
+    /// <summary>
+    /// The body of the refusal of a PlaybackInfo, stream or segment of a book placeholder, which is opened and never played (D63).
+    /// </summary>
+    public const string BookText = "Un libro non si riproduce: aprilo o scaricalo dalla sua pagina.";
+
     private const string Header = "JellyMesh";
     private const string ToastMilliseconds = "8000";
 
@@ -84,6 +94,20 @@ public sealed class PlaybackRefusal
 
         context.Response.OnCompleted(() => NotifyAsync(deviceId, text));
         return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    /// <summary>
+    /// Builds the refusal of a playback of a book, with its text in the body, and schedules the message for after the response.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <param name="deviceId">The device of the caller.</param>
+    /// <returns>The result.</returns>
+    public ActionResult RefuseBook(HttpContext context, string deviceId)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        context.Response.OnCompleted(() => NotifyAsync(deviceId, BookText));
+        return new ContentResult { StatusCode = StatusCodes.Status400BadRequest, Content = BookText, ContentType = "text/plain; charset=utf-8" };
     }
 
     private async Task NotifyAsync(string deviceId, string text)

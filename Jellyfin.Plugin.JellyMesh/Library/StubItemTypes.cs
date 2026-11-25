@@ -21,6 +21,7 @@ public static class StubItemTypes
         StubKind.Track => typeof(Audio),
         StubKind.MusicVideo => typeof(MusicVideo),
         StubKind.HomeVideo => typeof(Video),
+        StubKind.Book => typeof(Book),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
     };
 }

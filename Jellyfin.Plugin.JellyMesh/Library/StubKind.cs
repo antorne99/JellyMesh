@@ -18,5 +18,8 @@ public enum StubKind
     MusicVideo,
 
     /// <summary>A home video, in the folders of its remote library.</summary>
-    HomeVideo
+    HomeVideo,
+
+    /// <summary>An ebook, PDF or comic: a placeholder with the real extension instead of a <c>.strm</c> (D47).</summary>
+    Book
 }

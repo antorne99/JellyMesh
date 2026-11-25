@@ -30,9 +30,9 @@ public class FederatedLayoutTests
     }
 
     [Fact]
-    public void FilmsSeriesMusicMusicVideosAndHomeVideosAreWritten()
+    public void FilmsSeriesMusicMusicVideosHomeVideosAndBooksAreWritten()
     {
-        Assert.Equal([TypeFolder.Movies, TypeFolder.Series, TypeFolder.Music, TypeFolder.MusicVideos, TypeFolder.HomeVideos], TypeFolder.Written);
+        Assert.Equal([TypeFolder.Movies, TypeFolder.Series, TypeFolder.Music, TypeFolder.MusicVideos, TypeFolder.HomeVideos, TypeFolder.Books], TypeFolder.Written);
     }
 
     [Fact]

@@ -210,7 +210,7 @@ public sealed class StubLookup
         {
             Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
             Audio audio => IsStrmInFolder(audio.Path),
-            _ => false
+            var item => IsPlaceholder(item)
         };
     }
 
@@ -222,15 +222,25 @@ public sealed class StubLookup
     public bool IsAudioStub(Guid itemId) => _libraryManager.GetItemById(itemId) is Audio audio && IsStrmInFolder(audio.Path);
 
     /// <summary>
+    /// Tells whether an item is a placeholder: a book of the federated folder, which has no URL and is a stub by its path.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a placeholder, even one the registry does not know.</returns>
+    public bool IsPlaceholder(Guid itemId) => IsPlaceholder(_libraryManager.GetItemById(itemId));
+
+    /// <summary>
     /// Finds the stub of an item.
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>The stub, null for anything else.</returns>
     public StubEntry? Find(Guid itemId)
     {
-        return _libraryManager.GetItemById(itemId) is Video video && PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId)
-            ? _stubs.Find(stubId)
-            : null;
+        return _libraryManager.GetItemById(itemId) switch
+        {
+            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) ? _stubs.Find(stubId) : null,
+            var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
+            _ => null
+        };
     }
 
     /// <summary>
@@ -243,9 +253,11 @@ public sealed class StubLookup
     public StubEntry? Resolve(Guid itemId, out bool isUnknown)
     {
         isUnknown = false;
-        if (_libraryManager.GetItemById(itemId) is not Video video)
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is not Video video)
         {
-            return null;
+            // A book placeholder by its path (D63); no other item that is not a video is a stub here.
+            return PlaceholderPath(item) is { } path ? _stubs.FindByPath(path) : null;
         }
 
         // Before the search: a registry read in between would otherwise count as one that does not hold the stub.
@@ -257,8 +269,8 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Finds the stub of an item for its file and its visibility: a video stub, or an audio stub by its path, which
-    /// playback does not reach until the audio routes exist (F56).
+    /// Finds the stub of an item for its file and its visibility: a video stub, or an audio stub or book placeholder by its
+    /// path, which playback does not reach (F56).
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>The stub, null for anything else.</returns>
@@ -268,6 +280,7 @@ public sealed class StubLookup
         {
             Video video when PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) => _stubs.Find(stubId),
             Audio audio when PathInFolder(audio.Path) is { } path => _stubs.FindByPath(path),
+            var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
             _ => null
         };
     }
@@ -336,6 +349,19 @@ public sealed class StubLookup
         }
 
         return false;
+    }
+
+    private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
+
+    // The path of a book in the federated folder, also through an alias of it, spelled under the folder; else null.
+    private string? PlaceholderPath(BaseItem? item)
+    {
+        if (item is not Book { Path: { Length: > 0 } path } || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
+        {
+            return null;
+        }
+
+        return FederatedPaths.IsInside(root, path) ? path : RealPath.Rebase(root, path);
     }
 
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;

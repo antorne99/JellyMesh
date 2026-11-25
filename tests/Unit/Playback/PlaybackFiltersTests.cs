@@ -90,9 +90,9 @@ public partial class PlaybackFiltersTests
         _library.Setup(library => library.GetItemById<BaseItem>(_itemId, _user)).Returns(new Movie());
     }
 
-    private PlaybackInfoFilter InfoFilter(InMemoryConfigurationStore? settings = null)
+    private PlaybackInfoFilter InfoFilter(InMemoryConfigurationStore? store = null)
     {
-        var store = settings ?? new InMemoryConfigurationStore();
+        store ??= new InMemoryConfigurationStore();
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         _offer = new SegmentOffer(_segmentManager.Object, Segments(lookup, store), lookup, _fixture.Sessions);
         return new PlaybackInfoFilter(
@@ -2046,6 +2046,221 @@ public partial class PlaybackFiltersTests
         _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/music/01 - Song.flac" });
 
         Assert.True(await RunAsync(GuardFilter(store: store), Context("Audio", "GetAudioStream", ("itemId", _itemId))));
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
+    private const string BookPath = "/federata/server/Libri/Dune (1965)/Dune (1965).epub";
+
+    // A book placeholder of the federated folder, its stub found by its path, as a book has no URL to name it.
+    private InMemoryConfigurationStore BookPlaceholder(bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Path = BookPath });
+        _stubs.Setup(stubs => stubs.FindByPath(BookPath)).Returns(known ? _stub with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965).epub" } : null);
+        return store;
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_book_comes_from_the_remote_file_with_its_range_and_never_from_the_placeholder(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        RemoteStreamRequest? asked = null;
+        var serve = _fixture.Client.Open;
+        _fixture.Client.Open = (request, token) =>
+        {
+            asked = request;
+            return serve(request, token);
+        };
+        var context = FileRequest(action, "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("/Items/remote-item/File", Assert.Single(_fixture.Client.Opened));
+        Assert.Equal("bytes=0-4", asked?.Range);
+    }
+
+    // The type comes from the format of the placeholder, never from the remote, which says video/x-matroska here.
+    [Theory]
+    [InlineData("GetFile", "epub", "application/epub+zip")]
+    [InlineData("GetDownload", "epub", "application/epub+zip")]
+    [InlineData("GetFile", "pdf", "application/pdf")]
+    [InlineData("GetFile", "cbz", "application/vnd.comicbook+zip")]
+    [InlineData("GetFile", "cbr", "application/vnd.comicbook-rar")]
+    [InlineData("GetFile", "cb7", "application/x-cb7")]
+    [InlineData("GetFile", "cbt", "application/x-cbt")]
+    [InlineData("GetFile", "mobi", "application/x-mobipocket-ebook")]
+    [InlineData("GetFile", "azw", "application/vnd.amazon.ebook")]
+    [InlineData("GetFile", "azw3", "application/vnd.amazon.ebook")]
+    [InlineData("GetFile", "html", "application/octet-stream")]
+    public async Task A_book_goes_with_the_media_type_of_its_format(string action, string extension, string mediaType)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = BookPlaceholder();
+        _stubs.Setup(stubs => stubs.FindByPath(BookPath)).Returns(_stub with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965)." + extension });
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(mediaType, context.HttpContext.Response.ContentType);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_book_is_an_attachment_with_its_local_name_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = BookPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        var disposition = download.HttpContext.Response.Headers.ContentDisposition.ToString();
+        Assert.StartsWith("attachment", disposition, StringComparison.Ordinal);
+        Assert.Contains("Dune (1965).epub", disposition, StringComparison.Ordinal);
+        Assert.Equal("nosniff", download.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(file.HttpContext.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("nosniff", file.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+    }
+
+    // D63: a book is never played, so its PlaybackInfo is refused here and no remote is called.
+    [Fact]
+    public async Task PlaybackInfo_of_a_book_is_refused_here_with_a_text_and_reaches_no_remote()
+    {
+        CanSeeItem();
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(BookPlaceholder()), context));
+
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.BookText, result.Content);
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_book_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(BookPlaceholder()), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("Audio", "GetAudioStream")]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("MediaSegments", "GetItemSegments")]
+    public async Task A_stream_or_segment_of_a_book_is_refused_here_with_a_text(string controller, string action)
+    {
+        CanSeeItem();
+        var context = Context(controller, action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.BookText, result.Content);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_stream_of_a_book_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_book_needs_the_download_permission_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes();
+        var store = BookPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(download.Result).StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(file));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_book_the_user_cannot_see_is_not_found(string action)
+    {
+        MayDownload(true);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    // Jellyfin shows an item in no library to everyone, so a book the user sees only that way is not found (D17).
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_visible_book_in_no_library_is_not_found(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Theory]
+    [InlineData("GetFile", true)]
+    [InlineData("GetDownload", true)]
+    [InlineData("GetFile", false)]
+    public async Task A_book_whose_remote_is_offline_is_a_503_that_says_so(string action, bool known)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable));
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder(known)), context));
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.FileOfflineText, result.Content);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_book_outside_the_federated_folder_stays_with_stock()
+    {
+        var store = BookPlaceholder();
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Path = "/media/Libri/Dune.epub" });
+
         Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
     }
 

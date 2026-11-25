@@ -279,6 +279,13 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
+            // A book is opened, never played: no stream or segment of it reaches stock or a remote (D63).
+            if (stubs.Values.Any(stub => stub?.Kind == StubKind.Book))
+            {
+                context.Result = _refusal.RefuseBook(context.HttpContext, authorization.DeviceId ?? string.Empty);
+                return;
+            }
+
             foreach (var playSessionId in named)
             {
                 _sessions.UseLocal(user.Id, playSessionId);
@@ -345,7 +352,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     }
 
     // Serves Download and File of a stub from its remote file, as a static stream of the stub reads it. File wants a user who
-    // sees the stub, Download also the download permission, as on stock; no source or no room for the user is a bare 503.
+    // sees the stub, Download also the download permission (D12); no source or no room for the user is a 503, with a text for
+    // a book placeholder (931).
     private async Task<IActionResult> FileResultAsync(ActionExecutingContext context, string action, Guid itemId)
     {
         var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
@@ -370,7 +378,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (_stubs.FindFile(itemId) is not { } stub)
         {
             _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
-            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+            return Unavailable(itemId);
         }
 
         // Before a place is taken, which could close an older session of the user.
@@ -396,17 +404,24 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             _logger.LogWarning("{Action} of stub {StubId}: no source opened its file", action, stub.Id);
             return _coordinator.TakeFileRefusal(stub.Id)
                 ? _refusal.Refuse(http, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText)
-                : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+                : Unavailable(itemId);
+        }
+
+        // A book goes with the type of its format, never the remote's (D62), and as a file with its local name on Download.
+        var mediaType = stub.Kind == StubKind.Book ? BookPlaceholders.MediaTypeOf(stub.RelativePath) : null;
+        if (stub.Kind == StubKind.Book)
+        {
+            http.Response.Headers.XContentTypeOptions = "nosniff";
         }
 
         if (action == DownloadAction)
         {
             var disposition = new ContentDispositionHeaderValue("attachment");
-            disposition.SetHttpFileName(DownloadName(stub.RelativePath, opened.Headers.ContentType));
+            disposition.SetHttpFileName(stub.Kind == StubKind.Book ? Path.GetFileName(stub.RelativePath) : DownloadName(stub.RelativePath, opened.Headers.ContentType));
             http.Response.Headers.ContentDisposition = disposition.ToString();
         }
 
-        var relayed = await StreamRelay.RelayAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
+        var relayed = await StreamRelay.RelayAsync(opened, http, _coordinator.StallLimit, http.RequestAborted, mediaType: mediaType).ConfigureAwait(false);
         if (relayed.IsAbnormal)
         {
             _logger.LogInformation("{Action} of stub {StubId} broke off: {End} after {Bytes} bytes in {Elapsed}", action, stub.Id, relayed.End, relayed.Bytes, relayed.Elapsed);
@@ -434,6 +449,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return tracks.TrueForAll(id => _stubs.Sees(user, id))
             ? new StatusCodeResult(StatusCodes.Status503ServiceUnavailable)
             : new StatusCodeResult(StatusCodes.Status404NotFound);
+    }
+
+    // A 503, with a text for a book placeholder, whose readers show it.
+    private IActionResult Unavailable(Guid itemId)
+    {
+        return _stubs.IsPlaceholder(itemId)
+            ? new ContentResult { StatusCode = StatusCodes.Status503ServiceUnavailable, Content = PlaybackRefusal.FileOfflineText, ContentType = "text/plain; charset=utf-8" }
+            : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
     }
 
     // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.

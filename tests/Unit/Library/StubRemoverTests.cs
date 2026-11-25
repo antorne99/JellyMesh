@@ -65,6 +65,21 @@ public sealed class StubRemoverTests : IDisposable
     }
 
     [Fact]
+    public void ABookGoesWithItsFolderAndCover()
+    {
+        var path = Path.Combine(FederatedPaths.TypeFolderOf(Guid.NewGuid(), TestLibraries.Books, TypeFolder.Books), "Dune", "Dune.epub");
+        Write(path);
+        Write(Path.ChangeExtension(path, ".jpg"));
+        var book = new StubEntry { Id = "b", Kind = StubKind.Book, RelativePath = path, IdentityKey = "b", Sources = [] };
+
+        var removal = _remover.RemoveAll(_root, new StubState { Stubs = [book] }, [book]);
+
+        Assert.Empty(removal.State.Stubs);
+        Assert.Equal(1, removal.Removed);
+        Assert.False(Directory.Exists(Path.Combine(_root, Path.GetDirectoryName(path)!)));
+    }
+
+    [Fact]
     public void ASeasonWithAnEpisodeLeftKeepsItsFolderAndTheSeries()
     {
         var series = Series("show", "Show (2020)");

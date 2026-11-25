@@ -132,6 +132,7 @@ public static partial class StubPlanner
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
         var tracks = new List<StubWork>();
         var videoWorks = new List<StubWork>();
+        var books = new List<StubWork>();
 
         // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
         var legacy = input.KeepsOlderLayout;
@@ -139,7 +140,8 @@ public static partial class StubPlanner
         foreach (var server in input.Servers)
         {
             var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Track && !IsVideoKind(stub.Kind) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book) && !IsVideoKind(stub.Kind) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var ownBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Book).ToList();
             var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsVideoKind(stub.Kind)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
@@ -200,11 +202,13 @@ public static partial class StubPlanner
             {
                 videoWorks.AddRange(VideoWorks(input, catalog, server, label, ownVideos, claimed, unplaceable));
             }
+
+            books.AddRange(BookWorks(input, server.Id, ownBooks, legacy, claimed, unplaceable));
         }
 
         works.AddRange(tracks);
         works.AddRange(videoWorks);
-
+        works.AddRange(books);
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)) && !claimed.Contains(stub.Id)).ToList();
 
@@ -1148,7 +1152,7 @@ public static partial class StubPlanner
             _rules = rules;
             foreach (var stub in stubs)
             {
-                _taken.Add(stub.Kind is StubKind.Movie or StubKind.MusicVideo ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
+                _taken.Add(stub.Kind is StubKind.Movie or StubKind.MusicVideo or StubKind.Book ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
                 if (stub.Kind == StubKind.Episode)
                 {
                     _taken.Add(SeriesFolderOf(stub));

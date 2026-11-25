@@ -43,11 +43,12 @@ public static class StreamRelay
     /// <param name="stallLimit">The longest the remote may send nothing.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="clock">The clock that times the client, the system clock if null.</param>
+    /// <param name="mediaType">The type this server gives the answer in place of the remote's, if any.</param>
     /// <returns>Whether the remote stopped sending, by breaking or going silent: not the client, nor the end, nor a break
     /// soon after a pause of the client (row 273).</returns>
-    public static async Task<bool> CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null)
+    public static async Task<bool> CopyAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null, string? mediaType = null)
     {
-        return (await RelayAsync(stream, context, stallLimit, cancellationToken, clock).ConfigureAwait(false)).CountsAsFailure;
+        return (await RelayAsync(stream, context, stallLimit, cancellationToken, clock, mediaType).ConfigureAwait(false)).CountsAsFailure;
     }
 
     /// <summary>
@@ -58,8 +59,9 @@ public static class StreamRelay
     /// <param name="stallLimit">The longest the remote may send nothing.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="clock">The clock that times the client, the system clock if null.</param>
+    /// <param name="mediaType">The type this server gives the answer in place of the remote's, if any.</param>
     /// <returns>How the copy ended.</returns>
-    public static async Task<RelayResult> RelayAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null)
+    public static async Task<RelayResult> RelayAsync(RemoteContent stream, HttpContext context, TimeSpan stallLimit, CancellationToken cancellationToken, TimeProvider? clock = null, string? mediaType = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(context);
@@ -67,7 +69,7 @@ public static class StreamRelay
         var response = context.Response;
         var headers = stream.Headers;
         response.StatusCode = (int)stream.Status;
-        response.ContentType = MediaTypeOf(headers.ContentType);
+        response.ContentType = mediaType ?? MediaTypeOf(headers.ContentType);
         response.ContentLength = headers.ContentLength;
         if (headers.ContentRange is { } range)
         {

@@ -88,7 +88,8 @@ public static class RemoteItemMapper
             : WithNewTypeFields(entry, item);
     }
 
-    // Adds the fields of music, home videos, photos and books.
+    // Adds the fields of music, home videos, photos and books. A book placeholder of another JellyMesh gets no
+    // extension, so it gets no placeholder here, and an incremental read replaces the entry (D62).
     private static IndexedItem WithNewTypeFields(IndexedItem entry, RemoteItem item) => entry with
     {
         ParentId = item.ParentId,
@@ -101,7 +102,7 @@ public static class RemoteItemMapper
         HasLyrics = item.HasLyrics,
         Extension = entry.Kind switch
         {
-            IndexedItemKind.Book => ExtensionOf(item.Path, _bookExtensions),
+            IndexedItemKind.Book => FederatedBookMark.IsPlaceholder(item.Path, item.ProviderIds?.Keys) ? null : ExtensionOf(item.Path, _bookExtensions),
             IndexedItemKind.Photo => ExtensionOf(item.Path, _photoExtensions),
             _ => null
         },

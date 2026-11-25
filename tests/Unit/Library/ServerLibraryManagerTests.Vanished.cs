@@ -46,6 +46,21 @@ public sealed partial class ServerLibraryManagerTests
         Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record.Name == "Casa - Film 4K");
     }
 
+    // Books are titles too: a placeholder left in the folder of the remote library keeps its library.
+    [Fact]
+    public async Task The_library_of_a_vanished_remote_library_stays_while_its_books_are_there()
+    {
+        var fixture = await ByRemoteLibraryWithFilmsB();
+        Vanish(fixture, TestLibraries.FilmsB, "Film 4K");
+        HoldsFilms(fixture, _filmsFolder);
+        fixture.Stubs.Setup(stubs => stubs.TypeFoldersOf(_serverId, TypeFolder.Books)).Returns([FederatedPaths.TypeFolderOf(_serverId, TestLibraries.FilmsB, TypeFolder.Books)]);
+
+        await fixture.Manager.ReconcileAsync(CancellationToken.None);
+
+        Assert.Empty(fixture.Libraries.Removed);
+        Assert.Contains(fixture.Server.AutomaticLibraryRegistry, record => record.Name == "Casa - Film 4K");
+    }
+
     [Fact]
     public async Task While_the_registry_cannot_tell_where_the_titles_are_the_library_of_a_vanished_remote_library_stays()
     {
