@@ -9,7 +9,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MEDIA="$ROOT/media"
+# MEDIA writes elsewhere, such as the main checkout's media/ when run from a worktree.
+MEDIA="${MEDIA:-$ROOT/media}"
 SOURCES="$MEDIA/.sources"
 IMAGE="$(awk '/image:/ {print $2; exit}' "$ROOT/docker-compose.yml")"
 FONT=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
@@ -341,5 +342,312 @@ episodes remoto-standard "$S" 2026 1 7 8 "$ED" "$SD" h264 2000
 # E09-E10: a better single of E10, so each episode has its own source.
 episodes remoto-standard "$S" 2026 1 9 10 "$ED" "$SD" h264 2000
 episode remoto-jellymesh "$S" 2026 1 10 "$ED" "$HD" h264 4000
+
+# --- 0.7 content types (integration test 11; see README, "0.7 types") ---------
+# Tones and frames from ffmpeg; books, comics and EXIF from media-types.py.
+
+PY_IMAGE=mcr.microsoft.com/playwright/python:v1.48.0-noble
+SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+BITEXACT=(-fflags +bitexact -flags:v +bitexact -flags:a +bitexact)
+
+pymedia() {
+  docker run --rm --user "$(id -u):$(id -g)" -v "$MEDIA:/work" -v "$SCRIPTS:/scripts:ro" -w /work \
+    "$PY_IMAGE" python3 -I /scripts/media-types.py "$@"
+}
+
+tone_of() {
+  case $1 in locale) echo 659 ;; remoto-standard) echo 440 ;; remoto-jellymesh) echo 554 ;; esac
+}
+
+# Audio arguments for a format name, into the globals AUDIO_ARGS and AUDIO_RATE.
+audio_args() {
+  case $1 in
+    flac16) AUDIO_RATE=44100 AUDIO_ARGS=(-c:a flac -sample_fmt s16) ;;
+    flac24) AUDIO_RATE=96000 AUDIO_ARGS=(-c:a flac -sample_fmt s32 -bits_per_raw_sample 24) ;;
+    mp3-320) AUDIO_RATE=44100 AUDIO_ARGS=(-c:a libmp3lame -b:a 320k -write_id3v1 0) ;;
+    mp3-128) AUDIO_RATE=44100 AUDIO_ARGS=(-c:a libmp3lame -b:a 128k -write_id3v1 0) ;;
+    aac) AUDIO_RATE=44100 AUDIO_ARGS=(-c:a aac -b:a 96k -f mp4) ;;
+    *) echo "unknown audio format $1" >&2; exit 1 ;;
+  esac
+}
+
+# audio <output> <seconds> <Hz> <format> <chapters file, relative to media/, or ""> <tag>=<value>...
+audio() {
+  local out=$1 secs=$2 hz=$3 format=$4 chapters=$5 tags=() kv tmp
+  shift 5
+  [ -f "$MEDIA/$out" ] && return
+  echo "audio     $out"
+  mkdir -p "$MEDIA/$(dirname "$out")"
+  for kv in "$@"; do tags+=(-metadata "$kv"); done
+  audio_args "$format"
+  local inputs=(-f lavfi -i "aevalsrc=0.2*sin(2*PI*$hz*t)|0.2*sin(3*PI*$hz*t):s=$AUDIO_RATE:d=$secs")
+  local maps=(-map 0:a -map_metadata -1)
+  if [ -n "$chapters" ]; then
+    inputs+=(-i "/work/$chapters")
+    maps=(-map 0:a -map_metadata 1 -map_chapters 1)
+  fi
+  tmp="$(dirname "$out")/.tmp-$$.${out##*.}"
+  ffmpeg "${inputs[@]}" "${maps[@]}" "${AUDIO_ARGS[@]}" "${BITEXACT[@]}" "${tags[@]}" "/work/$tmp"
+  mv "$MEDIA/$tmp" "$MEDIA/$out"
+}
+
+# chapters <file, relative to media/> <seconds per chapter> <title>...: an ffmetadata file.
+chapters() {
+  local file=$1 secs=$2 start=0 title
+  shift 2
+  mkdir -p "$MEDIA/$(dirname "$file")"
+  printf ';FFMETADATA1\n' >"$MEDIA/$file"
+  for title in "$@"; do
+    printf '[CHAPTER]\nTIMEBASE=1/1000\nSTART=%d\nEND=%d\ntitle=%s\n' \
+      $((start * 1000)) $(((start + secs) * 1000)) "$title" >>"$MEDIA/$file"
+    start=$((start + secs))
+  done
+}
+
+# picture <output .jpg or .png> <source> <start s> <WxH> <label>: one frame of a film.
+picture() {
+  local out=$1 src=$2 start=$3 size=$4 label=$5 tmp
+  [ -f "$MEDIA/$out" ] && return
+  echo "picture   $out"
+  mkdir -p "$MEDIA/$(dirname "$out")"
+  tmp="$(dirname "$out")/.tmp-$$.${out##*.}"
+  ffmpeg -ss "$start" -i "/work/.sources/$src" -frames:v 1 -vf "$(video_filter "$size" h264 "$label")" \
+    -q:v 4 -map_metadata -1 "${BITEXACT[@]}" "/work/$tmp"
+  mv "$MEDIA/$tmp" "$MEDIA/$out"
+}
+
+# photo <output .jpg> <source> <start s> <WxH> <date YYYY:MM:DD HH:MM:SS> <model> [lat,lon,alt]
+# A picture with EXIF: camera, dates, exposure, and GPS when given.
+photo() {
+  local out=$1 src=$2 start=$3 size=$4 date=$5 model=$6 gps=${7:-}
+  [ -f "$MEDIA/$out" ] && return
+  local raw=".sources/photo-$$.jpg"
+  picture "$raw" "$src" "$start" "$size" "$(basename "$out")"
+  echo "exif      $out"
+  mkdir -p "$MEDIA/$(dirname "$out")"
+  pymedia exif "$raw" "$out" "description=JellyMesh test photo" make=JellyMesh "model=$model" \
+    "date=$date" ${gps:+"gps=$gps"}
+  rm -f "$MEDIA/$raw"
+}
+
+# clip <output> <source> <start s> <seconds> <WxH> <kbit/s> <label> [creation time]: an H.264 clip
+# without the source's tags, byte-identical on every run, dated when a creation time is given.
+clip() {
+  local out=$1 src=$2 start=$3 secs=$4 size=$5 rate=$6 label=$7 date=${8:-} tmp
+  [ -f "$MEDIA/$out" ] && return
+  echo "encode    $out"
+  mkdir -p "$MEDIA/$(dirname "$out")"
+  tmp="$(dirname "$out")/.tmp-$$.${out##*.}"
+  video_args h264 "$rate"
+  ffmpeg -ss "$start" -t "$secs" -i "/work/.sources/$src" -vf "$(video_filter "$size" h264 "$label")" \
+    -r 24 "${VIDEO_ARGS[@]}" -threads 1 -c:a aac -ac 2 -b:a 128k -map_metadata -1 "${BITEXACT[@]}" \
+    ${date:+-metadata "creation_time=$date"} "/work/$tmp"
+  mv "$MEDIA/$tmp" "$MEDIA/$out"
+}
+
+MB=99000000-0000-4000-8000
+ARTIST="JM Artista"
+
+# mb_tag <format> <Vorbis key> <ID3 description>: the tag name Picard writes for that format.
+mb_tag() {
+  case $1 in flac*) echo "$2" ;; *) echo "$3" ;; esac
+}
+
+# album_federato <server> <format> <ext>: three tracks with MusicBrainz IDs, the same on every server.
+album_federato() {
+  local server=$1 format=$2 ext=$3 n title hz dir
+  local album="JM Album Federato" titles=("Prima Traccia" "Seconda Traccia" "Terza Traccia")
+  dir="$server/musica/$ARTIST/$album (2026)"
+  for n in 1 2 3; do
+    title=${titles[$((n - 1))]}
+    hz=$(($(tone_of "$server") + 20 * n))
+    audio "$dir/0$n - $title.$ext" 20 "$hz" "$format" "" "title=$title" "artist=$ARTIST" \
+      "album_artist=$ARTIST" "album=$album" "track=$n/3" "disc=1/1" date=2026 genre=Test \
+      "$(mb_tag "$format" MUSICBRAINZ_TRACKID "MusicBrainz Track Id")=$MB-00000000030$n" \
+      "$(mb_tag "$format" MUSICBRAINZ_RELEASETRACKID "MusicBrainz Release Track Id")=$MB-00000000040$n" \
+      "$(mb_tag "$format" MUSICBRAINZ_ALBUMID "MusicBrainz Album Id")=$MB-000000000101" \
+      "$(mb_tag "$format" MUSICBRAINZ_RELEASEGROUPID "MusicBrainz Release Group Id")=$MB-000000000201" \
+      "$(mb_tag "$format" MUSICBRAINZ_ARTISTID "MusicBrainz Artist Id")=$MB-000000000001" \
+      "$(mb_tag "$format" MUSICBRAINZ_ALBUMARTISTID "MusicBrainz Album Artist Id")=$MB-000000000001"
+  done
+  picture "$dir/folder.jpg" "$ED" 400 500x500 "$server - $album"
+}
+
+# album_doppio <server> <format>: two discs of two FLAC tracks, in Disc folders, with MusicBrainz IDs.
+album_doppio() {
+  local server=$1 format=$2 disc n i title dir
+  local album="JM Album Doppio" titles=("Lato A Uno" "Lato A Due" "Lato B Uno" "Lato B Due")
+  dir="$server/musica/$ARTIST/$album (2025)"
+  for disc in 1 2; do
+    for n in 1 2; do
+      i=$(((disc - 1) * 2 + n))
+      title=${titles[$((i - 1))]}
+      audio "$dir/Disc $disc/0$n - $title.flac" 15 $(($(tone_of "$server") + 20 * i)) "$format" "" \
+        "title=$title" "artist=$ARTIST" "album_artist=$ARTIST" "album=$album" "track=$n/2" "disc=$disc/2" \
+        date=2025 genre=Test "MUSICBRAINZ_TRACKID=$MB-00000000031$i" "MUSICBRAINZ_RELEASETRACKID=$MB-00000000041$i" \
+        "MUSICBRAINZ_ALBUMID=$MB-000000000102" "MUSICBRAINZ_RELEASEGROUPID=$MB-000000000202" \
+        "MUSICBRAINZ_ARTISTID=$MB-000000000001" "MUSICBRAINZ_ALBUMARTISTID=$MB-000000000001"
+    done
+  done
+  picture "$dir/folder.jpg" "$ED" 420 500x500 "$server - $album"
+}
+
+# album_senza_id <server> <format> <first title> <seconds of track 2>: MP3s with no MusicBrainz IDs.
+album_senza_id() {
+  local server=$1 format=$2 first=$3 secs=$4 album="JM Album Senza ID" dir
+  dir="$server/musica/$ARTIST/$album (2024)"
+  audio "$dir/01 - $first.mp3" 25 $(($(tone_of "$server") + 20)) "$format" "" "title=$first" \
+    "artist=$ARTIST" "album_artist=$ARTIST" "album=$album" "track=1/2" "disc=1/1" date=2024 genre=Test
+  audio "$dir/02 - Canzone Senza ID.mp3" "$secs" $(($(tone_of "$server") + 40)) "$format" "" \
+    "title=Canzone Senza ID" "artist=$ARTIST" "album_artist=$ARTIST" "album=$album" "track=2/2" "disc=1/1" \
+    date=2024 genre=Test
+}
+
+# musicvideo <server> <WxH> <kbit/s>: one music video by the same artist, with a <musicvideo> .nfo.
+musicvideo() {
+  local server=$1 size=$2 rate=$3 name="JM Video Musicale (2026)" dir
+  dir="$server/videomusicali/$name"
+  mkdir -p "$MEDIA/$dir"
+  cat >"$MEDIA/$dir/$name.nfo" <<EOF
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<musicvideo>
+  <title>JM Video Musicale</title>
+  <artist>$ARTIST</artist>
+  <album>JM Album Federato</album>
+  <year>2026</year>
+  <plot>JellyMesh test music video.</plot>
+  <lockdata>false</lockdata>
+</musicvideo>
+EOF
+  clip "$dir/$name.mkv" "$SINTEL" 10 30 "$size" "$rate" "$server - music video ${size#*x}p ${rate}k"
+}
+
+# Music: one album as FLAC, MP3 and a local copy, a multi-disc album, an album without IDs.
+album_federato remoto-standard flac16 flac
+album_federato remoto-jellymesh mp3-320 mp3
+album_federato locale mp3-128 mp3
+album_doppio remoto-standard flac24
+album_doppio remoto-jellymesh flac16
+album_senza_id remoto-standard mp3-320 "L'Ultima Nota" 25
+album_senza_id remoto-jellymesh mp3-128 "Ultima Nota" 26
+
+cat >"$MEDIA/remoto-standard/musica/$ARTIST/JM Album Federato (2026)/01 - Prima Traccia.lrc" <<EOF
+[ti:Prima Traccia]
+[ar:$ARTIST]
+[al:JM Album Federato]
+[00:00.00]Prima riga del testo di prova
+[00:05.00]Seconda riga del testo di prova
+[00:10.00]Terza riga del testo di prova
+[00:15.00]Ultima riga del testo di prova
+EOF
+
+musicvideo remoto-standard "$SD" 2000
+musicvideo remoto-jellymesh "$HD" 4000
+
+# Home videos in nested folders, and photos with EXIF and GPS, EXIF only, or neither.
+HV=remoto-standard/videodomestici
+clip "$HV/2025/Estate/Spiaggia.mp4" "$TOS" 600 20 "$SD" 2000 Spiaggia.mp4 2025-07-14T10:00:00.000000Z
+clip "$HV/2025/Inverno/Neve.mkv" "$ED" 400 20 "$SD" 2000 Neve.mkv 2025-12-20T16:30:00.000000Z
+clip "$HV/2026/Compleanno.mp4" "$SINTEL" 20 20 "$SD" 2000 Compleanno.mp4 2026-03-02T19:00:00.000000Z
+photo "$HV/2025/Estate/Tramonto.jpg" "$TOS" 640 1600x900 "2025:07:14 20:45:00" "Test Camera GPS" 44.4056,8.9463,12
+photo "$HV/Album Vacanze 2025/IMG_0001.jpg" "$TOS" 700 1600x1200 "2025:08:10 18:30:00" "Test Camera GPS" 43.7731,11.2560,50
+photo "$HV/Album Vacanze 2025/IMG_0002.jpg" "$ED" 500 900x1200 "2025:08:11 09:15:00" "Test Camera"
+picture "$HV/Album Vacanze 2025/IMG_0003.jpg" "$SINTEL" 30 1600x900 "IMG_0003, no EXIF"
+picture "$HV/Album Vacanze 2025/IMG_0004.png" "$ED" 520 800x600 "IMG_0004, PNG, no EXIF"
+
+# books <server> full|short: EPUB and M4B audiobook; full adds PDF with .opf, CBZ and a
+# three-file audiobook, each book in its own folder.
+books() {
+  local server=$1 full=$2 dir n pages=()
+  dir="$server/libri/JM Libro Epub"
+  if [ ! -f "$MEDIA/$dir/JM Libro Epub.epub" ]; then
+    picture ".sources/epub-cover.jpg" "$TOS" 720 600x900 "JM Libro Epub"
+    mkdir -p "$MEDIA/$dir"
+    echo "epub      $dir/JM Libro Epub.epub"
+    pymedia epub "$dir/JM Libro Epub.epub" "JM Libro Epub" "JM Autrice" 9790000000014 2026-01-15 .sources/epub-cover.jpg
+  fi
+  chapters ".sources/chapters-single.txt" 30 "Capitolo 1" "Capitolo 2" "Capitolo 3"
+  audio "$server/libri/JM Audiolibro Capitoli/JM Audiolibro Capitoli.m4b" 90 "$(tone_of "$server")" aac \
+    .sources/chapters-single.txt "title=JM Audiolibro Capitoli" "album=JM Audiolibro Capitoli" "artist=JM Autrice" \
+    "album_artist=JM Autrice" "composer=JM Narratore" date=2026 genre=Audiolibro
+  [ "$full" = full ] || return 0
+
+  dir="$server/libri/JM Libro Pdf"
+  if [ ! -f "$MEDIA/$dir/JM Libro Pdf.pdf" ]; then
+    for n in 1 2 3 4 5 6 7 8; do
+      picture ".sources/pdf-$n.jpg" "$TOS" $((100 + n * 40)) 900x1272 "JM Libro Pdf, pagina $n"
+      pages+=(".sources/pdf-$n.jpg")
+    done
+    mkdir -p "$MEDIA/$dir"
+    echo "pdf       $dir/JM Libro Pdf.pdf"
+    pymedia pdf "$dir/JM Libro Pdf.pdf" "JM Libro Pdf" "JM Autrice" "${pages[@]}"
+  fi
+  cat >"$MEDIA/$dir/JM Libro Pdf.opf" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" xmlns:opf="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid" opf:scheme="ISBN">9790000000021</dc:identifier>
+    <dc:title>JM Libro Pdf</dc:title>
+    <dc:creator opf:role="aut">JM Autrice</dc:creator>
+    <dc:language>it</dc:language>
+    <dc:date>2026-02-01</dc:date>
+    <dc:publisher>JellyMesh Test</dc:publisher>
+    <dc:description>JellyMesh test PDF.</dc:description>
+  </metadata>
+</package>
+EOF
+
+  dir="$server/libri/JM Fumetto"
+  if [ ! -f "$MEDIA/$dir/JM Fumetto.cbz" ]; then
+    pages=()
+    for n in 1 2 3 4 5 6; do
+      picture ".sources/cbz-$n.jpg" "$SINTEL" $((n * 7)) 800x1200 "JM Fumetto, tavola $n"
+      pages+=(".sources/cbz-$n.jpg")
+    done
+    mkdir -p "$MEDIA/$dir"
+    echo "cbz       $dir/JM Fumetto.cbz"
+    pymedia cbz "$dir/JM Fumetto.cbz" "JM Fumetto" "JM Serie a Fumetti" 1 "JM Autrice" 2026 "${pages[@]}"
+  fi
+
+  chapters ".sources/chapters-part.txt" 20 "Inizio" "Fine"
+  for n in 1 2 3; do
+    audio "$server/libri/JM Audiolibro Parti/JM Audiolibro Parti - Parte $n.mp3" 40 $(($(tone_of "$server") + 30 * n)) \
+      mp3-128 .sources/chapters-part.txt "title=Parte $n" "album=JM Audiolibro Parti" "artist=JM Autrice" \
+      "album_artist=JM Autrice" "composer=JM Narratore" "track=$n/3" date=2026 genre=Audiolibro
+  done
+}
+books remoto-standard full
+books remoto-jellymesh short
+
+# Mixed library (no collection type): a film and a series of its own.
+MIX=remoto-standard/mista
+mkdir -p "$MEDIA/$MIX/JM Film Misto (2026)" "$MEDIA/$MIX/JM Serie Mista (2026)"
+cat >"$MEDIA/$MIX/JM Film Misto (2026)/movie.nfo" <<EOF
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>JM Film Misto</title>
+  <year>2026</year>
+  <plot>JellyMesh test clip in a mixed library.</plot>
+  <lockdata>false</lockdata>
+  <uniqueid type="tmdb" default="true">999000301</uniqueid>
+  <uniqueid type="imdb">tt99000301</uniqueid>
+</movie>
+EOF
+cat >"$MEDIA/$MIX/JM Serie Mista (2026)/tvshow.nfo" <<EOF
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<tvshow>
+  <title>JM Serie Mista</title>
+  <year>2026</year>
+  <plot>JellyMesh test series in a mixed library.</plot>
+  <uniqueid type="tmdb" default="true">999000401</uniqueid>
+  <uniqueid type="tvdb">999000402</uniqueid>
+  <uniqueid type="imdb">tt99000401</uniqueid>
+</tvshow>
+EOF
+clip "$MIX/JM Film Misto (2026)/JM Film Misto (2026).mkv" "$TOS" 620 30 "$SD" 2000 "remoto-standard - mixed film"
+for n in 1 2; do
+  clip "$MIX/JM Serie Mista (2026)/Season 01/JM Serie Mista S01E0$n.mkv" "$ED" $((450 + n * 30)) 20 "$SD" 2000 \
+    "remoto-standard - mixed S01E0$n"
+done
 
 echo "done: $(du -sh "$MEDIA" | cut -f1) in $MEDIA"
