@@ -28,6 +28,9 @@ public sealed class AudioStubRoutes
 
     private const int LockCount = 256;
 
+    // Longest play session id of a client kept for its stop report.
+    private const int MaxClientPlaySession = 128;
+
     // Longest wait for an opening of the same stripe; past it the client gets a clear error, not a hung request.
     private static readonly TimeSpan _lockWait = TimeSpan.FromSeconds(30);
 
@@ -106,6 +109,12 @@ public sealed class AudioStubRoutes
             return _refusal.Refuse(http, access.DeviceId, opened.Text);
         }
 
+        // A client that chose its own play session id reports the stop with it (row 561).
+        if (ClientPlaySessionOf(context) is { } chosen)
+        {
+            session.NameByClient(chosen);
+        }
+
         using var scope = session.TryBeginRequest(_clock, http.RequestAborted);
         if (scope is null)
         {
@@ -150,6 +159,15 @@ public sealed class AudioStubRoutes
         }
 
         return read.Value!.Lyrics is { } lyrics ? new OkObjectResult(lyrics) : new NotFoundResult();
+    }
+
+    // The play session id the client sent, if it chose one.
+    private static string? ClientPlaySessionOf(ActionExecutingContext context)
+    {
+        var value = context.ActionArguments.TryGetValue("playSessionId", out var argument) && argument is string bound
+            ? bound
+            : context.HttpContext.Request.Query["PlaySessionId"].ToString();
+        return string.IsNullOrEmpty(value) || value.Length > MaxClientPlaySession ? null : value;
     }
 
     // The type of a transcoded stream by its extension, an audio type only, since the extension comes from the remote.

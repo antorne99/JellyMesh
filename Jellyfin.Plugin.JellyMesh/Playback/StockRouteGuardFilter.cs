@@ -270,9 +270,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
-            if (action == StopEncodingAction && caller is { } owner && _sessions.Find(playSessionId) is { } session && session.Identity.UserId == owner)
+            if (action == StopEncodingAction && caller is { } owner)
             {
-                await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
+                foreach (var session in _sessions.FindReported(owner, playSessionId))
+                {
+                    await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
+                }
             }
 
             await next().ConfigureAwait(false);

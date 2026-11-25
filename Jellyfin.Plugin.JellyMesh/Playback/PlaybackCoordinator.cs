@@ -541,8 +541,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Ends a session reported as stopped, if the report comes from whoever opened it. Stock takes any play session from any
-    /// user, and the session of someone else is left alone.
+    /// Ends the sessions reported as stopped, named by their id or by the one their client chose (row 561), if the report
+    /// comes from whoever opened them. Stock takes any play session from any user, and the session of someone else is left alone.
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <param name="users">The users behind the report.</param>
@@ -551,7 +551,7 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(users);
 
-        if (_sessions.Find(sessionId) is { } session && users.Contains(session.Identity.UserId))
+        foreach (var session in users.Distinct().SelectMany(user => _sessions.FindReported(user, sessionId)).ToList())
         {
             await CloseAsync(session.Id).ConfigureAwait(false);
         }

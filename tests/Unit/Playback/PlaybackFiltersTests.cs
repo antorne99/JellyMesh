@@ -2401,6 +2401,22 @@ public partial class PlaybackFiltersTests
         HoldsNoRemoteValue(playlist);
     }
 
+    // Row 561: Finamp names the play session itself, and stops the encoding with that name.
+    [Fact]
+    public async Task Stopping_the_play_session_finamp_chose_closes_its_track_session()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, FinampVariant()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Equal("finamp-play", session.ClientPlaySessionId);
+
+        Assert.True(await RunAsync(guard, Context("HlsSegment", "StopEncodingProcess", ("playSessionId", "finamp-play"))));
+
+        Assert.Null(_fixture.Sessions.Find(session.Id));
+    }
+
     // A rooted variant would leave the folder of the session.
     [Fact]
     public async Task Main_playlist_of_a_master_with_a_rooted_variant_is_a_bad_gateway()

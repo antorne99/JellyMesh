@@ -38,6 +38,7 @@ public sealed partial class PlaybackSession
     private int _abandoned;
     private int _failed;
     private int _closedAfterFailure;
+    private string? _clientPlaySessionId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSession"/> class.
@@ -74,6 +75,9 @@ public sealed partial class PlaybackSession
 
     /// <summary>Gets the play session on the remote. Never sent to a client.</summary>
     public string? RemotePlaySessionId { get; }
+
+    /// <summary>Gets the play session id the client chose for this stream, as Finamp does, null if none. Never sent to a remote.</summary>
+    public string? ClientPlaySessionId => Volatile.Read(ref _clientPlaySessionId);
 
     /// <summary>Gets how the stream reaches the client.</summary>
     public PlaybackStreamKind Kind { get; }
@@ -150,6 +154,13 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
     public bool TryPark() => Interlocked.Exchange(ref _parked, 1) == 0;
+
+    /// <summary>
+    /// Records the play session id the client chose for this stream, so that its stop report closes it (row 561). The first
+    /// one stays.
+    /// </summary>
+    /// <param name="playSessionId">The id the client sent.</param>
+    public void NameByClient(string playSessionId) => Interlocked.CompareExchange(ref _clientPlaySessionId, playSessionId, null);
 
     /// <summary>
     /// Marks the source of this session as stopped, once: the retries of a player count as one failure.

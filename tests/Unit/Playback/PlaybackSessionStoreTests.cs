@@ -107,4 +107,38 @@ public class PlaybackSessionStoreTests
         Assert.Equal(["local-play"], sessions.LocalSessionsOfOthers(_other));
         Assert.Empty(sessions.LocalSessionsOfOthers(_owner));
     }
+
+    // Row 561: Finamp names the play session itself, and reports the stop with that name.
+    [Fact]
+    public void A_stop_report_finds_the_sessions_its_user_named_and_leaves_the_others()
+    {
+        var sessions = new PlaybackSessionStore();
+        var named = PlaybackValues.Session();
+        var next = PlaybackValues.Session();
+        var ofAnother = new PlaybackSession(PlaybackValues.Identity() with { UserId = _other }, PlaybackValues.Source(), null, PlaybackStreamKind.Hls, "/m", DateTimeOffset.UtcNow);
+        named.NameByClient("finamp-play");
+        next.NameByClient("finamp-next");
+        ofAnother.NameByClient("finamp-play");
+        sessions.Add(named);
+        sessions.Add(next);
+        sessions.Add(ofAnother);
+        var owner = named.Identity.UserId;
+
+        Assert.Same(named, Assert.Single(sessions.FindReported(owner, "finamp-play")));
+        Assert.Same(named, Assert.Single(sessions.FindReported(owner, named.Id)));
+        Assert.Same(ofAnother, Assert.Single(sessions.FindReported(_other, "finamp-play")));
+        Assert.Empty(sessions.FindReported(_other, named.Id));
+        Assert.Empty(sessions.FindReported(owner, null));
+    }
+
+    [Fact]
+    public void A_session_keeps_the_first_name_its_client_chose()
+    {
+        var session = PlaybackValues.Session();
+
+        session.NameByClient("first");
+        session.NameByClient("second");
+
+        Assert.Equal("first", session.ClientPlaySessionId);
+    }
 }

@@ -192,6 +192,23 @@ public class PlaybackCoordinatorTests
         Assert.Single(fixture.Client.Stopped);
     }
 
+    // Row 561: a client that chose its own play session id reports the stop with it.
+    [Fact]
+    public async Task A_stopped_report_with_the_id_its_client_chose_closes_the_session_of_its_user_only()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+        session.NameByClient("finamp-play");
+
+        await fixture.Coordinator.CloseReportedAsync("finamp-play", [Guid.NewGuid()]);
+        Assert.NotNull(fixture.Sessions.Find(session.Id));
+
+        await fixture.Coordinator.CloseReportedAsync("finamp-play", [session.Identity.UserId]);
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Single(fixture.Client.Stopped);
+    }
+
     [Fact]
     public async Task A_stopped_report_of_another_user_leaves_the_session()
     {
