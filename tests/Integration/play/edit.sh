@@ -41,12 +41,17 @@ device_users() {
   remote_db "select u.Username from Devices d join Users u on u.Id = d.UserId where d.DeviceId = 'jellymesh-${1//-/}' order by u.Username;" | paste -sd, -
 }
 token_works() { curl -s -o /dev/null -w '%{http_code}' -H "Authorization: MediaBrowser Token=\"$1\"" "http://127.0.0.1:$(port_of remote)/System/Info"; }
-clean_log() { # clean_log <since> <token>...: the plugin's log holds no token and no remote address
-  local log t
+# clean_log <since> <token>...: the log holds no token, and a remote address only in the whole error of a plugin warning or
+# error (row 550); the activity log holds no remote address.
+clean_log() {
+  local log t address="host\.docker\.internal|$REMOTE_IP|:$(port_of remote)|:$(port_of other)"
   log=$(docker logs --since "$1" "$PREFIX-local" 2>&1)
   shift
   for t in "$@"; do check "the log holds no token" 0 "$(grep -cF "$t" <<<"$log" || true)"; done
-  check "the log holds no remote address" 0 "$(grep -cE "host\.docker\.internal|$REMOTE_IP|:$(port_of remote)|:$(port_of other)" <<<"$log" || true)"
+  check "the log has a remote address only in the errors of the plugin" 0 "$(A=$address awk '
+    /^\[/ { error = ($0 ~ /\] \[(WRN|ERR)\] \[[0-9]+\] Jellyfin\.Plugin\.JellyMesh\./) }
+    $0 ~ ENVIRON["A"] && !error { n++ } END { print n + 0 }' <<<"$log")"
+  check "the activity log holds no remote address" 0 "$(get local "/System/ActivityLog/Entries?minDate=$1" | grep -cE "$address" || true)"
 }
 log_line() { docker logs --since "$1" "$PREFIX-local" 2>&1 | { grep -iF "$2" || true; } | tail -1 | sed -E 's/^.*\] //'; }
 # edit <method> <path> <name> <url> <user> [password] [library ids json]: the form, as the page sends it. Prints the body.
