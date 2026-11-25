@@ -606,7 +606,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         var (folders, items) = await ApartAsync(kind);
         var stubs = _fixture.Registry.State.Stubs.Where(stub => stub.Kind == kind).ToList();
         Watch(_anna, items[stubs[0].Id]);
-        Resume(_bruno, items[stubs[1].Id], 9_000_000_000);
+        Resume(_bruno, items[stubs[1].Id], 900_000_000);
         folders.Join();
 
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
@@ -614,7 +614,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         var left = items[Assert.Single(_fixture.Registry.State.Stubs, stub => stub.Kind == kind).Id];
         Assert.True(Row(_anna, left).Played);
-        Assert.Equal(9_000_000_000, Row(_bruno, left).PlaybackPositionTicks);
+        Assert.Equal(900_000_000, Row(_bruno, left).PlaybackPositionTicks);
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
         Assert.Contains(_logger.Lines, line => line.Contains("titles joined to another copy", StringComparison.Ordinal));
     }
@@ -626,7 +626,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         var (folders, items) = await ApartAsync(StubKind.Track);
         var stubs = _fixture.Registry.State.Stubs.Where(stub => stub.Kind == StubKind.Track).ToList();
         Watch(_anna, items[stubs[0].Id]);
-        Resume(_bruno, items[stubs[1].Id], 9_000_000_000);
+        Resume(_bruno, items[stubs[1].Id], 900_000_000);
         folders.Join();
         _everyone = [];
 
@@ -642,7 +642,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         var left = items[Assert.Single(_fixture.Registry.State.Stubs, stub => stub.Kind == StubKind.Track).Id];
         Assert.True(Row(_anna, left).Played);
-        Assert.Equal(9_000_000_000, Row(_bruno, left).PlaybackPositionTicks);
+        Assert.Equal(900_000_000, Row(_bruno, left).PlaybackPositionTicks);
     }
 
     // One title of a kind as the same item in two remote libraries of one server, in two local libraries, with the

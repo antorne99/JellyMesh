@@ -23,8 +23,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// <see cref="IWatchStateKeeper"/> over the user data of Jellyfin and a <see cref="IKeptWatchStateStore"/>. The identity
-/// of a title is that of the dedup (plan §4.1), read from the library item of the old stub, since the index has dropped
-/// the removed server by the time its stubs go.
+/// of a title is that of the dedup (plan §4.1) or of the rule of its type, read from the library item of the old stub,
+/// since the index has dropped the removed server by the time its stubs go; a joined stub is read the same way.
 /// </summary>
 public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 {
