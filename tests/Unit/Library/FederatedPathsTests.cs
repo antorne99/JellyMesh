@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Xunit;
 
@@ -28,6 +30,28 @@ public class FederatedPathsTests
     public void AVeryLongTitleIsCut()
     {
         Assert.True(FederatedPaths.Sanitize(new string('x', 500)).Length <= 120);
+    }
+
+    [Theory]
+    [InlineData("x", 120)]
+    [InlineData("Ж", 60)]
+    [InlineData("漢", 40)]
+    public void AVeryLongTitleIsCutAtTheBytesAFileNameHolds(string character, int characters)
+    {
+        var title = string.Concat(Enumerable.Repeat(character, 500));
+
+        Assert.Equal(title[..characters], FederatedPaths.Sanitize(title));
+    }
+
+    [Fact]
+    public void TheFilesOfAVeryLongTitleFitInAFileName()
+    {
+        var title = new string('漢', 500);
+        var name = FederatedPaths.TitleFolder(title, 2020) + " [01234567]";
+        var label = Label(new string('x', 40));
+
+        Assert.InRange(Encoding.UTF8.GetByteCount(Path.GetFileName(FederatedPaths.MovieStub(_server, name, label))), 1, 255);
+        Assert.InRange(Encoding.UTF8.GetByteCount(Path.GetFileName(FederatedPaths.EpisodeStub("Serie", title, 1, 2, 3, label))) + "-thumb".Length, 1, 255);
     }
 
     [Theory]

@@ -858,6 +858,19 @@ public sealed class LibraryMaterializerTests : IDisposable
         Assert.Single(_fixture.Registry.State.Stubs);
     }
 
+    [Fact]
+    public async Task ATitleOfManyBytesIsWritten()
+    {
+        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m", new string('漢', 120), 2020, "1"));
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s") with { Name = new string('Ж', 120) });
+        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2));
+        await _fixture.Sync.AddServerAsync("A", "films", "shows");
+
+        await _fixture.SyncAndMaterializeAsync();
+
+        Assert.Equal(2, _fixture.Files.Count(file => file.EndsWith(".strm", StringComparison.Ordinal)));
+    }
+
     // Q326: a stub whose detach failed stays, with its file and registry entry, and the next round removes it.
     [Fact]
     public async Task AStubWhoseDetachFailedStaysUntilTheNextRound()

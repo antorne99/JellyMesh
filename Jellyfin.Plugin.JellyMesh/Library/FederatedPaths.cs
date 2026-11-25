@@ -17,7 +17,7 @@ public static partial class FederatedPaths
     /// <summary>The hidden file kept in <c>Film/</c> and <c>Serie/</c>. Without it, Jellyfin skips an empty path and keeps its items.</summary>
     public const string HiddenFileName = ".jellymesh";
 
-    private const int MaxNameLength = 120;
+    private const int MaxNameBytes = 120;
     private const int MaxLabelLength = 40;
     private const int GuidDigits = 8;
     private const string FallbackName = "Untitled";
@@ -51,11 +51,7 @@ public static partial class FederatedPaths
         }
 
         var name = WhiteSpace().Replace(builder.ToString(), " ").Trim('.', ' ');
-        if (name.Length > MaxNameLength)
-        {
-            name = name[..MaxNameLength].TrimEnd('.', ' ');
-        }
-
+        name = name[..LengthWithin(name, MaxNameBytes)].TrimEnd('.', ' ');
         return name.Length == 0 ? FallbackName : name;
     }
 
@@ -277,6 +273,22 @@ public static partial class FederatedPaths
         }
 
         return label.Length == 0 ? GuidStart(serverId) : label;
+    }
+
+    // Counts the characters from the start of a text that fit in a number of bytes, as file systems count a name.
+    private static int LengthWithin(string text, int maxBytes)
+    {
+        var bytes = 0;
+        for (var length = 0; length < text.Length; length++)
+        {
+            bytes += Encoding.UTF8.GetByteCount(text, length, 1);
+            if (bytes > maxBytes)
+            {
+                return length;
+            }
+        }
+
+        return text.Length;
     }
 
     private static bool IsUnsafe(char character)
