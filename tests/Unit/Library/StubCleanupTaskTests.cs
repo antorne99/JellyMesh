@@ -628,4 +628,57 @@ public sealed class StubCleanupTaskTests : IDisposable
             Times.Once);
         Assert.False(Assert.Single(_fixture.Registry.State.Series).NeedsRefresh);
     }
+
+    // Row 63 (D4): a refresh beside the linker reloads the episodes and loses the "played" it aligned.
+    [Fact]
+    public async Task ANewStubSeriesGetsItsRefreshOnlyAfterTheLinkTheRestoreAndTheMigration()
+    {
+        var row = await NewStubSeriesAsync();
+        var seen = new List<string>();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("link"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _keeper
+            .Setup(keeper => keeper.RestoreAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("restore"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _migration
+            .Setup(migration => migration.RunAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => seen.Add("migration"))
+            .Returns(System.Threading.Tasks.Task.CompletedTask);
+        _providers
+            .Setup(provider => provider.QueueRefresh(row.Id, It.IsAny<MetadataRefreshOptions>(), It.IsAny<RefreshPriority>()))
+            .Callback(() => seen.Add("refresh"));
+
+        await RunAsync();
+
+        Assert.Equal(["link", "restore", "migration", "refresh"], seen);
+    }
+
+    [Fact]
+    public async Task ACancelledLinkStillQueuesTheRefreshOfANewStubSeries()
+    {
+        var row = await NewStubSeriesAsync();
+        _linker
+            .Setup(linker => linker.LinkAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(RunAsync);
+
+        _providers.Verify(provider => provider.QueueRefresh(row.Id, It.IsAny<MetadataRefreshOptions>(), It.IsAny<RefreshPriority>()), Times.Once);
+        Assert.False(Assert.Single(_fixture.Registry.State.Series).NeedsRefresh);
+    }
+
+    // A series stub that has its item after the scan and still waits for its first refresh.
+    private async Task<Series> NewStubSeriesAsync()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 1));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
+        await _fixture.SyncAndMaterializeAsync();
+        var row = new Series { Id = Guid.NewGuid(), Path = _fixture.Path_(a, "Serie", "Show (2020)") };
+        _fixture.Library.Setup(library => library.FindByPath(row.Path, true)).Returns(row);
+        return row;
+    }
 }
