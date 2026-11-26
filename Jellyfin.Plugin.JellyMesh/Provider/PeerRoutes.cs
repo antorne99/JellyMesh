@@ -39,6 +39,8 @@ public static class PeerRoutes
             // Closing a transcode (decision 6). Stock stops whatever play session it is told, or every job of a device.
             (_, "StopEncodingProcess") when HttpMethods.IsDelete(method) => PeerRouteKind.StopEncoding,
             ("DynamicHls", _) when reads => PeerRouteKind.Stream,
+            // The list of image details names the files on this server (row 585); the images by type stay open.
+            ("Image", "GetItemImageInfos") => PeerRouteKind.Closed,
             ("Image" or "Subtitle", _) when reads => PeerRouteKind.Item,
             ("MediaSegments", "GetItemSegments") when reads => PeerRouteKind.Item,
             _ => PeerRouteKind.Closed
