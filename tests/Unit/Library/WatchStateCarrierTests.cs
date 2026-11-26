@@ -401,6 +401,65 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Equal((true, 1, (DateTime?)_newest), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
     }
 
+    // Row 575: the record of a manual merge does not stop the whole-row copy of a pure rename.
+    [Fact]
+    public async Task ARenameOfAMergedTitleCopiesNotWatchedOverTheRowJellyfinReattached()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        _log.Record(_mario.Id, old.Id, _older, WatchStateCarryOperation.Merge);
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.LastPlayedDate = _older;
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Equal((false, 0, (DateTime?)null), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _, out var operation));
+        Assert.Equal(WatchStateCarryOperation.Rename, operation);
+    }
+
+    [Fact]
+    public async Task ASecondRunOfTheRenameOfAMergedTitleDoesNotOverwriteWhatTheUserDid()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        _log.Record(_mario.Id, old.Id, _older, WatchStateCarryOperation.Merge);
+        var move = RenameMove(old, oldStub, renamed);
+        await CarryAsync(move);
+        Assert.False(Row(_mario, renamed).Played);
+
+        // A merge carry between the two runs leaves the record of the rename.
+        _log.Record(_mario.Id, old.Id, _newer, WatchStateCarryOperation.Merge);
+        Row(_mario, renamed).Played = true;
+        Row(_mario, renamed).PlayCount = 1;
+        Row(_mario, renamed).LastPlayedDate = _newest;
+        _saves.Clear();
+        await RestartAsync();
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.Equal((true, 1, (DateTime?)_newest), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
+    [Fact]
+    public async Task ARecordOfNoKnownOperationStopsTheWholeRowCopyAsBefore()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        await _database.ExecuteAsync($"INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks) VALUES ('{_mario.Id:N}', '{old.Id:N}', NULL);");
+        await RestartAsync();
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.DoesNotContain(_saves, save => save.User == _mario.Id);
+        Assert.True(Row(_mario, renamed).Played);
+    }
+
     [Fact]
     public async Task AMoveThatIsNotAPureRenameKeepsTheMostRecentRow()
     {
@@ -1472,6 +1531,19 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Equal([target], rename.Targets);
         Assert.False(WatchStateMove.Of(oldStub, old.Id, [target], removesOldItem: true).IsPureRename);
         Assert.False(WatchStateMove.OfMerge(oldStub, old.Id, [target]).IsPureRename);
+    }
+
+    [Fact]
+    public void EachMoveSaysWhichOperationMadeIt()
+    {
+        var (old, oldStub) = Old();
+        var (series, seriesStub) = OldSeries();
+        var target = new WatchStateTarget(Guid.NewGuid(), _serverA);
+
+        Assert.Equal(WatchStateCarryOperation.Rename, WatchStateMove.OfRename(oldStub, old.Id, target).Operation);
+        Assert.Equal(WatchStateCarryOperation.Merge, WatchStateMove.OfMerge(oldStub, old.Id, [target]).Operation);
+        Assert.Equal(WatchStateCarryOperation.Migration, WatchStateMove.Of(oldStub, old.Id, [target], removesOldItem: true).Operation);
+        Assert.Equal(WatchStateCarryOperation.Migration, WatchStateMove.OfSeries(seriesStub, series.Id, [target]).Operation);
     }
 
     [Fact]

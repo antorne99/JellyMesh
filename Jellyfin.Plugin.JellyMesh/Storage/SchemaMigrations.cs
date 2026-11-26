@@ -35,7 +35,10 @@ public static class SchemaMigrations
         new(7, SmallStateSchema.AddWarnings),
 
         // The stubs that split and wait for their watch state (F44b).
-        new(8, Library.StubTables.AddSplits)
+        new(8, Library.StubTables.AddSplits),
+
+        // The operation of each watch state carry (row 575).
+        new(9, SmallStateSchema.AddCarryOperations)
     ];
 
     /// <summary>
