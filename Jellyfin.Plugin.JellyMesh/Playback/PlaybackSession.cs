@@ -16,6 +16,9 @@ namespace Jellyfin.Plugin.JellyMesh.Playback;
 /// </summary>
 public sealed partial class PlaybackSession
 {
+    // Added to the request count when the session closes, which keeps it negative from then on.
+    private const int ClosedMark = int.MinValue / 2;
+
     // Segment timing, the only part of a remote query a client may see and send back.
     private static readonly HashSet<string> _clientParameters = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -103,6 +106,9 @@ public sealed partial class PlaybackSession
     /// <summary>Gets the session that replaced this one for the same stream, null while none did.</summary>
     public string? ReplacedBy => Volatile.Read(ref _replacedBy);
 
+    /// <summary>Gets a value indicating whether the session was closed: no request begins on it any more.</summary>
+    public bool IsClosed => Volatile.Read(ref _activeRequests) < 0;
+
     /// <summary>
     /// Finds the folder of the master playlist or stream on the remote.
     /// </summary>
@@ -135,12 +141,13 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <param name="clock">The clock.</param>
     /// <param name="aborted">What tells that the connection of the request went.</param>
-    /// <returns>The end of the request, null if there are too many.</returns>
+    /// <returns>The end of the request, null if there are too many or the session is closed.</returns>
     public IDisposable? TryBeginRequest(TimeProvider clock, CancellationToken aborted = default)
     {
         ArgumentNullException.ThrowIfNull(clock);
 
-        if (Interlocked.Increment(ref _activeRequests) > PlaybackLimits.RequestsPerSession)
+        var running = Interlocked.Increment(ref _activeRequests);
+        if (running <= 0 || running > PlaybackLimits.RequestsPerSession)
         {
             Interlocked.Decrement(ref _activeRequests);
             return null;
@@ -157,6 +164,20 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
     public bool TryPark() => Interlocked.Exchange(ref _parked, 1) == 0;
+
+    /// <summary>Closes the session: no request begins afterwards.</summary>
+    public void Close()
+    {
+        var count = Volatile.Read(ref _activeRequests);
+        while (count >= 0 && Interlocked.CompareExchange(ref _activeRequests, count + ClosedMark, count) is var seen && seen != count)
+        {
+            count = seen;
+        }
+    }
+
+    /// <summary>Closes the session if no request is running, in one step with the check.</summary>
+    /// <returns>Whether this call closed it.</returns>
+    public bool TryCloseIdle() => Interlocked.CompareExchange(ref _activeRequests, ClosedMark, 0) == 0;
 
     /// <summary>
     /// Marks this session as replaced by a new <c>PlaybackInfo</c> of the same stream. It keeps serving until its client

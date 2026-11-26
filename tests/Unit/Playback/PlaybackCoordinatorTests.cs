@@ -879,6 +879,70 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_closed_session_refuses_a_request_of_whoever_still_holds_it()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+
+        await fixture.Coordinator.CloseAsync(session.Id);
+
+        Assert.True(session.IsClosed);
+        Assert.Null(session.TryBeginRequest(fixture.Clock));
+    }
+
+    [Fact]
+    public async Task A_replaced_session_closed_after_its_client_moved_refuses_a_late_segment()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+
+        fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.BeginRequest(fixture.Clock).Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Null(first.TryBeginRequest(fixture.Clock));
+    }
+
+    [Fact]
+    public async Task A_replaced_session_serving_a_request_is_closed_only_after_it_ends()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+        fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.BeginRequest(fixture.Clock).Dispose();
+
+        var running = first.TryBeginRequest(fixture.Clock);
+        await fixture.Coordinator.CloseReplacedAsync();
+        Assert.Same(first, fixture.Sessions.Find(first.Id));
+        Assert.Empty(fixture.Client.Stopped);
+
+        running!.Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Null(fixture.Sessions.Find(first.Id));
+        Assert.Equal(first.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
+    public void A_session_cannot_be_closed_as_idle_while_a_request_runs()
+    {
+        var clock = new ManualClock();
+        var session = PlaybackValues.Session(clock: clock);
+        var running = session.TryBeginRequest(clock);
+
+        Assert.False(session.TryCloseIdle());
+        running!.Dispose();
+
+        Assert.True(session.TryCloseIdle());
+        Assert.Null(session.TryBeginRequest(clock));
+    }
+
+    [Fact]
     public async Task A_jellymesh_remote_that_takes_the_slot_over_has_the_old_session_closed_at_once()
     {
         var fixture = new CoordinatorFixture();

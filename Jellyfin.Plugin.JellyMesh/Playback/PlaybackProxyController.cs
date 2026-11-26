@@ -88,7 +88,7 @@ public class PlaybackProxyController : ControllerBase
         using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
-            return TooManyRequests(session);
+            return Refused(session);
         }
 
         return await RelayPlaylistAsync(session, session.UpstreamPath, session.UpstreamFolder(), MasterToFolder, access.Token, cancellationToken).ConfigureAwait(false);
@@ -118,7 +118,7 @@ public class PlaybackProxyController : ControllerBase
         using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
-            return TooManyRequests(session);
+            return Refused(session);
         }
 
         return await RelayStreamAsync(session, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
@@ -158,7 +158,7 @@ public class PlaybackProxyController : ControllerBase
         using var request = session.TryBeginRequest(_clock, cancellationToken);
         if (request is null)
         {
-            return TooManyRequests(session);
+            return Refused(session);
         }
 
         if (file.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
@@ -289,6 +289,18 @@ public class PlaybackProxyController : ControllerBase
     {
         _logger.LogDebug("The {Part} of failed play session {PlaySessionId} is refused: 502", part, session.Id);
         return StatusCode(StatusCodes.Status502BadGateway);
+    }
+
+    // A closed session is gone for its client, one with too many requests running is busy.
+    private ActionResult Refused(PlaybackSession session)
+    {
+        if (session.IsClosed)
+        {
+            _logger.LogDebug("A playback request reached a play session while it was closed: 404");
+            return NotFound();
+        }
+
+        return TooManyRequests(session);
     }
 
     private StatusCodeResult TooManyRequests(PlaybackSession session)

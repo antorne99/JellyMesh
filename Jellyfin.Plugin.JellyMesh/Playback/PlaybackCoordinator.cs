@@ -434,6 +434,7 @@ public sealed class PlaybackCoordinator
     {
         if (_sessions.Remove(sessionId) is { } session)
         {
+            session.Close();
             await CloseRemoteAsync(session).ConfigureAwait(false);
         }
     }
@@ -600,10 +601,10 @@ public sealed class PlaybackCoordinator
     /// <returns>A task.</returns>
     public Task CloseReplacedAsync()
     {
-        return Task.WhenAll(_sessions.All.Where(IsLeftBehind).Select(session =>
+        return Task.WhenAll(_sessions.All.Where(session => IsLeftBehind(session) && session.TryCloseIdle()).Select(session =>
         {
             _logger.LogDebug("The client of play session {PlaySessionId} moved to the session that replaced it: it is closed", session.Id);
-            return CloseAsync(session.Id);
+            return _sessions.Remove(session.Id) is null ? Task.CompletedTask : CloseRemoteAsync(session);
         }));
     }
 
@@ -754,10 +755,10 @@ public sealed class PlaybackCoordinator
         _logger.LogDebug("Play session {PlaySessionId} is replaced by {Replacement} and serves until its client moves", previous.Id, replacementId);
     }
 
-    // A replaced session not in use whose replacement got a request or ended.
+    // A replaced session whose replacement got a request or ended.
     private bool IsLeftBehind(PlaybackSession session)
     {
-        return session.ReplacedBy is { } replacementId && !session.IsActive && (_sessions.Find(replacementId) is not { } replacement || replacement.WasRequested);
+        return session.ReplacedBy is { } replacementId && (_sessions.Find(replacementId) is not { } replacement || replacement.WasRequested);
     }
 
     private async Task ClosePreviousAsync(PlaybackSession? previous)

@@ -219,6 +219,17 @@ public class PlaybackProxyTests
     }
 
     [Fact]
+    public async Task A_closed_session_still_held_by_a_request_answers_not_found()
+    {
+        var session = Session(PlaybackStreamKind.Hls);
+        session.Close();
+
+        Assert.IsType<NotFoundResult>(await _controller.GetMaster(session.Id, CancellationToken.None));
+        Assert.IsType<NotFoundResult>(await _controller.GetFile(session.Id, 0, "main.m3u8", CancellationToken.None));
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
     public async Task After_a_source_fails_the_session_answers_a_bad_gateway_at_once_without_asking_the_remote()
     {
         var session = Session(PlaybackStreamKind.Hls);
