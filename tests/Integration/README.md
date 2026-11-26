@@ -248,15 +248,15 @@ Each folder proves a phase end to end with real Jellyfin servers, on private con
 
 ### `materializer/`
 
-Every scenario needs a fresh instance. `all.sh` does that for `s1` to `s5`, and writes `up-*.log` and `final-*.out` next to the scripts. Those hold what each scenario printed, so read them: the scripts print state and mostly do not judge it. To run one scenario:
+Every scenario needs a fresh instance. `all.sh` does that for `s1` to `s5`, and writes `up-*.log` and `final-*.out` next to the scripts. Those hold what each scenario printed, so read them: the scripts print state and judge only what the plan says, on `PASS` and `FAIL` lines. Each server gets the library mode "None", so the plugin makes no library: after each sync the scenario adds the folders the page lists to the Film and Serie libraries by hand, as an admin does, and takes those of a removed server out again. `s3` edits a film on the Standard remote and puts it back on exit, so it does that only when `STANDARD_URL` is given, and needs `STANDARD_HOST_URL` when the address it gives is not reachable from this machine with `127.0.0.1` in place of `host.docker.internal`, and `REMOTE_ADMIN_PASSWORD` when the remote's admin has another password than `jellymesh-test`. To run one scenario:
 
 ```sh
-bash materializer/up.sh           # a fresh jm-mat with the two-path libraries and the plugin
+bash materializer/up.sh           # a fresh jm-mat with Film and Serie over the local media, and the plugin
 bash materializer/s1.sh           # s1 to s5, see the comment at the top of each
-bash materializer/check.sh        # after s5: no remote password in the logs, no remote address in the index or the folder
+bash materializer/check.sh        # after a scenario: no remote password in the logs, no remote address in the plugin data or the folder
 ```
 
-Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`. To run beside another stack, give every script the same `NAME` and `PORT` in place of `jm-mat` and 18310, and `STANDARD_URL` and `JELLYMESH_URL` for remotes other than those of this stack.
+Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`. To run beside another stack, give every script the same `NAME` and `PORT` in place of `jm-mat` and 18310, and `STANDARD_URL` and `JELLYMESH_URL` for remotes other than those of this stack. The `stock` and `peer` servers of `dedup/` serve the same media and do too.
 
 ### `playback/`
 
@@ -294,11 +294,11 @@ bash provider/down.sh             # removes containers and volumes, and the reco
 
 ### `dedup/`
 
-Scratch files go in `WORK`. `PREFIX` (default `jm-dedup`) names the containers, volumes and network, and `PORT` (default 18421) is the port of the consumer, with the other servers on the next three; give every script the same ones.
+The consumer gives both remotes the library mode "None", and `up.sh` adds the folders the page lists to its Film and Serie libraries by hand, as an admin does; `upgrade.sh` keeps the flat layout of the old build. Scratch files go in `WORK`. `PREFIX` (default `jm-dedup`) names the containers, volumes and network, and `PORT` (default 18421) is the port of the consumer, with the other servers on the next three; give every script the same ones.
 
 ```sh
 bash dedup/up.sh                  # the two remotes and a consumer with the current build
-bash dedup/run.sh                 # what merges, what stays apart, doubles, playback, NextUp, local copies arriving
+bash dedup/run.sh                 # what merges, what stays apart, a stub per copy of a double, playback, NextUp, local copies arriving
 OLD=<old checkout> bash dedup/upgrade.sh   # an index and stubs from the old build, then the current one
 bash dedup/down.sh                # removes containers, volumes and network
 ```

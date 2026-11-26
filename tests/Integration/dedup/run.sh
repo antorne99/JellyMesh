@@ -30,19 +30,27 @@ check "E8: the double still provides it" '"stock"' "$(content fresh "$W|S1E8" | 
 check "E9: from the double" '"stock"' "$(content fresh "$W|S1E9" | jq .winner)"
 check "E10: the better single wins, the double is its backup" '{"local":false,"winner":"peer","height":1080,"backups":["stock"]}' "$(content fresh "$W|S1E10")"
 
-echo "--- decision 13a: stubs"
-stubs fresh | grep "JM Serie Doppia " | sed 's/.*Season 01.//'
-check "stub names" "JM Serie Doppia S01E03-E04.strm,JM Serie Doppia S01E05-E06.strm,JM Serie Doppia S01E08.strm,JM Serie Doppia S01E09.strm,JM Serie Doppia S01E10.strm" \
-  "$(stubs fresh | grep "JM Serie Doppia " | sed 's/.*Season 01.//' | sort | paste -sd, -)"
-docker exec "$PREFIX-f" sh -c 'cat "/federata/Serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E03-E04.nfo"' >"$WORK/double.nfo"
+
+echo "--- decision 13a: stubs, one per copy of each server with its label (rows 61, 62, 64)"
+stock=$(cat "$WORK/id-fresh-stock"); peer=$(cat "$WORK/id-fresh-peer")
+folder_of() { local id=${1//-/}; echo "${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+doubles() { stubs fresh | grep "JM Serie Doppia " | grep -F "/$(folder_of "$1")/" | sed 's/.*Season 01.//' | sort | paste -sd, -; }
+check "stubs of stock, the local episodes included" \
+  "JM Serie Doppia S01E01 - stock.strm,JM Serie Doppia S01E02 - stock.strm,JM Serie Doppia S01E03-E04 - stock.strm,JM Serie Doppia S01E05-E06 - stock.strm,JM Serie Doppia S01E07-E08 - stock.strm,JM Serie Doppia S01E09-E10 - stock.strm" \
+  "$(doubles "$stock")"
+check "stubs of peer" "JM Serie Doppia S01E05-E06 - peer.strm,JM Serie Doppia S01E10 - peer.strm" "$(doubles "$peer")"
+nfo=$(stubs fresh | grep -F "/$(folder_of "$stock")/" | grep 'JM Serie Doppia S01E03-E04 - stock.strm' | sed 's/\.strm$/.nfo/')
+docker exec "$PREFIX-f" cat "/federata/${nfo#./}" >"$WORK/double.nfo"
 check "the nfo holds the first number" 1 "$(grep -c '<episode>3</episode>' "$WORK/double.nfo")"
 check "the nfo holds the end" 1 "$(grep -c '<episodenumberend>4</episodenumberend>' "$WORK/double.nfo")"
 check "the nfo is locked" 1 "$(grep -c '<lockdata>true</lockdata>' "$WORK/double.nfo")"
 check "the nfo holds no address" 0 "$(grep -c -E "$PREFIX|http" "$WORK/double.nfo" || true)"
-check "the merged series as a client sees it" '["E1-2@local","E3-4@stub","E5-6@stub","E7@local","E8@stub","E9@stub","E10@stub"]' "$(doppia fresh)"
+check "the merged series as a client sees it" '["E1@stock","E1-2@local","E2@stock","E3-4@stock","E5-6@peer","E7@local","E7-8@stock","E9-10@stock","E10@peer"]' "$(doppia fresh)"
+s56=$(episode_id fresh "S01E05-E06 - peer.strm")
+check "the doubles E05-E06 of both servers are versions of one episode, the better one primary" '["peer","stock"]' "$(versions fresh "$s56")"
 
 echo "--- decision 13a: playback of a stub of a double"
-id=$(episode_id fresh "S01E03-E04.strm")
+id=$(episode_id fresh "S01E03-E04 - stock.strm")
 info=$(post fresh "/Items/$id/PlaybackInfo?userId=$(admin_id fresh)" "$DIRECT")
 check "PlaybackInfo answers" 200 "$(cat "$WORK/status")"
 source_id=$(echo "$info" | jq -r '.MediaSources[0].Id')
@@ -53,10 +61,14 @@ check "no remote address in PlaybackInfo" 0 "$(echo "$info" | grep -c "$PREFIX-"
 echo "--- NextUp walks past a stub of a double"
 uid=$(admin_id fresh)
 series=$(items fresh Episode | jq -r '[.Items[] | select(.SeriesName == "JM Serie Doppia")][0].SeriesId')
+next_up() { get fresh "/Shows/NextUp?userId=$uid&seriesId=$series&Fields=Path" | jq -r '.Items[0] | "E\(.IndexNumber)@\(.Path | split(" - ") | last | rtrimstr(".strm"))"'; }
 post fresh "/UserPlayedItems/$(episode_id fresh "S01E01-E02.mkv")?userId=$uid" >/dev/null
-check "after the local double" "3" "$(get fresh "/Shows/NextUp?userId=$uid&seriesId=$series" | jq -r '.Items[0].IndexNumber')"
+echo "observed, not judged: after the local double alone NextUp offers $(next_up), the single E02 of stock"
+for f in "S01E01 - stock.strm" "S01E02 - stock.strm"; do post fresh "/UserPlayedItems/$(episode_id fresh "$f")?userId=$uid" >/dev/null; done
+check "after E01 and E02 of every copy" "E3@stock" "$(next_up)"
 post fresh "/UserPlayedItems/$id?userId=$uid" >/dev/null
-check "after the stub of the double" "5" "$(get fresh "/Shows/NextUp?userId=$uid&seriesId=$series" | jq -r '.Items[0].IndexNumber')"
+check "after the stub of the double" 5 "$(next_up | cut -d@ -f1 | tr -d E)"
+echo "observed, not judged: NextUp names the version $(next_up | cut -d@ -f2) of E05-E06, whose primary is peer"
 
 echo "--- a refresh keeps the range"
 post fresh "/Items/$id/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=None&replaceAllMetadata=true&replaceAllImages=false" >/dev/null
@@ -71,29 +83,39 @@ check "unlocked stub after replace all" '{"E":3,"End":4}' "$(get fresh "/Users/$
 configure fresh true
 sync_and_scan fresh
 
-echo "--- local copies arrive"
+echo "--- local copies arrive: the stubs stay (row 64), a local copy of the same range becomes the primary"
+local_state() { get fresh "/Users/$uid/Items/$(episode_id fresh "/extra/serie/JM Serie Doppia (2026)/Season 01/$1")" | jq -c .UserData.Played; }
 docker exec "$PREFIX-f" sh -c 'mkdir -p "/extra/serie/JM Serie Doppia (2026)/Season 01"'
 docker cp "$MEDIA/locale/serie/JM Serie Doppia (2026)/tvshow.nfo" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/tvshow.nfo"
 docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E03.mkv"
 scan fresh
 settle fresh
 sync_and_scan fresh
-check "E3 local: the stub of E03-E04 shrinks to E4 and stays" '["E1-2@local","E3@local","E4@stub","E5-6@stub","E7@local","E8@stub","E9@stub","E10@stub"]' "$(doppia fresh)"
-check "the stub kept its path" 1 "$(stubs fresh | grep -c 'S01E03-E04.strm')"
-check "the stub kept its state" true "$(get fresh "/Users/$uid/Items/$id" | jq .UserData.Played)"
+check "E3 local: the stub of E03-E04 stays" 1 "$(stubs fresh | grep -c 'S01E03-E04 - stock.strm')"
+check "the stub is the same item and keeps its state" "$id true" "$(episode_id fresh 'S01E03-E04 - stock.strm') $(get fresh "/Users/$uid/Items/$id" | jq .UserData.Played)"
+echo "observed, not judged: the series is $(doppia fresh)"
 
 docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E04.mkv"
 scan fresh
 settle fresh
-check "E4 local too: the stub goes" 0 "$(stubs fresh | grep -c 'S01E03-E04.strm' || true)"
-check "its state reached the local episode" true "$(get fresh "/Users/$uid/Items/$(episode_id fresh "JM Serie Doppia S01E04.mkv")" | jq .UserData.Played)"
+sync_and_scan fresh
+check "E4 local too: the stub of E03-E04 still stays" 1 "$(stubs fresh | grep -c 'S01E03-E04 - stock.strm')"
+check "and keeps its state" true "$(get fresh "/Users/$uid/Items/$id" | jq .UserData.Played)"
+echo "observed, not judged: with the whole range local, played on local E03 and E04: $(local_state 'JM Serie Doppia S01E03.mkv') $(local_state 'JM Serie Doppia S01E04.mkv'); the series is $(doppia fresh)"
 
-s56=$(episode_id fresh "S01E05-E06.strm")
 post fresh "/UserPlayedItems/$s56?userId=$uid" >/dev/null
 docker cp "$MEDIA/remoto-standard/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv" "$PREFIX-f:/extra/serie/JM Serie Doppia (2026)/Season 01/"
 scan fresh
 settle fresh
-check "a local double replaces the stub of a double" '["E1-2@local","E3@local","E4@local","E5-6@local","E7@local","E8@stub","E9@stub","E10@stub"]' "$(doppia fresh)"
-check "its state reached the local double" true "$(get fresh "/Users/$uid/Items/$(episode_id fresh "/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv")" | jq .UserData.Played)"
+sync_and_scan fresh
+check "a local double joins the stubs of the same range as their primary" \
+  '["E1@stock","E1-2@local","E2@stock","E3@local","E3-4@stock","E4@local","E5-6@local","E7@local","E7-8@stock","E9-10@stock","E10@peer"]' "$(doppia fresh)"
+check "both stubs of E05-E06 stay" 2 "$(stubs fresh | grep -c 'S01E05-E06 - ')"
+local56=$(episode_id fresh "/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E05-E06.mkv")
+check "the local double has the stubs as versions" '["JM Serie Doppia S01E05-E06","peer","stock"]' "$(versions fresh "$local56")"
+check "the state of the stubs reached the local primary" true "$(local_state 'JM Serie Doppia S01E05-E06.mkv')"
+post fresh "/UserPlayedItems/$(episode_id fresh "/extra/serie/JM Serie Doppia (2026)/Season 01/JM Serie Doppia S01E04.mkv")?userId=$uid" >/dev/null
+for i in "$local56" "$s56" "$(episode_id fresh "S01E05-E06 - stock.strm")"; do req fresh DELETE "/UserPlayedItems/$i?userId=$uid" >/dev/null; done
+echo "observed, not judged: with E05-E06 unplayed, NextUp names $(get fresh "/Shows/NextUp?userId=$uid&seriesId=$series&Fields=Path" | jq -r '.Items[0].Path | split("/") | last')"
 
 exit "${FAILED:-0}"
