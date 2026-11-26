@@ -371,7 +371,26 @@ public sealed class PlaybackCoordinator
     /// <param name="request">What to open.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The stream.</returns>
-    public async Task<RemoteResult<RemoteContent>> OpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
+    public Task<RemoteResult<RemoteContent>> OpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
+    {
+        return OpenStreamAsync(serverId, null, request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Opens a stream of a session, unless the session closed while the call waited for its place.
+    /// </summary>
+    /// <param name="session">The session.</param>
+    /// <param name="request">What to open.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The stream.</returns>
+    public Task<RemoteResult<RemoteContent>> OpenAsync(PlaybackSession session, RemoteStreamRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return OpenStreamAsync(session.Source.ServerId, session, request, cancellationToken);
+    }
+
+    // A session closed while its call waited in the queue sends nothing: the remote stop already went out.
+    private async Task<RemoteResult<RemoteContent>> OpenStreamAsync(Guid serverId, PlaybackSession? owner, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
         var place = _streams.TryEnter(serverId);
         if (place is null)
@@ -388,7 +407,7 @@ public sealed class PlaybackCoordinator
             var opened = await GatedAsync(
                 serverId,
                 Times.StreamOpen,
-                (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
+                (endpoint, session, token) => owner is { IsClosed: true } ? Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy)) : _client.OpenStreamAsync(endpoint, session, request, token),
                 cancellationToken).ConfigureAwait(false);
             if (opened.IsSuccess && end.IsCancellationRequested)
             {
@@ -406,6 +425,23 @@ public sealed class PlaybackCoordinator
                 place.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// Reads a playlist of a session, unless the session closed while the call waited for its place.
+    /// </summary>
+    /// <param name="session">The session.</param>
+    /// <param name="path">The path and query.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The text.</returns>
+    public Task<RemoteResult<string>> ReadPlaylistAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return GatedAsync(
+            session.Source.ServerId,
+            Times.StreamOpen,
+            (endpoint, remote, token) => session.IsClosed ? Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Busy)) : _client.ReadPlaylistAsync(endpoint, remote, path, token),
+            cancellationToken);
     }
 
     /// <summary>

@@ -222,10 +222,10 @@ public class PlaybackProxyController : ControllerBase
             return FailedBefore(session, part);
         }
 
-        var playlist = await _coordinator.ReadPlaylistAsync(session.Source.ServerId, path, cancellationToken).ConfigureAwait(false);
+        var playlist = await _coordinator.ReadPlaylistAsync(session, path, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess)
         {
-            return RelayFailed(session, path, part, playlist);
+            return session.IsClosed ? Closed() : RelayFailed(session, path, part, playlist);
         }
 
         var text = HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session));
@@ -249,10 +249,10 @@ public class PlaybackProxyController : ControllerBase
         var method = HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get;
         var range = Request.Headers.Range.ToString();
         var request = new RemoteStreamRequest(method, path, string.IsNullOrEmpty(range) ? null : range);
-        var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
+        var opened = await _coordinator.OpenAsync(session, request, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
-            return RelayFailed(session, path, part, opened);
+            return session.IsClosed ? Closed() : RelayFailed(session, path, part, opened);
         }
 
         using var stream = opened.Value!;
@@ -294,13 +294,13 @@ public class PlaybackProxyController : ControllerBase
     // A closed session is gone for its client, one with too many requests running is busy.
     private ActionResult Refused(PlaybackSession session)
     {
-        if (session.IsClosed)
-        {
-            _logger.LogDebug("A playback request reached a play session while it was closed: 404");
-            return NotFound();
-        }
+        return session.IsClosed ? Closed() : TooManyRequests(session);
+    }
 
-        return TooManyRequests(session);
+    private NotFoundResult Closed()
+    {
+        _logger.LogDebug("A playback request reached a play session while it was closed: 404");
+        return NotFound();
     }
 
     private StatusCodeResult TooManyRequests(PlaybackSession session)

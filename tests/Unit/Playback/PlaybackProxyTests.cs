@@ -230,6 +230,28 @@ public class PlaybackProxyTests
     }
 
     [Fact]
+    public async Task A_call_refused_because_its_session_closed_meanwhile_answers_not_found_and_fails_nothing()
+    {
+        var stream = Session(PlaybackStreamKind.Direct);
+        _fixture.Client.Open = (_, _) =>
+        {
+            stream.Close();
+            return Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError));
+        };
+        var hls = Session(PlaybackStreamKind.Hls);
+        _fixture.Client.Playlists = _ =>
+        {
+            hls.Close();
+            return RemoteFailure.ServerError;
+        };
+
+        Assert.IsType<NotFoundResult>(await _controller.GetStream(stream.Id, CancellationToken.None));
+        Assert.IsType<NotFoundResult>(await _controller.GetMaster(hls.Id, CancellationToken.None));
+        Assert.False(stream.HasFailed);
+        Assert.False(hls.HasFailed);
+    }
+
+    [Fact]
     public async Task After_a_source_fails_the_session_answers_a_bad_gateway_at_once_without_asking_the_remote()
     {
         var session = Session(PlaybackStreamKind.Hls);

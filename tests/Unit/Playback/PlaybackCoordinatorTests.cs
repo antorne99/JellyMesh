@@ -903,6 +903,55 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task Calls_of_a_session_queued_behind_others_are_not_sent_once_it_closed()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(fixture.Sessions.All);
+        var held = new TaskCompletionSource();
+        var arrived = 0;
+        fixture.Client.Open = async (_, token) =>
+        {
+            Interlocked.Increment(ref arrived);
+            await held.Task.WaitAsync(token);
+            return FakePlaybackClient.Bytes();
+        };
+        var read = new List<string>();
+        fixture.Client.Playlists = path =>
+        {
+            lock (read)
+            {
+                read.Add(path);
+            }
+
+            return RemoteFailure.None;
+        };
+        var busy = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        var calls = Enumerable.Range(0, PlaybackLimits.CallsPerServer)
+            .Select(_ => Task.Run(() => fixture.Coordinator.OpenAsync(source.ServerId, busy, CancellationToken.None)))
+            .ToList();
+        while (Volatile.Read(ref arrived) < PlaybackLimits.CallsPerServer)
+        {
+            await Task.Delay(10);
+        }
+
+        var segment = fixture.Coordinator.OpenAsync(session, new RemoteStreamRequest(HttpMethod.Get, "/late.ts", null), CancellationToken.None);
+        var playlist = fixture.Coordinator.ReadPlaylistAsync(session, "/late.m3u8", CancellationToken.None);
+        await fixture.Coordinator.CloseAsync(session.Id);
+        held.SetResult();
+
+        Assert.False((await segment).IsSuccess);
+        Assert.False((await playlist).IsSuccess);
+        Assert.DoesNotContain("/late.ts", fixture.Client.Opened);
+        Assert.DoesNotContain("/late.m3u8", read);
+        foreach (var result in await Task.WhenAll(calls))
+        {
+            result.Value?.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task A_closed_session_refuses_a_request_of_whoever_still_holds_it()
     {
         var fixture = new CoordinatorFixture();
