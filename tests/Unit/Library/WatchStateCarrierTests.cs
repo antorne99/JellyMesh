@@ -365,6 +365,19 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public async Task ARenameLeavesNoUserWithAnEmptyRowWhoCannotSeeTheNewStub()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        Row(_mario, old).IsFavorite = true;
+        _hidden.Add((_luigi.Id, renamed.Id));
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+    [Fact]
     public async Task ASecondRunOfARenameDoesNotOverwriteWhatTheUserDidOnTheNewStub()
     {
         // The old file could not go, so the next round carries again (decisions 155, 187).

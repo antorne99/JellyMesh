@@ -379,7 +379,12 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             var (changed, reason) = rows(user, old, mode);
             if (changed is null)
             {
-                skipped.Add(new WatchStateUserSkip(user.Id, reason));
+                // An empty row of a pure rename only clears what the user sees, so one who sees nothing is not left (row 572).
+                if (!(move.IsPureRename && reason == WatchStateUserSkipReason.NoVisibleVersion && !HasAnything(old)))
+                {
+                    skipped.Add(new WatchStateUserSkip(user.Id, reason));
+                }
+
                 continue;
             }
 
