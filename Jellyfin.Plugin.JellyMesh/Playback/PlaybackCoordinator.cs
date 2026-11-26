@@ -155,8 +155,19 @@ public sealed class PlaybackCoordinator
         foreach (var (version, source) in Chain(versions, previous))
         {
             tried++;
-            var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
             slotTaken |= ReplacesOf(previous, source) is not null;
+            Attempt attempt;
+            try
+            {
+                attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception) when (slotTaken)
+            {
+                // The remote may have freed the slot of the previous session already, and nothing else would close it.
+                await ClosePreviousAsync(previous).ConfigureAwait(false);
+                throw;
+            }
+
             if (attempt.Response is not null)
             {
                 Remember(version, source);
