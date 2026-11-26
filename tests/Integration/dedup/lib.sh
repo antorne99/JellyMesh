@@ -192,12 +192,12 @@ items() { # items <server> <type>
 }
 stubs() { docker exec "$(container_of "$1")" sh -c 'cd /federata && find . -type f -name "*.strm" | sort'; }
 
-# Episodes of JM Serie Doppia, as "E3-4@stock" for a stub with that label or "E1-2@local": what a client sees. A group of
-# versions shows as its primary.
+# Episodes of JM Serie Doppia, as "E3-4@stock" for a stub with that label, "E3-4@stub" for a flat one, or "E1-2@local":
+# what a client sees. A group of versions shows as its primary.
 doppia() {
   items "$1" Episode | jq -c '[.Items[] | select(.SeriesName == "JM Serie Doppia")
     | {s: .IndexNumber, e: (.IndexNumberEnd // .IndexNumber),
-       w: (if (.Path | startswith("/federata")) then (.Path | split(" - ") | last | rtrimstr(".strm")) else "local" end)}]
+       w: (if (.Path | startswith("/federata") | not) then "local" elif (.Path | split("/") | last | contains(" - ")) then (.Path | split(" - ") | last | rtrimstr(".strm")) else "stub" end)}]
     | sort_by(.s, .e, .w) | map("E\(.s)\(if .e != .s then "-\(.e)" else "" end)@\(.w)")'
 }
 # versions <server> <item id>: the names of the versions a client sees on an item, sorted.
