@@ -383,6 +383,47 @@ public class StubLookupTests
         }
     }
 
+    // A FIFO or an empty file named .strm is never opened, so a request cannot block on it.
+    [Theory]
+    [InlineData("fifo")]
+    [InlineData("link to a fifo")]
+    [InlineData("empty")]
+    public async System.Threading.Tasks.Task AFifoOrAnEmptyStrmIsNoStubAndDoesNotBlock(string kind)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-fifo-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "01 - X.strm");
+            if (kind == "empty")
+            {
+                await File.WriteAllTextAsync(strm, string.Empty);
+            }
+            else
+            {
+                var pipe = kind == "fifo" ? strm : Path.Combine(temp, "pipe");
+                using var mkfifo = System.Diagnostics.Process.Start("mkfifo", [pipe]);
+                await mkfifo.WaitForExitAsync();
+                if (kind != "fifo")
+                {
+                    File.CreateSymbolicLink(strm, pipe);
+                }
+            }
+
+            _store.Configuration.FederatedFolderPath = Path.Combine(temp, "fed2");
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+
+            var check = System.Threading.Tasks.Task.Run(() => Lookup().IsAudioStub(track.Id) || Lookup().FindFile(track.Id) is not null);
+            var done = await System.Threading.Tasks.Task.WhenAny(check, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.True(done == check, "The check blocked on the file.");
+            Assert.False(await check);
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
     // Row 582 with D17: a non-admin sees a moved audio stub only in a library; an admin sees it anyway.
     [Theory]
     [InlineData(false, false, false)]

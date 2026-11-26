@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
@@ -45,9 +43,6 @@ public sealed class StubLookup
 
     // How many levels above the item the version guard climbs: a file version, its owner, then that film's primary.
     private const int MaxClimb = 4;
-
-    // The most a .strm of the plugin holds: its URL is about 140 bytes.
-    private const int MaxStrmBytes = 1024;
 
     private static readonly string[] _namingArguments = ["itemId", "routeItemId", "videoId", "mediaSourceId", "routeMediaSourceId"];
 
@@ -381,30 +376,9 @@ public sealed class StubLookup
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
 
     // An audio .strm in the federated folder, or one with our URL wherever it lies, also with no folder set (row 582).
-    private bool IsAudioStub(Audio audio) => IsStrmInFolder(audio.Path) || StubIdInStrm(audio.Path) is not null;
+    private bool IsAudioStub(Audio audio) => IsStrmInFolder(audio.Path) || StrmFile.StubIdOf(audio.Path) is not null;
 
-    private StubEntry? FindByStrmUrl(string? path) => StubIdInStrm(path) is { } stubId ? _stubs.Find(stubId) : null;
-
-    // Reads the stub id from the URL in a .strm; null for a file that cannot be read, is too long or holds another URL.
-    private static string? StubIdInStrm(string? path)
-    {
-        if (!IsStrm(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var stream = new FileStream(path!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
-            var buffer = new byte[MaxStrmBytes + 1];
-            var read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
-            return read <= MaxStrmBytes && PlaybackRoutes.TryGetStubId(Encoding.UTF8.GetString(buffer, 0, read), out var stubId) ? stubId : null;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return null;
-        }
-    }
+    private StubEntry? FindByStrmUrl(string? path) => StrmFile.StubIdOf(path) is { } stubId ? _stubs.Find(stubId) : null;
 
     // A photo outside the federated folder whose Primary is a thumbnail of a photo stub the registry knows.
     private StubEntry? MovedPhotoStub(BaseItem? item)
