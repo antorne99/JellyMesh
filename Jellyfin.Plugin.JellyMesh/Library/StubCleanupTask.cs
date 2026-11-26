@@ -121,13 +121,14 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             return;
         }
 
+        var refresh = new List<Guid>();
         await _registry.EnterAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var state = HandOverSplits(root, _registry.State, cancellationToken);
             state = _cleaner?.Clear(root, state, cancellationToken) ?? state;
             state = await MergeStubsAsync(root, state, cancellationToken).ConfigureAwait(false);
-            state = RefreshNewSeries(root, state);
+            state = RefreshNewSeries(root, state, refresh);
             if (!ReferenceEquals(state, _registry.State))
             {
                 await _registry.SaveAsync(state, cancellationToken).ConfigureAwait(false);
@@ -138,16 +139,25 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
             _registry.Exit();
         }
 
-        await FinishRenamesAsync(cancellationToken).ConfigureAwait(false);
-        await LinkAsync(cancellationToken).ConfigureAwait(false);
-
-        // The new stubs have their items now, and their versions are linked (row 412).
-        if (_keeper is not null)
+        try
         {
-            await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
+            await FinishRenamesAsync(cancellationToken).ConfigureAwait(false);
+            await LinkAsync(cancellationToken).ConfigureAwait(false);
+
+            // The new stubs have their items now, and their versions are linked (row 412).
+            if (_keeper is not null)
+            {
+                await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await MigrateAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Queued last: a refresh beside the linker reloads the episodes and loses the "played" it aligned (row 63).
+            QueueRefresh(refresh);
         }
 
-        await MigrateAsync(cancellationToken).ConfigureAwait(false);
         progress.Report(100);
     }
 
@@ -422,7 +432,8 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
         }
     }
 
-    private StubState RefreshNewSeries(string root, StubState state)
+    // Marks the new stub series that have their item and collects them for the refresh queued at the end.
+    private StubState RefreshNewSeries(string root, StubState state, List<Guid> refresh)
     {
         var pending = state.Series.Where(series => series.NeedsRefresh).ToList();
         if (pending.Count == 0)
@@ -438,15 +449,24 @@ public sealed class StubCleanupTask : ILibraryPostScanTask
                 continue;
             }
 
+            refresh.Add(item.Id);
+            series[series.IndexOf(entry)] = entry with { NeedsRefresh = false };
+        }
+
+        return state with { Series = series };
+    }
+
+    // Queues the metadata refresh of the new stub series.
+    private void QueueRefresh(List<Guid> refresh)
+    {
+        foreach (var id in refresh)
+        {
             var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
             {
                 MetadataRefreshMode = MetadataRefreshMode.Default,
                 ImageRefreshMode = MetadataRefreshMode.Default
             };
-            _providers.QueueRefresh(item.Id, options, RefreshPriority.Normal);
-            series[series.IndexOf(entry)] = entry with { NeedsRefresh = false };
+            _providers.QueueRefresh(id, options, RefreshPriority.Normal);
         }
-
-        return state with { Series = series };
     }
 }
