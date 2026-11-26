@@ -342,6 +342,14 @@ public class PeerPlaybackInfoVersionTests
         Assert.Equal((false, false), DirectOf(seen));
     }
 
+    [Fact]
+    public async Task A_version_in_the_query_that_is_not_an_id_plays_transcoded()
+    {
+        var seen = await ArgumentsSeenAsync(ProviderFixture.SharedItem, new PostedBody(), new() { ["mediaSourceId"] = "not-an-id", ["enableDirectPlay"] = true });
+
+        Assert.Equal((false, false), DirectOf(seen));
+    }
+
     // Stock reads the version of the query over the body's, so the file the query names is what plays.
     [Theory]
     [InlineData(true)]
