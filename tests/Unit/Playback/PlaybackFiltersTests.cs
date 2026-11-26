@@ -2418,6 +2418,29 @@ public partial class PlaybackFiltersTests
         Assert.Null(_fixture.Sessions.Find(session.Id));
     }
 
+    // The client moved on, as after a stop: what it still asks of the session is gone, and no source failed.
+    [Fact]
+    public async Task Main_playlist_of_a_track_session_closed_while_its_master_is_read_is_not_found()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, FinampVariant()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        _fixture.Client.Playlists = _ =>
+        {
+            session.Close();
+            return RemoteFailure.Unreachable;
+        };
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(guard, context));
+
+        Assert.IsType<NotFoundResult>(context.Result);
+        Assert.False(session.HasFailed);
+        Assert.DoesNotContain(_audioLog.Lines, line => line.Contains("could not be read", StringComparison.Ordinal));
+    }
+
     // A rooted variant would leave the folder of the session.
     [Fact]
     public async Task Main_playlist_of_a_master_with_a_rooted_variant_is_a_bad_gateway()

@@ -344,6 +344,12 @@ public sealed class AudioStubRoutes
     private async Task<IActionResult> VariantAsync(HttpContext http, PlaybackSession session, string prefix, string token)
     {
         var master = await _coordinator.ReadPlaylistAsync(session, session.UpstreamPath, http.RequestAborted).ConfigureAwait(false);
+        if (!master.IsSuccess && session.IsClosed)
+        {
+            _logger.LogDebug("The variant of play session {PlaySessionId} was asked while the session closed: 404", session.Id);
+            return new NotFoundResult();
+        }
+
         if (!master.IsSuccess)
         {
             _logger.LogWarning("The master playlist of play session {PlaySessionId} could not be read for its variant: {Failure}: 502", session.Id, master.Failure);
