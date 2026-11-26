@@ -151,14 +151,16 @@ public sealed class PlaybackCoordinator
         var reachable = new List<(PlaybackOpenRequest Version, StubSource Source)>();
         var refused = 0;
         var tried = 0;
+        var slotTaken = false;
         foreach (var (version, source) in Chain(versions, previous))
         {
             tried++;
             var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
+            slotTaken |= ReplacesOf(previous, source) is not null;
             if (attempt.Response is not null)
             {
                 Remember(version, source);
-                await ReplaceAsync(previous, source, attempt.Response.PlaySessionId).ConfigureAwait(false);
+                await ReplaceAsync(previous, attempt.Response.PlaySessionId, slotTaken).ConfigureAwait(false);
                 await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
                 await RecordServedAsync(version, source).ConfigureAwait(false);
                 _logger.LogInformation(
@@ -734,15 +736,15 @@ public sealed class PlaybackCoordinator
     }
 
     // Keeps the old session serving until its client moves to the new one, as stock does. A failed session, or one whose
-    // slot a JellyMesh remote took over, closes now.
-    private async Task ReplaceAsync(PlaybackSession? previous, StubSource source, string? replacementId)
+    // slot a JellyMesh remote was told to free, closes now.
+    private async Task ReplaceAsync(PlaybackSession? previous, string? replacementId, bool slotTaken)
     {
         if (previous is null)
         {
             return;
         }
 
-        if (replacementId is null || previous.HasFailed || (previous.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId)))
+        if (replacementId is null || previous.HasFailed || slotTaken)
         {
             await CloseAsync(previous.Id).ConfigureAwait(false);
             return;
@@ -800,11 +802,16 @@ public sealed class PlaybackCoordinator
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
     }
 
+    // A new PlaybackInfo on the same JellyMesh server takes over the slot of the stream it replaces: on a full server a
+    // change of audio track would otherwise be refused by its own stream. The provider frees it even if it then refuses.
+    private string? ReplacesOf(PlaybackSession? previous, StubSource source)
+    {
+        return previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
+    }
+
     private async Task<Attempt> TryRemoteAsync(PlaybackOpenRequest request, StubSource source, bool keepIndexes, PlaybackSession? previous, CancellationToken cancellationToken)
     {
-        // A new PlaybackInfo on the same server takes over the slot of the stream it replaces: on a full server a change of
-        // audio track would otherwise be refused by its own stream.
-        var replaces = previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
+        var replaces = ReplacesOf(previous, source);
         var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
         var end = EndOf(source.ServerId).Token;
         var answer = await GatedAsync(

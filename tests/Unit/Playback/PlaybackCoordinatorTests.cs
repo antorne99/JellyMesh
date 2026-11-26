@@ -857,6 +857,28 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_jellymesh_remote_told_of_the_replacement_has_the_old_session_closed_even_when_another_server_serves()
+    {
+        var fixture = new CoordinatorFixture();
+        var first = PlaybackValues.Source("a");
+        fixture.Registry.AddJellyMesh(first.ServerId);
+        var stub = PlaybackValues.Stub(first, PlaybackValues.Source("b"));
+        await fixture.OpenAsync(stub);
+        var old = Assert.Single(fixture.Sessions.All);
+        fixture.Client.Answer = (request, _) => Task.FromResult(request.ItemId == "a"
+            ? RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.StreamLimitReached)
+            : FakePlaybackClient.Hls(request));
+        fixture.Client.Requests.Clear();
+
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+
+        Assert.Equal(old.RemotePlaySessionId, fixture.Client.Requests.First(request => request.ItemId == "a").ReplacesPlaySessionId);
+        Assert.Equal("b", fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.Source.ItemId);
+        Assert.Null(fixture.Sessions.Find(old.Id));
+        Assert.Equal(old.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
     public async Task A_jellymesh_remote_that_takes_the_slot_over_has_the_old_session_closed_at_once()
     {
         var fixture = new CoordinatorFixture();
