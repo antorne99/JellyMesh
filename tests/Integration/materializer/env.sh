@@ -1,10 +1,14 @@
 # Helpers for the private instance jm-mat. Source this file. NAME and PORT move it, STANDARD_URL and JELLYMESH_URL name
-# the two remotes (by default remoto-standard and remoto-jellymesh of the shared stack).
+# the two remotes as the instance reaches them (by default remoto-standard and remoto-jellymesh of the shared stack), and
+# STANDARD_HOST_URL the first one from this machine, with REMOTE_ADMIN_PASSWORD for its admin.
 set -euo pipefail
 NAME=${NAME:-jm-mat}
 PORT=${PORT:-18310}
+STANDARD_URL_GIVEN=${STANDARD_URL:+yes}
 STANDARD_URL=${STANDARD_URL:-http://host.docker.internal:8097}
 JELLYMESH_URL=${JELLYMESH_URL:-http://host.docker.internal:8098}
+STANDARD_HOST_URL=${STANDARD_HOST_URL:-${STANDARD_URL/host.docker.internal/127.0.0.1}}
+REMOTE_ADMIN_PASSWORD=${REMOTE_ADMIN_PASSWORD:-jellymesh-test}
 IMAGE=jellyfin/jellyfin:12.4.20261026-211555
 WT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 MEDIA=${MEDIA:-$WT/tests/Integration/media}  # gitignored: in a worktree, point it at the main checkout
@@ -75,4 +79,17 @@ sql_raw() {
     docker cp "$NAME:/config/data/$f" "$d/$f" 2>/dev/null || rm -f "$d/$f"
   done
   sqlite3 -noheader -list "$d/jellyfin.db" "$1"
+}
+# jm_sql <query>: the same on a copy of the plugin database.
+jm_sql() {
+  local d=${TMPDIR:-/tmp}/$NAME-jmdb f
+  mkdir -p "$d"
+  for f in jellymesh.db jellymesh.db-wal jellymesh.db-shm; do
+    docker cp "$NAME:/config/plugins/Jellyfin.Plugin.JellyMesh/$f" "$d/$f" 2>/dev/null || rm -f "$d/$f"
+  done
+  sqlite3 -noheader -list "$d/jellymesh.db" "$1"
+}
+# check <what> <expected> <actual>: one PASS or FAIL line; a FAIL sets FAILED.
+check() {
+  if [ "$2" = "$3" ]; then echo "PASS $1: $3"; else echo "FAIL $1: expected $2, got $3"; FAILED=1; fi
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fresh private instance with the two-path libraries, plugin installed, two remotes added.
+# Fresh private instance with the Film and Serie libraries over the local media and an extra folder, the plugin installed.
+# The libraries get no federated path: each scenario adds the folders of its servers by hand (library mode "None").
 source "$(dirname "${BASH_SOURCE[0]}")"/env.sh
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker volume rm "$NAME-config" "$NAME-cache" "$NAME-fed" "$NAME-extra" >/dev/null 2>&1 || true
@@ -15,11 +16,11 @@ post /Startup/Configuration '{"UICulture":"en-US","MetadataCountryCode":"IT","Pr
 get /Startup/User >/dev/null
 post /Startup/User '{"Name":"admin","Password":"jellymesh-test"}'
 post /Startup/Complete
-docker exec "$NAME" sh -c 'mkdir -p /federata/Film /federata/Serie /local-extra/film /local-extra/serie && touch /federata/Film/.jellymesh /federata/Serie/.jellymesh /local-extra/film/.keep /local-extra/serie/.keep'
+docker exec "$NAME" sh -c 'mkdir -p /local-extra/film /local-extra/serie && touch /local-extra/film/.keep /local-extra/serie/.keep'
 login admin jellymesh-test
 OPTS='{"LibraryOptions":{"EnableInternetProviders":true,"PreferredMetadataLanguage":"it","MetadataCountryCode":"IT"}}'
-post "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/local-extra/film&paths=/federata/Film" "$OPTS"
-post "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie&paths=/local-extra/serie&paths=/federata/Serie" "$OPTS"
+post "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/local-extra/film" "$OPTS"
+post "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie&paths=/local-extra/serie" "$OPTS"
 post /Users/New '{"Name":"mario","Password":"jellymesh-test"}' >/dev/null
 scan
 NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.sh" "$NAME"

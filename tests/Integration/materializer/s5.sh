@@ -15,4 +15,5 @@ echo "after replace all and a scan:"; show
 post "/Items/$I/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=Default" ; sleep 4
 echo "after full refresh:"; show
 echo "ffprobe on stub url ever: $(applog | grep -c 'ffprobe.*Play/[0-9a-f]\{32\}' || true); on the marker: $(applog | grep -c 'jellymesh-external-subtitle' || true)"
-applog | grep -E "\[ERR\]" | grep -v -i "tmdb\|TheMovieDb" | tail -5 | cut -c1-200
+applog | grep -E "\[ERR\]" | grep -v -i "tmdb\|TheMovieDb" | tail -5 | cut -c1-200 || true
+exit "${FAILED:-0}"
