@@ -32,10 +32,16 @@ install() {
   docker restart "$PREFIX-local" >/dev/null
 }
 
-# Three short tagged FLAC tracks, made in the remote container.
+# Three short tagged FLAC tracks and a two-part audiobook, made in the remote container.
 make_media() {
   docker exec "$PREFIX-remote" sh -c '
-    mkdir -p "/media/musica/Artista/Album"
+    mkdir -p "/media/musica/Artista/Album" "/media/audiolibri/Autore/Libro"
+    for n in 1 2; do
+      /usr/lib/jellyfin-ffmpeg/ffmpeg -loglevel error -y -f lavfi -i "sine=frequency=$((200 + n * 50)):duration=20" -c:a libmp3lame \
+        -metadata title="Parte $n" -metadata artist=Autore -metadata album_artist=Autore -metadata album=Libro -metadata track=$n \
+        "/media/audiolibri/Autore/Libro/0$n - Parte $n.mp3"
+    done'
+  docker exec "$PREFIX-remote" sh -c '
     for n in 1 2 3; do
       /usr/lib/jellyfin-ffmpeg/ffmpeg -loglevel error -y -f lavfi -i "sine=frequency=$((300 + n * 100)):duration=20" -c:a flac \
         -metadata title="Brano $n" -metadata artist=Artista -metadata album_artist=Artista -metadata album=Album -metadata track=$n \
@@ -45,14 +51,14 @@ make_media() {
 
 # anon <label> <path>: an anonymous GET; prints status, size, type and what the body is, then checks it.
 anon() {
-  local label=$1 path=$2 got size type body
+  local label=$1 path=$2 got size type body sha url
   got=$(curl -sS -o "$WORK/body-anon" -D "$WORK/headers-anon" -w '%{http_code}' -m 60 -H "$ACCEPT" \
     -H "Authorization: MediaBrowser Client=\"JellyMeshPlay\", Device=\"anon\", DeviceId=\"$PREFIX-anon\", Version=\"0.1\"" \
     "http://127.0.0.1:$PORT$path" || true)
   size=$(wc -c <"$WORK/body-anon" | tr -d ' ')
   type=$(tr -d '\r' <"$WORK/headers-anon" | sed -n 's/^[Cc]ontent-[Tt]ype: *//p' | tail -1)
   body=other
-  if [ "$(shasum -a 256 "$WORK/body-anon" | cut -c1-64)" = "$remote_sha" ]; then body="the remote file"
+  if sha=$(shasum -a 256 "$WORK/body-anon" | cut -c1-64); [ "$sha" = "$remote_sha" ] || [ "$sha" = "$book_sha" ]; then body="the remote file"
   elif grep -qaE '/JellyMesh/Play/|sig=' "$WORK/body-anon"; then body="the signed .strm URL"
   elif [ "$(head -c 4 "$WORK/body-anon")" = fLaC ]; then body="FLAC audio"
   elif [ "$(head -c 3 "$WORK/body-anon")" = ID3 ] || [ "$(head -c 2 "$WORK/body-anon" | od -An -tx1 | tr -d ' ')" = fffb ]; then body="MP3 audio"
@@ -66,7 +72,7 @@ anon() {
     url=$(grep -aoE 'https?://[^[:space:]]+' "$WORK/body-anon" | head -1)
     check "the signed URL from $label is refused on the published port" 403 \
       "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/$(cut -d/ -f4- <<<"$url")")"
-    echo "     the signed URL read inside the server: $(docker exec "$PREFIX-local" sh -c 'curl -sS -o /tmp/leaked -w "%{http_code} " "$1" && sha256sum /tmp/leaked | cut -c1-64' sh "$url" | tr '\n' ' ')(remote file $remote_sha)"
+    echo "     the signed URL read inside the server: $(docker exec "$PREFIX-local" sh -c 'curl -sS -o /tmp/leaked -w "%{http_code} " "$1" && sha256sum /tmp/leaked | cut -c1-64' sh "$url" | tr '\n' ' ')(remote files $remote_sha, $book_sha)"
   fi
 }
 
@@ -89,9 +95,8 @@ probe() {
   if [ -n "$segment" ] && [ "$(head -c 7 "$WORK/body-anon")" = '#EXTM3U' ]; then
     case $segment in /*) anon "$phase first segment" "$segment" ;; *) anon "$phase first segment" "/Audio/$it/$segment" ;; esac
   fi
-  # Who served it: reads of the .strm target on the local server and stream requests on the remote, since the last probe.
-  echo "     local reads of /JellyMesh/Play/: $(docker logs --since "$since" "$PREFIX-local" 2>&1 | grep -c 'JellyMesh/Play/' || true)," \
-    "remote stream requests: $(docker logs --since "$since" "$PREFIX-remote" 2>&1 | grep -ciE '/Audio/[^ ]*/(stream|universal)|/Items/[^ ]*/(File|Download)|ffmpeg' || true)"
+  # What stock gave ffmpeg as the input, if it ran.
+  docker logs --since "$since" "$PREFIX-local" 2>&1 | grep -o ' -i file:"[^"]*"' | sort -u | sed 's/^/     ffmpeg input:/' || true
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 }
 
@@ -104,7 +109,7 @@ registry() {
   rm -rf "$WORK/db" && mkdir -p "$WORK/db"
   docker cp "$PREFIX-local:$DATA/jellymesh.db" "$WORK/db/" >/dev/null
   docker cp "$PREFIX-local:$DATA/jellymesh.db-wal" "$WORK/db/" >/dev/null 2>&1 || true
-  sqlite3 "$WORK/db/jellymesh.db" "SELECT id, kind, relative_path FROM stub_entries WHERE kind LIKE '%Track%'" | sed 's/^/     /'
+  sqlite3 "$WORK/db/jellymesh.db" "SELECT id, kind, relative_path FROM stub_entries WHERE kind IN ('Track', 'AudioBook')" | sed 's/^/     /'
 }
 on_disk() { docker exec "$PREFIX-local" sh -c 'test -f "$1" && echo yes || echo no' sh "$1"; }
 
@@ -112,9 +117,11 @@ down
 start remote "$PREFIX-media:/media"
 make_media
 library remote Musica music /media/musica
+library remote Audiolibri books /media/audiolibri
 user remote jellymesh >/dev/null
 scan remote
 remote_sha=$(docker exec "$PREFIX-remote" sha256sum "/media/musica/Artista/Album/01 - Brano 1.flac" | cut -c1-64)
+book_sha=$(docker exec "$PREFIX-remote" sha256sum "/media/audiolibri/Autore/Libro/01 - Parte 1.mp3" | cut -c1-64)
 
 mkdir -p "$WORK/local-media"
 start local "$WORK/local-media:/media"
@@ -138,7 +145,11 @@ check "a track stub in the folder" yes "$([ -n "$old" ] && echo yes || echo no)"
 echo "     .strm of $old: $(docker exec "$PREFIX-local" cat "$old_strm" | sed 's/sig=.*/sig=.../')"
 echo "     libraries: $(get local /Library/VirtualFolders | jq -c '[.[] | {Name, Locations}]')"
 echo "     registry:"; registry
+book=$(get local '/Items?Recursive=true&IncludeItemTypes=AudioBook&Fields=Path' | jq -r '[.Items[] | select((.Path // "") | startswith("/federata/"))][0].Id // ""')
+echo "     audiobook stub: $book at $(where "$book")"
+echo "     protocols: $(get local "/Items?Ids=$old,$book&Fields=MediaSources" | jq -c '[.Items[] | {Type, Protocol: .MediaSources[0].Protocol, Path: .MediaSources[0].Path}]' | sed 's/sig=[^"]*/sig=.../g')"
 probe "control, in the folder" "$old"
+if [ -n "$book" ]; then probe "control, audiobook in the folder" "$book"; fi
 
 # The folder moves: the old stubs stay on disk and in Jellyfin, outside the new root.
 docker exec "$PREFIX-local" mkdir -p /fed2
@@ -152,6 +163,7 @@ echo "     old .strm on disk: $(on_disk "$old_strm"), Jellyfin path: $(where "$o
 echo "     libraries: $(get local /Library/VirtualFolders | jq -c '[.[] | {Name, Locations}]')"
 echo "     registry:"; registry
 probe "moved, before a scan" "$old"
+if [ -n "$book" ]; then probe "moved, audiobook before a scan" "$book"; fi
 scan local
 echo "== after the move and a scan"; tracks
 echo "     old .strm on disk: $(on_disk "$old_strm"), Jellyfin path: $(where "$old")"
@@ -164,6 +176,7 @@ echo "     the folder is emptied: $(settings local '.FederatedFolderPath = ""')"
 echo "== after emptying the folder"
 echo "     old Jellyfin path: $(where "$old")"
 if [ -n "$(where "$old")" ]; then probe "emptied" "$old"; else echo "     the old track is gone from Jellyfin"; fi
+if [ -n "$book" ] && [ -n "$(where "$book")" ]; then probe "emptied, audiobook" "$book"; fi
 if [ -n "$new" ] && [ -n "$(where "$new")" ]; then probe "emptied, newer stub" "$new"; fi
 
 echo "=== finished, failed: $FAILED"
