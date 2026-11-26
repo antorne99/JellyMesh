@@ -236,6 +236,7 @@ public class PeerGuardFilterTests
     [InlineData("Lyrics", "GetRemoteLyrics")]
     [InlineData("Search", "GetSearchHints")]
     [InlineData("Configuration", "GetNamedConfiguration")]
+    [InlineData("Image", "GetItemImageInfos")]
     [InlineData("Unknown", "AddedByAFutureJellyfin")]
     public async Task Stock_routes_are_closed_to_a_peer(string controller, string action)
     {
@@ -1490,6 +1491,17 @@ public class PeerGuardFilterTests
         var (_, ran) = await RunAsync(ProviderFixture.Stock("Image", "GetItemImage"), "GET", ProviderFixture.SharedItem);
 
         Assert.True(ran);
+    }
+
+    // The list of image details names the files on this server (row 585); an image by type and index does not.
+    [Theory]
+    [InlineData("GetItemImage")]
+    [InlineData("GetItemImageByIndex")]
+    [InlineData("GetItemImage2")]
+    public async Task An_image_by_type_of_a_shared_item_is_served(string action)
+    {
+        Assert.Equal(PeerRouteKind.Item, PeerRoutes.Classify(ProviderFixture.Stock("Image", action), "GET"));
+        Assert.True((await RunAsync(ProviderFixture.Stock("Image", action), "GET", ProviderFixture.SharedItem)).Ran);
     }
 
     [Fact]
