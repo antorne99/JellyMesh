@@ -181,6 +181,27 @@ public static class SmallStateSchema
     }
 
     /// <summary>
+    /// Adds the operation of each watch state carry (row 575), none for the rows already there. A table that has the
+    /// column is left as it is, so the step can also run under another version number.
+    /// </summary>
+    /// <param name="connection">The open database.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddCarryOperations(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        System.ArgumentNullException.ThrowIfNull(connection);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT count(*) FROM pragma_table_info('watch_state_carries') WHERE name = 'operation';";
+        if ((long)command.ExecuteScalar()! > 0)
+        {
+            return;
+        }
+
+        command.CommandText = "ALTER TABLE watch_state_carries ADD COLUMN operation TEXT;";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// Creates the tables, inside the step's transaction.
     /// </summary>
     /// <param name="connection">The writer connection.</param>

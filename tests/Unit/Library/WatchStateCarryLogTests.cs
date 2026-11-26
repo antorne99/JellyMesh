@@ -1,8 +1,13 @@
 using System;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Storage;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -34,8 +39,8 @@ public sealed class WatchStateCarryLogTests : IDisposable
     {
         using (var log = Log())
         {
-            log.Record(_user, _item, _date);
-            log.Record(_otherUser, _item, null);
+            log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
+            log.Record(_otherUser, _item, null, WatchStateCarryOperation.Merge);
         }
 
         Assert.Equal(2, _database.Count("watch_state_carries"));
@@ -53,8 +58,8 @@ public sealed class WatchStateCarryLogTests : IDisposable
     {
         using (var log = Log())
         {
-            log.Record(_user, _item, null);
-            log.Record(_user, _item, _date);
+            log.Record(_user, _item, null, WatchStateCarryOperation.Merge);
+            log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
         }
 
         using var reloaded = Log();
@@ -80,9 +85,9 @@ public sealed class WatchStateCarryLogTests : IDisposable
     {
         using (var log = Log())
         {
-            log.Record(_user, _item, _date);
-            log.Record(_otherUser, _item, _date);
-            log.Record(_user, _otherItem, _date);
+            log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
+            log.Record(_otherUser, _item, _date, WatchStateCarryOperation.Merge);
+            log.Record(_user, _otherItem, _date, WatchStateCarryOperation.Merge);
 
             Assert.Equal(2, log.Forget((user, item) => user == _otherUser || item == _otherItem));
             Assert.False(log.TryFind(_otherUser, _item, out _));
@@ -102,7 +107,7 @@ public sealed class WatchStateCarryLogTests : IDisposable
     {
         using (var log = Log())
         {
-            log.Record(_user, _item, _date);
+            log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
         }
 
         _database.Suspended = true;
@@ -111,7 +116,7 @@ public sealed class WatchStateCarryLogTests : IDisposable
 
         Assert.False(reloaded.EnsureLoaded());
         Assert.False(reloaded.TryFind(_user, _item, out _));
-        reloaded.Record(_otherUser, _item, _date);
+        reloaded.Record(_otherUser, _item, _date, WatchStateCarryOperation.Merge);
         Assert.False(await reloaded.SaveAsync(CancellationToken.None));
         Assert.Contains(logger.Lines, line => line.Contains("StoreSuspendedException", StringComparison.Ordinal));
 
@@ -132,8 +137,8 @@ public sealed class WatchStateCarryLogTests : IDisposable
         Assert.True(log.EnsureLoaded());
         _database.Suspended = true;
 
-        log.Record(_user, _item, _date);
-        log.Record(_otherUser, _item, _date);
+        log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
+        log.Record(_otherUser, _item, _date, WatchStateCarryOperation.Merge);
         Assert.Equal(1, log.Forget((user, _) => user == _otherUser));
 
         Assert.True(log.TryFind(_user, _item, out _));
@@ -147,6 +152,98 @@ public sealed class WatchStateCarryLogTests : IDisposable
         Assert.False(reloaded.TryFind(_otherUser, _item, out _));
     }
 
+    // Row 575: each record keeps the operation it comes from.
+    [Fact]
+    public void EachCarrySaysWhichOperationMadeIt_AfterARestart()
+    {
+        using (var log = Log())
+        {
+            log.Record(_user, _item, _date, WatchStateCarryOperation.Rename);
+            log.Record(_otherUser, _item, null, WatchStateCarryOperation.Migration);
+        }
+
+        using var reloaded = Log();
+
+        Assert.True(reloaded.TryFind(_user, _item, out var date, out var operation));
+        Assert.Equal((_date, WatchStateCarryOperation.Rename), (date!.Value, operation));
+        Assert.True(reloaded.TryFind(_otherUser, _item, out _, out var other));
+        Assert.Equal(WatchStateCarryOperation.Migration, other);
+    }
+
+    [Fact]
+    public void ARenameMarksTheRecord_AndALaterCarryOfAnotherOperationKeepsTheMark()
+    {
+        using (var log = Log())
+        {
+            log.Record(_user, _item, null, WatchStateCarryOperation.Merge);
+            log.Record(_user, _item, null, WatchStateCarryOperation.Rename);
+            log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
+        }
+
+        using var reloaded = Log();
+
+        Assert.True(reloaded.TryFind(_user, _item, out var date, out var operation));
+        Assert.Equal((_date, WatchStateCarryOperation.Rename), (date!.Value, operation));
+    }
+
+    [Theory]
+    [InlineData("NULL")]
+    [InlineData("'Teleport'")]
+    [InlineData("'1'")]
+    public async Task ARecordOfNoKnownOperationReadsAsUnknown_AndKeepsItAfterAMerge(string operation)
+    {
+        await _database.ExecuteAsync($"INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks, operation) VALUES ('{_user:N}', '{_item:N}', NULL, {operation});");
+        using var log = Log();
+
+        Assert.True(log.TryFind(_user, _item, out _, out var read));
+        Assert.Null(read);
+        log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
+        Assert.True(log.TryFind(_user, _item, out _, out var kept));
+        Assert.Null(kept);
+    }
+
+    // A carry recorded before row 575 has no operation: it reads as unknown after the schema step.
+    [Fact]
+    public async Task ACarryOfAnOlderSchemaReadsAsOfNoKnownOperation()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "jellymesh-carries-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using (var older = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All.Where(step => step.Version <= 8).ToList(), 1))
+            {
+                await older.WriteAsync(
+                    (connection, transaction) => StoreSql.Execute(connection, transaction, "INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks) VALUES ($user, $item, $played);", ("$user", StoreSql.Text(_user)), ("$item", StoreSql.Text(_item)), ("$played", _date.Ticks)),
+                    CancellationToken.None);
+            }
+
+            using var database = new TestDatabase(folder);
+            using var log = new WatchStateCarryLog(database, new CapturingLogger<WatchStateCarryLog>());
+
+            Assert.True(log.TryFind(_user, _item, out var date, out var operation));
+            Assert.Equal(_date, date);
+            Assert.Null(operation);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TheStepOfTheOperationsLeavesADatabaseThatHasThemAsItIs()
+    {
+        await _database.WriteAsync(SmallStateSchema.AddCarryOperations, CancellationToken.None);
+
+        using var log = Log();
+        log.Record(_user, _item, _date, WatchStateCarryOperation.Rename);
+        Assert.True(log.TryFind(_user, _item, out _, out var operation));
+        Assert.Equal(WatchStateCarryOperation.Rename, operation);
+    }
+
     private WatchStateCarryLog Log(CapturingLogger<WatchStateCarryLog>? logger = null) => new(_database, logger ?? new CapturingLogger<WatchStateCarryLog>());
 
     // A database opened again, as from a copy, may hold other carries: they are read again before use.
@@ -154,7 +251,7 @@ public sealed class WatchStateCarryLogTests : IDisposable
     public async Task AfterTheDatabaseIsOpenedAgainTheCarriesAreReadAgain()
     {
         using var log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
-        log.Record(_user, _item, _date);
+        log.Record(_user, _item, _date, WatchStateCarryOperation.Merge);
         await _database.ExecuteAsync("DELETE FROM watch_state_carries;");
 
         _database.Reopen();

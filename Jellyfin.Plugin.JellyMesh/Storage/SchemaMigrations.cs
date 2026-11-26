@@ -55,7 +55,10 @@ public static class SchemaMigrations
         new(10, SmallStateSchema.AddKeptArtists),
 
         // The kinds of their own in the kept watch state (row 532).
-        new(KeptTypesVersion, SmallStateSchema.AddKeptTypes)
+        new(KeptTypesVersion, SmallStateSchema.AddKeptTypes),
+
+        // The operation of each watch state carry (row 575).
+        new(12, SmallStateSchema.AddCarryOperations)
     ];
 
     /// <summary>

@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// <see cref="IWatchStateCarryLog"/> over the table <c>watch_state_carries</c> of the plugin database. It holds user and
-/// item IDs and a date. A carry recorded or forgotten is written at once in a short transaction; one that cannot be is
+/// item IDs, a date and the operation of the carry. A carry recorded or forgotten is written at once in a short transaction; one that cannot be is
 /// written by the next save. While the database cannot be read the carries are suspended until it reads (decision 176).
 /// </summary>
 public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
@@ -23,11 +23,11 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     /// </summary>
     public const string FileName = "watch-state-carries.json";
 
-    private const string SelectAll = "SELECT user_id, item_id, last_played_ticks FROM watch_state_carries;";
+    private const string SelectAll = "SELECT user_id, item_id, last_played_ticks, operation FROM watch_state_carries;";
 
     private const string Upsert = """
-        INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks) VALUES ($user, $item, $played)
-        ON CONFLICT (user_id, item_id) DO UPDATE SET last_played_ticks = excluded.last_played_ticks;
+        INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks, operation) VALUES ($user, $item, $played, $operation)
+        ON CONFLICT (user_id, item_id) DO UPDATE SET last_played_ticks = excluded.last_played_ticks, operation = excluded.operation;
         """;
 
     private const string Delete = "DELETE FROM watch_state_carries WHERE user_id = $user AND item_id = $item;";
@@ -36,7 +36,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     private readonly ILogger<WatchStateCarryLog> _logger;
     private readonly ErrorLogLimits _errorLogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), DateTime?> _carries = new();
+    private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), Carry> _carries = new();
     private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), byte> _unsaved = new();
     private volatile bool _loaded;
 
@@ -79,9 +79,9 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
                     _carries.TryRemove(key, out _);
                 }
 
-                foreach (var (key, lastPlayed) in rows.Where(row => !_unsaved.ContainsKey(row.Key)))
+                foreach (var (key, carry) in rows.Where(row => !_unsaved.ContainsKey(row.Key)))
                 {
-                    _carries[key] = lastPlayed;
+                    _carries[key] = carry;
                 }
 
                 Interlocked.Exchange(ref _loadedGeneration, generation);
@@ -102,14 +102,23 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
     }
 
     /// <inheritdoc />
-    public bool TryFind(Guid userId, Guid fromItemId, out DateTime? lastPlayedDate)
+    public bool TryFind(Guid userId, Guid fromItemId, out DateTime? lastPlayedDate) => TryFind(userId, fromItemId, out lastPlayedDate, out _);
+
+    /// <inheritdoc />
+    public bool TryFind(Guid userId, Guid fromItemId, out DateTime? lastPlayedDate, out WatchStateCarryOperation? operation)
     {
-        lastPlayedDate = null;
-        return EnsureLoaded() && _carries.TryGetValue((userId, fromItemId), out lastPlayedDate);
+        (lastPlayedDate, operation) = (null, null);
+        if (!EnsureLoaded() || !_carries.TryGetValue((userId, fromItemId), out var carry))
+        {
+            return false;
+        }
+
+        (lastPlayedDate, operation) = (carry.LastPlayedDate, carry.Operation);
+        return true;
     }
 
     /// <inheritdoc />
-    public void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate)
+    public void Record(Guid userId, Guid fromItemId, DateTime? lastPlayedDate, WatchStateCarryOperation operation)
     {
         if (!EnsureLoaded())
         {
@@ -117,7 +126,10 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
         }
 
         var key = (userId, fromItemId);
-        _carries[key] = lastPlayedDate;
+
+        // Only a rename changes the operation of a record, so that a later round of it still finds its own (row 575).
+        var kept = operation != WatchStateCarryOperation.Rename && _carries.TryGetValue(key, out var before) ? before.Operation : operation;
+        _carries[key] = new Carry(lastPlayedDate, kept);
         _unsaved[key] = 0;
         WriteKeysAsync([key], CancellationToken.None).GetAwaiter().GetResult();
     }
@@ -165,15 +177,22 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
 
     private bool IsCurrent() => _loaded && Interlocked.Read(ref _loadedGeneration) == _database.Generation;
 
-    private static List<KeyValuePair<(Guid UserId, Guid ItemId), DateTime?>> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
+    // A name this build does not know reads as no operation, as a row made before row 575.
+    private static WatchStateCarryOperation? OperationOf(string? name) =>
+        Enum.TryParse<WatchStateCarryOperation>(name, false, out var operation) && string.Equals(Enum.GetName(operation), name, StringComparison.Ordinal)
+            ? operation
+            : null;
+
+    private static List<KeyValuePair<(Guid UserId, Guid ItemId), Carry>> ReadAll(SqliteConnection connection, SqliteTransaction transaction)
     {
-        var rows = new List<KeyValuePair<(Guid, Guid), DateTime?>>();
+        var rows = new List<KeyValuePair<(Guid, Guid), Carry>>();
         using var command = StoreSql.Command(connection, transaction, SelectAll);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
             var lastPlayed = StoreSql.LongOrNull(reader, 2) is { } ticks ? new DateTime(ticks, DateTimeKind.Utc) : (DateTime?)null;
-            rows.Add(new((Guid.ParseExact(reader.GetString(0), "N"), Guid.ParseExact(reader.GetString(1), "N")), lastPlayed));
+            var carry = new Carry(lastPlayed, OperationOf(StoreSql.TextOrNull(reader, 3)));
+            rows.Add(new((Guid.ParseExact(reader.GetString(0), "N"), Guid.ParseExact(reader.GetString(1), "N")), carry));
         }
 
         return rows;
@@ -195,9 +214,9 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
                     foreach (var key in keys)
                     {
                         var (user, item) = (StoreSql.Text(key.UserId), StoreSql.Text(key.ItemId));
-                        if (_carries.TryGetValue(key, out var lastPlayed))
+                        if (_carries.TryGetValue(key, out var carry))
                         {
-                            StoreSql.Execute(connection, transaction, Upsert, ("$user", user), ("$item", item), ("$played", lastPlayed?.Ticks));
+                            StoreSql.Execute(connection, transaction, Upsert, ("$user", user), ("$item", item), ("$played", carry.LastPlayedDate?.Ticks), ("$operation", carry.Operation?.ToString()));
                         }
                         else
                         {
@@ -224,4 +243,7 @@ public sealed class WatchStateCarryLog : IWatchStateCarryLog, IDisposable
             return false;
         }
     }
+
+    // The user's last watch of the old item when it was carried, and the operation of the carry, null if none is known.
+    private readonly record struct Carry(DateTime? LastPlayedDate, WatchStateCarryOperation? Operation);
 }
