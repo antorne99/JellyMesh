@@ -941,10 +941,47 @@ public class PlaybackCoordinatorTests
         await fixture.Coordinator.CloseAsync(session.Id);
         held.SetResult();
 
-        Assert.False((await segment).IsSuccess);
-        Assert.False((await playlist).IsSuccess);
+        Assert.Equal(RemoteFailure.Withdrawn, (await segment).Failure);
+        Assert.Equal(RemoteFailure.Withdrawn, (await playlist).Failure);
         Assert.DoesNotContain("/late.ts", fixture.Client.Opened);
         Assert.DoesNotContain("/late.m3u8", read);
+        foreach (var result in await Task.WhenAll(calls))
+        {
+            result.Value?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task A_closed_session_sends_no_call_and_does_not_wait_for_a_place_in_the_queue()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(fixture.Sessions.All);
+        var held = new TaskCompletionSource();
+        var arrived = 0;
+        fixture.Client.Open = async (_, token) =>
+        {
+            Interlocked.Increment(ref arrived);
+            await held.Task.WaitAsync(token);
+            return FakePlaybackClient.Bytes();
+        };
+        var busy = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        var calls = Enumerable.Range(0, PlaybackLimits.CallsPerServer)
+            .Select(_ => Task.Run(() => fixture.Coordinator.OpenAsync(source.ServerId, busy, CancellationToken.None)))
+            .ToList();
+        while (Volatile.Read(ref arrived) < PlaybackLimits.CallsPerServer)
+        {
+            await Task.Delay(10);
+        }
+
+        await fixture.Coordinator.CloseAsync(session.Id);
+        var segment = await fixture.Coordinator.OpenAsync(session, new RemoteStreamRequest(HttpMethod.Get, "/late.ts", null), CancellationToken.None);
+        var playlist = await fixture.Coordinator.ReadPlaylistAsync(session, "/late.m3u8", CancellationToken.None);
+        held.SetResult();
+
+        Assert.Equal(RemoteFailure.Withdrawn, segment.Failure);
+        Assert.Equal(RemoteFailure.Withdrawn, playlist.Failure);
         foreach (var result in await Task.WhenAll(calls))
         {
             result.Value?.Dispose();

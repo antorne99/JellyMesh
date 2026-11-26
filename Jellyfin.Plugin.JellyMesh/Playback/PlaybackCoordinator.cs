@@ -391,6 +391,11 @@ public sealed class PlaybackCoordinator
     // A session closed while its call waited in the queue sends nothing: the remote stop already went out.
     private async Task<RemoteResult<RemoteContent>> OpenStreamAsync(Guid serverId, PlaybackSession? owner, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
+        if (owner is { IsClosed: true })
+        {
+            return RemoteResult.Fail<RemoteContent>(RemoteFailure.Withdrawn);
+        }
+
         var place = _streams.TryEnter(serverId);
         if (place is null)
         {
@@ -406,7 +411,7 @@ public sealed class PlaybackCoordinator
             var opened = await GatedAsync(
                 serverId,
                 Times.StreamOpen,
-                (endpoint, session, token) => owner is { IsClosed: true } ? Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy)) : _client.OpenStreamAsync(endpoint, session, request, token),
+                (endpoint, session, token) => owner is { IsClosed: true } ? Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Withdrawn)) : _client.OpenStreamAsync(endpoint, session, request, token),
                 cancellationToken).ConfigureAwait(false);
             if (opened.IsSuccess && end.IsCancellationRequested)
             {
@@ -436,10 +441,15 @@ public sealed class PlaybackCoordinator
     public Task<RemoteResult<string>> ReadPlaylistAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
+        if (session.IsClosed)
+        {
+            return Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Withdrawn));
+        }
+
         return GatedAsync(
             session.Source.ServerId,
             Times.StreamOpen,
-            (endpoint, remote, token) => session.IsClosed ? Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Busy)) : _client.ReadPlaylistAsync(endpoint, remote, path, token),
+            (endpoint, remote, token) => session.IsClosed ? Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Withdrawn)) : _client.ReadPlaylistAsync(endpoint, remote, path, token),
             cancellationToken);
     }
 
