@@ -291,6 +291,120 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Equal([old.Id], report.ForgettableOldItemIds);
     }
 
+// Row 572: the old row goes whole onto the new stub of a pure rename, over the row Jellyfin reattached by key.
+    [Fact]
+    public async Task ARenameCopiesNotWatchedOverTheRowJellyfinReattached()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.PlaybackPositionTicks = 500;
+        reattached.LastPlayedDate = _older;
+        reattached.IsFavorite = true;
+        reattached.Rating = 7;
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        var row = Row(_mario, renamed);
+        Assert.Equal((false, 0, 0L, (DateTime?)null, false, (double?)null), (row.Played, row.PlayCount, row.PlaybackPositionTicks, row.LastPlayedDate, row.IsFavorite, row.Rating));
+        Assert.Equal(renamed.Id.ToString("N"), row.Key);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+    [Fact]
+    public async Task ARenameCopiesACountWithNoDateOverADatedReattachedRow()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.LastPlayedDate = _older;
+
+        await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal((true, 2, (DateTime?)null), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
+    [Fact]
+    public async Task ARenameKeepsADatedPlayWithItsPositionFavoriteAndRating()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        row.PlaybackPositionTicks = 300;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 8;
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.LastPlayedDate = _newest;
+
+        await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        var copied = Row(_mario, renamed);
+        Assert.Equal((true, 2, 300L, (DateTime?)_newer, true, (double?)8), (copied.Played, copied.PlayCount, copied.PlaybackPositionTicks, copied.LastPlayedDate, copied.IsFavorite, copied.Rating));
+    }
+
+    [Fact]
+    public async Task ARenameSavesOnlyTheRowsThatDiffer()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        Row(_mario, old).IsFavorite = true;
+
+        await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal([(_mario.Id, renamed.Id, UserDataSaveReason.Import)], _saves);
+    }
+
+    [Fact]
+    public async Task ASecondRunOfARenameDoesNotOverwriteWhatTheUserDidOnTheNewStub()
+    {
+        // The old file could not go, so the next round carries again (decisions 155, 187).
+        var (old, oldStub, renamed) = Renamed();
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        var move = RenameMove(old, oldStub, renamed);
+        await CarryAsync(move);
+        Assert.False(Row(_mario, renamed).Played);
+
+        Row(_mario, renamed).Played = true;
+        Row(_mario, renamed).PlayCount = 1;
+        Row(_mario, renamed).LastPlayedDate = _newest;
+        _saves.Clear();
+        await RestartAsync();
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.Equal((true, 1, (DateTime?)_newest), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
+    [Fact]
+    public async Task AMoveThatIsNotAPureRenameKeepsTheMostRecentRow()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        var newer = Row(_mario, renamed);
+        newer.Played = true;
+        newer.PlayCount = 1;
+        newer.LastPlayedDate = _older;
+
+        await CarryAsync(RemovingMove(old, oldStub, (renamed, _serverA)));
+
+        Assert.Equal((1, (DateTime?)_older), (Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
     [Fact]
     public async Task AVersionOwnedByTheOldItemIsNotLinkedWhenTheOldItemStays()
     {
@@ -1333,6 +1447,21 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public void OnlyAMoveMadeAsAPureRenameCopiesTheWholeRow()
+    {
+        var (old, oldStub) = Old();
+        var target = new WatchStateTarget(Guid.NewGuid(), _serverA);
+
+        var rename = WatchStateMove.OfRename(oldStub, old.Id, target);
+
+        Assert.True(rename.IsPureRename);
+        Assert.True(rename.RemovesOldItem);
+        Assert.Equal([target], rename.Targets);
+        Assert.False(WatchStateMove.Of(oldStub, old.Id, [target], removesOldItem: true).IsPureRename);
+        Assert.False(WatchStateMove.OfMerge(oldStub, old.Id, [target]).IsPureRename);
+    }
+
+    [Fact]
     public void TheServersOfAMoveFollowTheSourcesOfTheOldStubBestFirst()
     {
         var stub = new StubEntry
@@ -1357,6 +1486,20 @@ public sealed class WatchStateCarrierTests : IDisposable
     // A move whose old item is removed right after, as a rename or the automatic migration (decision 179).
     private static WatchStateMove RemovingMove(BaseItem from, StubEntry stub, params (BaseItem Item, Guid? Server)[] versions) =>
         WatchStateMove.Of(stub, from.Id, versions.Select(version => new WatchStateTarget(version.Item.Id, version.Server)).ToList(), removesOldItem: true);
+
+    // The move of a pure rename: the same stub under a new file name (row 572).
+    private static WatchStateMove RenameMove(BaseItem from, StubEntry stub, BaseItem renamed) =>
+        WatchStateMove.OfRename(stub, from.Id, new WatchStateTarget(renamed.Id, _serverA));
+
+    // An old stub and its renamed item, owned by the old item until its file goes, as after the scan of a rename.
+    private (Video Old, StubEntry OldStub, Movie Renamed) Renamed()
+    {
+        var (old, oldStub) = Old();
+        var renamed = Movie(_serverA);
+        renamed.OwnerId = old.Id;
+        renamed.SetPrimaryVersionId(old.Id);
+        return (old, oldStub, renamed);
+    }
 
     private static void Link(Video primary, Video alternate)
     {
