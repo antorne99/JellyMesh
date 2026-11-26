@@ -436,6 +436,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Seasons from two servers:** when two servers give different names or plots for a season of the same series, which one Jellyfin shows is effectively random, and stays the same on a given install. Each episode keeps the season name of its own server.
 - **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 only starting the plugin and opening its database have been checked.
 - **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
+- **Your own `.strm` files in a shared library:** another JellyMesh server can play them only transcoded by your server, never directly. A client of that server that accepts only direct play, with no transcoding profile, gets an error for those titles.
 
 ### Built-in limits
 
