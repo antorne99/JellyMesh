@@ -68,7 +68,7 @@ public sealed class SessionRelay
         var playlist = await _coordinator.ReadPlaylistAsync(session, path, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess)
         {
-            return Failed(http, session, path, part, playlist);
+            return session.IsClosed ? Closed(session) : Failed(http, session, path, part, playlist);
         }
 
         var text = HlsPlaylistRewriter.Rewrite(playlist.Value!, session, remoteFolder, prefix, token, PlaybackCoordinator.SecretsOf(session));
@@ -103,10 +103,10 @@ public sealed class SessionRelay
         var method = HttpMethods.IsHead(http.Request.Method) ? HttpMethod.Head : HttpMethod.Get;
         var range = http.Request.Headers.Range.ToString();
         var request = new RemoteStreamRequest(method, path, string.IsNullOrEmpty(range) ? null : range, Device: session.RemoteDevice);
-        var opened = await _coordinator.OpenAsync(session.Source.ServerId, request, cancellationToken).ConfigureAwait(false);
+        var opened = await _coordinator.OpenAsync(session, request, cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
-            return Failed(http, session, path, part, opened);
+            return session.IsClosed ? Closed(session) : Failed(http, session, path, part, opened);
         }
 
         using var stream = opened.Value!;
@@ -180,6 +180,13 @@ public sealed class SessionRelay
         }
 
         return new StatusCodeResult(StatusCodes.Status502BadGateway);
+    }
+
+    // A session closed while its call ran is gone for its client, and its call fails nothing.
+    private NotFoundResult Closed(PlaybackSession session)
+    {
+        _logger.LogDebug("A call of play session {PlaySessionId} ended after the session closed: 404", session.Id);
+        return new NotFoundResult();
     }
 
     // A retry of the player after its session failed (row 57): it gets 502 until it asks PlaybackInfo again.

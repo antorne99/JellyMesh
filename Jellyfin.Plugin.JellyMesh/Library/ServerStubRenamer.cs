@@ -234,7 +234,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 if (old is not null && renamed is not null)
                 {
                     var from = stub with { RelativePath = rename.OldPath };
-                    moves.Add((rename, stub, WatchStateMove.Of(from, old.Id, [new WatchStateTarget(renamed.Id, stub.ServerId)], removesOldItem: true)));
+                    moves.Add((rename, stub, WatchStateMove.OfRename(from, old.Id, new WatchStateTarget(renamed.Id, stub.ServerId))));
                 }
             }
 

@@ -121,13 +121,13 @@ public sealed class PlaybackSweeper : BackgroundService
         {
             try
             {
-                await Task.WhenAll(_coordinator.ReleaseAbandonedAsync(), _coordinator.CloseFailedAsync()).ConfigureAwait(false);
+                await Task.WhenAll(_coordinator.ReleaseAbandonedAsync(), _coordinator.CloseFailedAsync(), _coordinator.CloseReplacedAsync()).ConfigureAwait(false);
             }
 #pragma warning disable CA1031 // This only saves time on a remote, and must not end the loop or touch a stream.
             catch (Exception exception)
 #pragma warning restore CA1031
             {
-                _logger.LogError("Could not tell a remote that a client went or a source dropped: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
+                _logger.LogError("Could not tell a remote that a client went, a source dropped or a stream was replaced: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Playback.Of(exception));
             }
         }
     }

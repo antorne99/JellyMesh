@@ -10,7 +10,8 @@
 #   peer    $PREFIX-peer    $PORT+2  Mare: stock, remoto-jellymesh
 # The older builds come from their tags with git archive, built in the SDK container of the project.
 # label: a 0.5 server whose label is over 40 bytes keeps it while the migration waits, refuses a rename, and has its stubs
-# renamed once at the first start after the migration ends, with the watch state kept (§10 rows 556, 564-567).
+# renamed once at the first start after the migration ends, with the watch state kept: the whole row of each stub, not
+# watched and a count with no date included, over the row of 0.4 that Jellyfin reattaches by key (§10 rows 556, 564-567, 572).
 # usage: MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-f42] [PORT=8290] [CASES="auto manual flat half label"] folders.sh
 # The containers are stopped at the end, not removed; the next run makes them again.
 set -euo pipefail
@@ -244,6 +245,15 @@ rename_to() {
   body=$(save_server local "$CASA" "$(jq -nc --arg n "$1" '{Name: $n}')")
   echo "$(status) $(jq -r '"\(.Field) \(.Failure)"' <<<"$body" 2>/dev/null)"
 }
+# renamed_state: the renamed stubs that alice marked not watched or counted with no date keep that row (row 572). Both
+# films have provider IDs, so Jellyfin reattaches their rows of 0.4 by key.
+renamed_state() {
+  local audio multiple
+  audio=$(film "$(server_folder "$CASA")" "JM Audio e Sottotitoli")
+  multiple=$(film "$(server_folder "$CASA")" "JM Versioni Multiple")
+  check "the renamed JM Audio e Sottotitoli stays not watched" "false 0" "$(data "$ALICE" "$audio" | jq -r '"\(.Played) \(.PlayCount)"')"
+  check "the renamed JM Versioni Multiple keeps its count with no date" "true 2 null" "$(data "$ALICE" "$multiple" | jq -r '"\(.Played) \(.PlayCount) \(.LastPlayedDate)"')"
+}
 renamed_lines() { docker logs "$PREFIX-local" 2>&1 | grep -c 'Renamed the stubs of 1 servers whose label was over the limit' || true; }
 # page_lock: whether the edit form of Casa on the page locks the name, and its note, in English then Italian.
 page_lock() {
@@ -365,6 +375,9 @@ for case in $CASES; do
       CASA_NAME=$LONG_LABEL
       fresh_04
       CASA_NAME=Casa
+      audio=$(film /federata "JM Audio e Sottotitoli")
+      multiple=$(film /federata "JM Versioni Multiple")
+      check "alice has watched JM Audio e Sottotitoli and JM Versioni Multiple once on 0.4" "200 200" "$(set_data "$ALICE" "$audio" '{"Played":true,"PlayCount":1}') $(set_data "$ALICE" "$multiple" '{"Played":true,"PlayCount":1}')"
       to_05 Manual
       to_06
       check "the folder migration waits for the admin" "AddPaths Manual" "$(migration | jq -r '"\(.Step) \(.Mode)"')"
@@ -395,10 +408,16 @@ for case in $CASES; do
       check "the end of the migration renames nothing by itself" 0 "$(renamed_lines)"
       tears=$(film "$(server_folder "$CASA")" "Tears of Steel")
       omonimo=$(film "$(server_folder "$CASA")" "Titolo Omonimo")
-      # A real play dates the row: the newest date wins over the row of 0.4 that Jellyfin reattaches by key.
+      audio=$(film "$(server_folder "$CASA")" "JM Audio e Sottotitoli")
+      multiple=$(film "$(server_folder "$CASA")" "JM Versioni Multiple")
+      # Jellyfin reattaches the row of 0.4 to the renamed stub by key: the rename copies the whole row over it (row 572).
       twice=$(printf '{"Played":true,"PlayCount":2,"IsFavorite":true,"LastPlayedDate":"%s"}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
       check "alice watches Tears of Steel twice and likes it" 200 "$(set_data "$ALICE" "$tears" "$twice")"
       check "alice is in the middle of Titolo Omonimo" 200 "$(set_data "$ALICE" "$omonimo" '{"PlaybackPositionTicks":300000000}')"
+      check "alice marks JM Audio e Sottotitoli not watched" 200 "$(set_data "$ALICE" "$audio" '{"Played":false,"PlayCount":0}')"
+      check "alice counts JM Versioni Multiple twice with no date" 200 "$(set_data "$ALICE" "$multiple" '{"Played":true,"PlayCount":2}')"
+      check "so JM Audio e Sottotitoli is not watched" "false 0" "$(data "$ALICE" "$audio" | jq -r '"\(.Played) \(.PlayCount)"')"
+      check "and JM Versioni Multiple watched twice with no date" "true 2 null" "$(data "$ALICE" "$multiple" | jq -r '"\(.Played) \(.PlayCount) \(.LastPlayedDate)"')"
       long=$(casa_stubs "$LONG_LABEL")
       restart_local
       for i in $(seq 1 90); do
@@ -414,12 +433,14 @@ for case in $CASES; do
       omonimo=$(film "$(server_folder "$CASA")" "Titolo Omonimo")
       check "the renamed Tears of Steel keeps the state of alice" "2 true true" "$(data "$ALICE" "$tears" | jq -r '"\(.PlayCount) \(.Played) \(.IsFavorite)"')"
       check "and Titolo Omonimo its position" 300000000 "$(data "$ALICE" "$omonimo" | jq -r .PlaybackPositionTicks)"
+      renamed_state
       check "the name of the server is unchanged" "$LONG_LABEL" "$(casa_name)"
       before=$(docker exec "$PREFIX-local" sh -c "find '$(server_folder "$CASA")' -name '*.strm' | sort | md5sum")
       restart_local
       sleep 45
       check "a later start renames nothing again" 1 "$(renamed_lines)"
       check "and leaves the stubs where they are" "$before" "$(docker exec "$PREFIX-local" sh -c "find '$(server_folder "$CASA")' -name '*.strm' | sort | md5sum")"
+      renamed_state
       ;;
   esac
 done

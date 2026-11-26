@@ -116,6 +116,12 @@ public sealed class AudioStubRoutes
         }
 
         using var scope = session.TryBeginRequest(_clock, http.RequestAborted);
+        if (scope is null && session.IsClosed)
+        {
+            _logger.LogDebug("A track request reached play session {PlaySessionId} while it was closed: 404", session.Id);
+            return new NotFoundResult();
+        }
+
         if (scope is null)
         {
             _logger.LogWarning("Play session {PlaySessionId} already has {Count} requests running: one more is refused with 503", session.Id, PlaybackLimits.RequestsPerSession);

@@ -614,6 +614,12 @@ public sealed class RemoteServerRegistry : IRemoteServerRegistry, IDisposable
             result = await CallOnceAsync(server, runtime, result.Session, anonymous, call, cancellationToken).ConfigureAwait(false);
         }
 
+        // A call dropped here before it was sent says nothing about the server.
+        if (result.Attempt.Failure == RemoteFailure.Withdrawn)
+        {
+            return result.Attempt;
+        }
+
         if (!anonymous)
         {
             Record(runtime, server.Name, result.Attempt.Failure, origin == CallOrigin.Server, result.Attempt.Error);

@@ -309,7 +309,7 @@ public sealed class ServerStubRenamerTests : IDisposable
         await _renamer.FinishAsync(CancellationToken.None);
 
         var move = _carries.Single().Single();
-        Assert.Equal((old.Id, "f", FilmPath("Casa"), true), (move.FromItemId, move.FromStubId, move.FromPath, move.RemovesOldItem));
+        Assert.Equal((old.Id, "f", FilmPath("Casa"), true, true), (move.FromItemId, move.FromStubId, move.FromPath, move.RemovesOldItem, move.IsPureRename));
         Assert.Equal([new WatchStateTarget(renamed.Id, _server)], move.Targets);
         Assert.False(File.Exists(Full(FilmPath("Casa"))));
         Assert.True(File.Exists(Full(FilmPath("Mare"))));

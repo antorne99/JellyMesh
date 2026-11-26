@@ -96,6 +96,24 @@ public class ServerReachabilityActivityTests
             CancellationToken.None);
 
     [Fact]
+    public async Task A_playback_call_withdrawn_before_it_was_sent_is_neither_recorded_nor_logged_as_a_failure()
+    {
+        var remote = new SwitchableRemote();
+        var logger = new CapturingLogger<RemoteServerRegistry>();
+        using var registry = remote.NewRegistry(logger);
+        var server = await remote.AddAsync(registry);
+        await PlaybackCallAsync(registry, server.Id, RemoteFailure.None);
+        logger.Levels.Clear();
+
+        var result = await PlaybackCallAsync(registry, server.Id, RemoteFailure.Withdrawn);
+
+        Assert.Equal(RemoteFailure.Withdrawn, result.Failure);
+        Assert.Equal(RemoteFailure.None, registry.GetServers().Single().LastFailure);
+        Assert.DoesNotContain(LogLevel.Warning, logger.Levels);
+        Assert.Empty(remote.Activity.Entries);
+    }
+
+    [Fact]
     public async Task After_a_restart_the_first_failure_is_written_and_the_first_answer_is_not()
     {
         var remote = new SwitchableRemote();
@@ -213,11 +231,11 @@ public class ServerReachabilityActivityTests
 
         public RecordingActivityWriter Activity { get; } = new();
 
-        public RemoteServerRegistry NewRegistry()
+        public RemoteServerRegistry NewRegistry(CapturingLogger<RemoteServerRegistry>? logger = null)
         {
             var vault = new CredentialVault(KeySource, Store);
             var client = new JellyfinRemoteClient(new StubHttpClientFactory(Handler)) { Delay = (_, _) => Task.CompletedTask };
-            return new RemoteServerRegistry(Store, vault, client, new CapturingLogger<RemoteServerRegistry>(), Activity);
+            return new RemoteServerRegistry(Store, vault, client, logger ?? new CapturingLogger<RemoteServerRegistry>(), Activity);
         }
 
         public async Task<RemoteServerInfo> AddAsync(RemoteServerRegistry registry)
