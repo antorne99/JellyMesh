@@ -359,6 +359,30 @@ public class StubLookupTests
         }
     }
 
+    // Row 582: in the folder a path the registry does not hold falls back to the id in the URL.
+    [Fact]
+    public void AnAudioStrmInTheFolderThatThePathDoesNotFindIsFoundByItsUrl()
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "federata", "01 - X.strm");
+            Directory.CreateDirectory(Path.GetDirectoryName(strm)!);
+            File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, null, "moved", "signature"));
+            _store.Configuration.FederatedFolderPath = Path.Combine(temp, "federata");
+            var stub = new StubEntry { Id = "moved", Kind = StubKind.Track, IdentityKey = "Track|item:s:t", Sources = [], RelativePath = "S/L/Musica/A/B/01 - X.strm" };
+            _stubs.Setup(stubs => stubs.Find("moved")).Returns(stub);
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+
+            Assert.Same(stub, Lookup().FindFile(track.Id));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
     // Row 582 with D17: a non-admin sees a moved audio stub only in a library; an admin sees it anyway.
     [Theory]
     [InlineData(false, false, false)]

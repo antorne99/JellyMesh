@@ -278,7 +278,8 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Finds the stub a playback of an item reaches, as <see cref="Resolve"/> does, and also an audio stub by its path.
+    /// Finds the stub a playback of an item reaches, as <see cref="Resolve"/> does, and also an audio stub by its path or by the
+    /// URL in its file (row 582).
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <param name="isUnknown">Whether the item is a federated <c>.strm</c> with no stub in the registry.</param>
