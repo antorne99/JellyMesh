@@ -118,6 +118,37 @@ public static class WatchStateTransfer
     }
 
     /// <summary>
+    /// Puts the whole watch state of the old row on the new row of a pure rename, not watched and no date included, so
+    /// that the row Jellyfin reattached by key does not prevail (§10 row 572).
+    /// </summary>
+    /// <param name="from">The user's data on the old item.</param>
+    /// <param name="to">The user's data on the renamed item, changed in place.</param>
+    /// <returns>Whether <paramref name="to"/> changed.</returns>
+    public static bool CopyWhole(UserItemData from, UserItemData to)
+    {
+        ArgumentNullException.ThrowIfNull(from);
+        ArgumentNullException.ThrowIfNull(to);
+
+        if (to.Played == from.Played
+            && to.PlayCount == from.PlayCount
+            && to.PlaybackPositionTicks == from.PlaybackPositionTicks
+            && to.IsFavorite == from.IsFavorite
+            && to.Rating == from.Rating
+            && to.LastPlayedDate == from.LastPlayedDate)
+        {
+            return false;
+        }
+
+        to.Played = from.Played;
+        to.PlayCount = from.PlayCount;
+        to.PlaybackPositionTicks = from.PlaybackPositionTicks;
+        to.IsFavorite = from.IsFavorite;
+        to.Rating = from.Rating;
+        to.LastPlayedDate = from.LastPlayedDate;
+        return true;
+    }
+
+    /// <summary>
     /// Copies a row, so that a carry changes only what it saves.
     /// </summary>
     /// <param name="data">The row.</param>

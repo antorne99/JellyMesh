@@ -25,6 +25,21 @@ public class WatchStateTransferTests
     };
 
     [Fact]
+    public void ACopyOfTheWholeRowTakesNotWatchedAndNoDateOverAWatchedRow()
+    {
+        var old = Data(playCount: 2);
+        var renamed = Data(played: true, lastPlayed: _newer, position: 600, playCount: 1);
+        renamed.IsFavorite = true;
+        renamed.Rating = 7;
+
+        Assert.True(WatchStateTransfer.CopyWhole(old, renamed));
+
+        Assert.Equal((false, 2, 0L, (DateTime?)null, false, (double?)null), (renamed.Played, renamed.PlayCount, renamed.PlaybackPositionTicks, renamed.LastPlayedDate, renamed.IsFavorite, renamed.Rating));
+        Assert.Equal("key", renamed.Key);
+        Assert.False(WatchStateTransfer.CopyWhole(old, renamed));
+    }
+
+    [Fact]
     public void ThePositionGoesToTheVersionOfTheLastServer()
     {
         var old = Data(lastPlayed: _newer, position: 600, playCount: 1);
