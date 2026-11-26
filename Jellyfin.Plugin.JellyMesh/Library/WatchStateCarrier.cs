@@ -390,13 +390,13 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
 
             // A favorite or rating already written is not written again, even if a later row fails or the run is cancelled:
             // a later run carries only the watch (decision 155).
-            if (!Save(user, changed, () => RecordFavorite(user, from, mode), cancellationToken))
+            if (!Save(user, changed, () => RecordFavorite(user, from, mode, move.Operation), cancellationToken))
             {
                 skipped.Add(new WatchStateUserSkip(user.Id, WatchStateUserSkipReason.NotSaved));
                 continue;
             }
 
-            _log.Record(user.Id, from.Id, old.LastPlayedDate);
+            _log.Record(user.Id, from.Id, old.LastPlayedDate, move.Operation);
             recorded.Add(user.Id);
         }
 
@@ -404,19 +404,20 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     }
 
     // Records a first carry with no date once its favorite or rating is saved, so it is not carried again (decision 155).
-    private void RecordFavorite(User user, BaseItem from, WatchStateCarryMode mode)
+    private void RecordFavorite(User user, BaseItem from, WatchStateCarryMode mode, WatchStateCarryOperation operation)
     {
         if (mode == WatchStateCarryMode.First)
         {
-            _log.Record(user.Id, from.Id, null);
+            _log.Record(user.Id, from.Id, null, operation);
         }
     }
 
     // Null when there is nothing to carry: an empty row, or a carry done with no newer watch since (decision 155). A pure
-    // rename carries an empty row too, over the row Jellyfin reattached to the new item (row 572).
+    // rename carries an empty row too, and counts only its own record or one of no known operation (rows 572, 575).
     private WatchStateCarryMode? ModeOf(User user, BaseItem from, UserItemData old, WatchStateMove move)
     {
-        if (!_log.TryFind(user.Id, from.Id, out var carried))
+        if (!_log.TryFind(user.Id, from.Id, out var carried, out var operation)
+            || (move.IsPureRename && operation is { } done && done != WatchStateCarryOperation.Rename))
         {
             return HasAnything(old) || move.IsPureRename ? WatchStateCarryMode.First : null;
         }

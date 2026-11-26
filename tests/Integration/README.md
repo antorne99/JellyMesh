@@ -276,6 +276,7 @@ Proves manual merges on the per-server layout (decision 20, Q23), on two stock r
 export MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-merge] [PORT=18441]
 bash merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
 bash merge/run.sh                 # list, merge, restart, a copy that changes or goes away, a new stub, undo, the page, a local copy
+bash merge/rename.sh              # instead of run.sh: a server renamed over a merged title it marked not watched (row 575)
 bash merge/down.sh                # removes containers, volumes and scratch files
 ```
 
