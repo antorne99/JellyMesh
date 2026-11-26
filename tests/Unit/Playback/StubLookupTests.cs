@@ -74,7 +74,8 @@ public class StubLookupTests
         Assert.Equal(seen, Lookup().Sees(user, item.Id));
     }
 
-    // Row 522: with no folder set nothing is in it, also a .strm left by a folder that was removed.
+    // Row 522: with no folder set nothing is in it, also a .strm left by a folder that was removed. These files do not exist,
+    // so row 582 finds no URL in them.
     [Theory]
     [InlineData("/media/film/A.strm")]
     [InlineData("/federata/S/Film/A/A.strm")]
@@ -319,6 +320,200 @@ public class StubLookupTests
             Assert.Same(stub, Lookup().ResolvePlayable(part.Id, out _));
             Assert.False(Lookup().IsAudioStub(local.Id));
             Assert.Null(Lookup().ResolvePlayable(local.Id, out _));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // Row 582: an audio .strm left outside the folder by a move, or by emptying it, is a stub by the id in its URL.
+    [Theory]
+    [InlineData(false, "fed2")]
+    [InlineData(false, "")]
+    [InlineData(true, "fed2")]
+    [InlineData(true, "")]
+    public void AnAudioStrmOutsideTheFolderIsAStubByTheIdInItsUrl(bool audiobook, string folder)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        try
+        {
+            var album = Path.Combine(temp, "federata", "S", "L", "Musica", "A", "B");
+            Directory.CreateDirectory(album);
+            var strm = Path.Combine(album, "01 - X.strm");
+            File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, null, "moved", "signature") + "\n");
+            _store.Configuration.FederatedFolderPath = folder.Length == 0 ? string.Empty : Path.Combine(temp, folder);
+            var stub = new StubEntry { Id = "moved", Kind = audiobook ? StubKind.AudioBook : StubKind.Track, IdentityKey = "Track|item:s:t", Sources = [], RelativePath = "S/L/Musica/A/B/01 - X.strm" };
+            _stubs.Setup(stubs => stubs.Find("moved")).Returns(stub);
+            MediaBrowser.Controller.Entities.Audio.Audio track = audiobook ? new AudioBook { Id = Guid.NewGuid(), Path = strm } : new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+
+            Assert.True(Lookup().IsAudioStub(track.Id));
+            Assert.True(Lookup().IsStub(track.Id));
+            Assert.Same(stub, Lookup().FindFile(track.Id));
+            Assert.Same(stub, Lookup().ResolvePlayable(track.Id, out _));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // Row 582: in the folder a path the registry does not hold falls back to the id in the URL.
+    [Fact]
+    public void AnAudioStrmInTheFolderThatThePathDoesNotFindIsFoundByItsUrl()
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "federata", "01 - X.strm");
+            Directory.CreateDirectory(Path.GetDirectoryName(strm)!);
+            File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, null, "moved", "signature"));
+            _store.Configuration.FederatedFolderPath = Path.Combine(temp, "federata");
+            var stub = new StubEntry { Id = "moved", Kind = StubKind.Track, IdentityKey = "Track|item:s:t", Sources = [], RelativePath = "S/L/Musica/A/B/01 - X.strm" };
+            _stubs.Setup(stubs => stubs.Find("moved")).Returns(stub);
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+
+            Assert.Same(stub, Lookup().FindFile(track.Id));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // A FIFO or an empty file named .strm is never opened, so a request cannot block on it.
+    [Theory]
+    [InlineData("fifo")]
+    [InlineData("link to a fifo")]
+    [InlineData("empty")]
+    public async System.Threading.Tasks.Task AFifoOrAnEmptyStrmIsNoStubAndDoesNotBlock(string kind)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-fifo-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "01 - X.strm");
+            if (kind == "empty")
+            {
+                await File.WriteAllTextAsync(strm, string.Empty);
+            }
+            else
+            {
+                var pipe = kind == "fifo" ? strm : Path.Combine(temp, "pipe");
+                using var mkfifo = System.Diagnostics.Process.Start("mkfifo", [pipe]);
+                await mkfifo.WaitForExitAsync();
+                if (kind != "fifo")
+                {
+                    File.CreateSymbolicLink(strm, pipe);
+                }
+            }
+
+            _store.Configuration.FederatedFolderPath = Path.Combine(temp, "fed2");
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+
+            var check = System.Threading.Tasks.Task.Run(() => Lookup().IsAudioStub(track.Id) || Lookup().FindFile(track.Id) is not null);
+            var done = await System.Threading.Tasks.Task.WhenAny(check, System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.True(done == check, "The check blocked on the file.");
+            Assert.False(await check);
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // Row 582 with D17: a non-admin sees a moved audio stub only in a library; an admin sees it anyway.
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public void AMovedAudioStubIsSeenOnlyInALibraryOrByAnAdmin(bool inLibrary, bool admin, bool seen)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "01 - X.strm");
+            File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, null, "moved", "signature"));
+            _store.Configuration.FederatedFolderPath = Path.Combine(temp, "fed2");
+            var user = new User("viewer", "auth", "reset");
+            user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, admin));
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+            _library.Setup(library => library.GetItemById<BaseItem>(track.Id, user)).Returns(track);
+            _library.Setup(library => library.GetCollectionFolders(track)).Returns(inLibrary ? [new Folder()] : []);
+
+            Assert.Equal(seen, Lookup().Sees(user, track.Id));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // Our URL with an id the registry lacks is still a stub, so stock never sends its text; it has no file to give.
+    [Fact]
+    public void AnAudioStrmWithOurUrlTheRegistryLacksIsAStubWithNoFile()
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "01 - X.strm");
+            File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, "/jf", "gone", "signature"));
+            _store.Configuration.FederatedFolderPath = string.Empty;
+            var track = new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(track.Id)).Returns(track);
+
+            Assert.True(Lookup().IsAudioStub(track.Id));
+            Assert.True(Lookup().IsStub(track.Id));
+            Assert.Null(Lookup().FindFile(track.Id));
+            Assert.Null(Lookup().ResolvePlayable(track.Id, out _));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // A foreign URL, a file too long for one of ours, a missing file or a video keep today's rule outside the folder.
+    [Theory]
+    [InlineData("foreign")]
+    [InlineData("oversize")]
+    [InlineData("missing")]
+    [InlineData("directory")]
+    [InlineData("video")]
+    public void AnAudioStrmWithoutOurUrlOutsideTheFolderIsNoStub(string kind)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        try
+        {
+            var strm = Path.Combine(temp, "01 - X.strm");
+            var url = PlaybackRoutes.StrmUrl(8096, null, "moved", "signature");
+            switch (kind)
+            {
+                case "foreign":
+                    File.WriteAllText(strm, "http://radio.example/stream");
+                    break;
+                case "oversize":
+                    File.WriteAllText(strm, url + new string(' ', 4096));
+                    break;
+                case "directory":
+                    Directory.CreateDirectory(strm);
+                    break;
+                case "video":
+                    File.WriteAllText(strm, url);
+                    break;
+            }
+
+            _store.Configuration.FederatedFolderPath = Path.Combine(temp, "fed2");
+            _stubs.Setup(stubs => stubs.Find("moved")).Returns(new StubEntry { Id = "moved", Kind = StubKind.Track, IdentityKey = "Track|item:s:t", Sources = [], RelativePath = "S/L/Musica/A/B/01 - X.strm" });
+            BaseItem item = kind == "video" ? new Movie { Id = Guid.NewGuid(), Path = strm } : new MediaBrowser.Controller.Entities.Audio.Audio { Id = Guid.NewGuid(), Path = strm };
+            _library.Setup(library => library.GetItemById(item.Id)).Returns(item);
+
+            Assert.False(Lookup().IsAudioStub(item.Id));
+            Assert.False(Lookup().IsStub(item.Id));
+            Assert.Null(Lookup().FindFile(item.Id));
         }
         finally
         {

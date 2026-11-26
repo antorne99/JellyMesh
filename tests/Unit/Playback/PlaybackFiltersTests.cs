@@ -2225,6 +2225,84 @@ public partial class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
     }
 
+    // Row 582: a track .strm left outside the federated folder, found by the id in its URL; the caller removes the folder.
+    private (InMemoryConfigurationStore Store, string Temp) MovedTrackStub(string folder)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        var strm = Path.Combine(temp, "federata", "01 - Song.strm");
+        Directory.CreateDirectory(Path.GetDirectoryName(strm)!);
+        File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, null, "moved", "signature"));
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = folder.Length == 0 ? string.Empty : Path.Combine(temp, folder);
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = strm });
+        _stubs.Setup(stubs => stubs.Find("moved")).Returns(_stub with { Id = "moved", Kind = StubKind.Track, RelativePath = "server/library/Musica/Artist/Album/01 - Song.strm" });
+        return (store, temp);
+    }
+
+    [Theory]
+    [InlineData("Audio", "GetAudioStream", "fed2")]
+    [InlineData("Audio", "GetAudioStream", "")]
+    [InlineData("Audio", "GetAudioStreamByContainer", "fed2")]
+    [InlineData("UniversalAudio", "GetUniversalAudioStream", "")]
+    [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist", "fed2")]
+    [InlineData("Library", "GetFile", "")]
+    [InlineData("Library", "GetDownload", "fed2")]
+    public async Task A_moved_track_stub_refuses_an_anonymous_caller(string controller, string action, string folder)
+    {
+        Anonymous();
+        var (store, temp) = MovedTrackStub(folder);
+        try
+        {
+            var context = AudioRequest(controller, action, "GET", ("static", true));
+
+            Assert.False(await RunAsync(GuardFilter(store: store), context));
+            Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    [Fact]
+    public async Task A_moved_track_stub_is_not_found_by_a_user_who_cannot_see_it()
+    {
+        var (store, temp) = MovedTrackStub("fed2");
+        try
+        {
+            var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+            Assert.False(await RunAsync(GuardFilter(store: store), context));
+            Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // A user who sees the old track plays it through its stub, never through stock.
+    [Theory]
+    [InlineData("fed2")]
+    [InlineData("")]
+    public async Task A_static_stream_of_a_moved_track_stub_comes_from_the_remote(string folder)
+    {
+        CanSeeItem();
+        RemoteServesType("audio/mpeg");
+        var (store, temp) = MovedTrackStub(folder);
+        try
+        {
+            var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+            Assert.False(await RunAsync(GuardFilter(store: store), context));
+            Assert.Equal(_remoteBytes, BodyOf(context));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
     private ActionExecutingContext AudioRequest(string controller, string action, string method, params (string Key, object? Value)[] arguments)
     {
         var context = Context(controller, action, new (string Key, object? Value)[] { ("itemId", _itemId) }.Concat(arguments).ToArray());

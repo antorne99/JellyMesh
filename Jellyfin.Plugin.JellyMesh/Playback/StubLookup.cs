@@ -208,11 +208,12 @@ public sealed class StubLookup
     public bool IsStub(Guid itemId) => IsStub(_libraryManager.GetItemById(itemId));
 
     /// <summary>
-    /// Tells whether an item is an audio stub: an audio <c>.strm</c> in the federated folder, which has no plugin URL.
+    /// Tells whether an item is an audio stub: an audio <c>.strm</c> in the federated folder, which has no plugin URL, or one
+    /// with the URL of the plugin in its file wherever it lies (row 582).
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>True for an audio stub.</returns>
-    public bool IsAudioStub(Guid itemId) => _libraryManager.GetItemById(itemId) is Audio audio && IsStrmInFolder(audio.Path);
+    public bool IsAudioStub(Guid itemId) => _libraryManager.GetItemById(itemId) is Audio audio && IsAudioStub(audio);
 
     /// <summary>
     /// Tells whether an item is a placeholder: a book of the federated folder, which has no URL and is a stub by its path.
@@ -272,7 +273,8 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Finds the stub a playback of an item reaches, as <see cref="Resolve"/> does, and also an audio stub by its path.
+    /// Finds the stub a playback of an item reaches, as <see cref="Resolve"/> does, and also an audio stub by its path or by the
+    /// URL in its file (row 582).
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <param name="isUnknown">Whether the item is a federated <c>.strm</c> with no stub in the registry.</param>
@@ -280,8 +282,8 @@ public sealed class StubLookup
     public StubEntry? ResolvePlayable(Guid itemId, out bool isUnknown) => Resolve(itemId, out isUnknown) ?? (IsAudioStub(itemId) ? FindFile(itemId) : null);
 
     /// <summary>
-    /// Finds the stub of an item for its file and its visibility: a video stub, or an audio stub or book placeholder by its
-    /// path.
+    /// Finds the stub of an item for its file and its visibility: a video stub, an audio stub by its path or else by the URL in
+    /// its file (row 582), or a book placeholder by its path.
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>The stub, null for anything else.</returns>
@@ -290,7 +292,7 @@ public sealed class StubLookup
         return _libraryManager.GetItemById(itemId) switch
         {
             Video video when PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) => _stubs.Find(stubId),
-            Audio audio when PathInFolder(audio.Path) is { } path => _stubs.FindByPath(path),
+            Audio audio when IsStrm(audio.Path) => (PathInFolder(audio.Path) is { } path ? _stubs.FindByPath(path) : null) ?? FindByStrmUrl(audio.Path),
             var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
             _ => null
         };
@@ -366,12 +368,17 @@ public sealed class StubLookup
         return item switch
         {
             Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
-            Audio audio => IsStrmInFolder(audio.Path),
+            Audio audio => IsAudioStub(audio),
             _ => IsPlaceholder(item)
         };
     }
 
     private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
+
+    // An audio .strm in the federated folder, or one with our URL wherever it lies, also with no folder set (row 582).
+    private bool IsAudioStub(Audio audio) => IsStrmInFolder(audio.Path) || StrmFile.StubIdOf(audio.Path) is not null;
+
+    private StubEntry? FindByStrmUrl(string? path) => StrmFile.StubIdOf(path) is { } stubId ? _stubs.Find(stubId) : null;
 
     // A photo outside the federated folder whose Primary is a thumbnail of a photo stub the registry knows.
     private StubEntry? MovedPhotoStub(BaseItem? item)

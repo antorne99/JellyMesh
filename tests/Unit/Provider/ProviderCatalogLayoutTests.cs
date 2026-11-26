@@ -206,6 +206,34 @@ public sealed class ProviderCatalogLayoutTests
         Assert.False(IsVisible("Movie", "/media/0f8fad5b-d9cb-469f-a165-70867728950e/Film/Title (2001)/Title (2001).mkv", CollectionTypeOptions.movies));
     }
 
+    // §4.4 with row 582: an audio .strm holding a JellyMesh URL is federated wherever it lies; a foreign URL is the admin's.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public void An_audio_strm_with_a_jellymesh_url_outside_the_folder_never_reaches_a_peer(bool audiobook, bool ours)
+    {
+        var temp = Directory.CreateTempSubdirectory("jm-moved-audio");
+        try
+        {
+            var strm = Path.Combine(temp.FullName, "01 Track.strm");
+            File.WriteAllText(strm, ours ? Jellyfin.Plugin.JellyMesh.Playback.PlaybackRoutes.StrmUrl(8096, null, "moved", "signature") : "http://radio.example/stream");
+            _fixture.Store.Configuration.FederatedFolderPath = "/nuova";
+            _fixture.WithAudioLibraries();
+            var id = Guid.NewGuid();
+            BaseItem item = audiobook ? new AudioBook { Path = strm } : new Audio { Path = strm };
+            _fixture.AddItem(id, item, audiobook ? ProviderFixture.SharedBooks : ProviderFixture.SharedMusic);
+
+            Assert.Equal(ours, _fixture.Catalog.IsFederated(item));
+            Assert.Equal(!ours, _fixture.Catalog.FindVisible(_fixture.PeerCaller, id) is not null);
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
     [Fact]
     public void A_placeholder_in_a_shared_library_is_never_found()
     {
