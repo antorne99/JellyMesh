@@ -186,14 +186,20 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
-    /// Takes a session out, so that no later request can reach it. A segment arriving after the close would restart
-    /// ffmpeg on the remote.
+    /// Takes a session out and closes it, so that no later request can reach it, also from a handler that found it
+    /// before. A segment arriving after the close would restart ffmpeg on the remote.
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <returns>The session, null if it was gone.</returns>
     public PlaybackSession? Remove(string sessionId)
     {
-        return _sessions.TryRemove(sessionId, out var session) ? session : null;
+        if (!_sessions.TryRemove(sessionId, out var session))
+        {
+            return null;
+        }
+
+        session.Close();
+        return session;
     }
 
     // Forgets the file servers of play sessions no longer recorded.

@@ -434,7 +434,6 @@ public sealed class PlaybackCoordinator
     {
         if (_sessions.Remove(sessionId) is { } session)
         {
-            session.Close();
             await CloseRemoteAsync(session).ConfigureAwait(false);
         }
     }
