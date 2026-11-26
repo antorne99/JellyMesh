@@ -60,6 +60,12 @@ check "still only transcoded" '{"SupportsDirectPlay":false,"SupportsDirectStream
 give_back
 cp "$OUT/peer-direct" "$WORK/body"
 : >"$OUT/peer-master"
+give_back
+check "PlaybackInfo asking for direct in the body, as b forwards it" 200 "$(info "$ptoken" "$strm" "$(jq -c '. + {EnableDirectPlay: true, EnableDirectStream: true}' <<<"$PROFILE")")"
+cp "$WORK/body" "$OUT/peer-body"
+check "only transcoded too" '{"SupportsDirectPlay":false,"SupportsDirectStream":false,"Transcoding":true}' "$(direct_of)"
+give_back
+cp "$OUT/peer-direct" "$WORK/body"
 check "the transcode of a answers the peer" 200 "$(curl -sS -o "$OUT/peer-master" -w '%{http_code}' "http://127.0.0.1:$PORT_A$(jq -r '.MediaSources[0].TranscodingUrl' "$OUT/peer-direct")")"
 give_back
 for path in "/Videos/$strm/stream?static=true&MediaSourceId=$strm" "/Videos/$strm/stream.mkv?static=true" "/Videos/$strm/stream?Static=TRUE"; do
@@ -95,6 +101,18 @@ check "b gives a transcoding URL" true "$(jq '.MediaSources[0].TranscodingUrl !=
 check "its first segments play" "200 200 200" "$(hls_segments "$device" 3 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
 cp "$WORK"/seen-"$device"-* "$OUT/" 2>/dev/null
 close_stream "$device"
+device=strm-body-$ROUND
+rm -f "$WORK/client-$device"
+check "a client of b asking for direct in the body" 200 "$(open_stream "$device" "$stub" "$(jq -c '. + {EnableDirectPlay: true, EnableDirectStream: true}' <<<"$PROFILE")")"
+cp "$WORK/open-$device" "$OUT/client-body"
+check "gets a transcoding URL" true "$(jq '.MediaSources[0].TranscodingUrl != null' "$WORK/open-$device" 2>/dev/null || echo false)"
+close_stream "$device"
+# Observed, not checked: a client that can only play directly has no transcode to fall back on.
+device=strm-only-$ROUND
+rm -f "$WORK/client-$device"
+echo "a direct-only client of b: $(open_stream "$device" "$stub" "$(jq -c '.DeviceProfile.TranscodingProfiles = []' <<<"$PROFILE")") $(jq -c '.MediaSources[0] | {SupportsDirectPlay, SupportsDirectStream, Transcoding: (.TranscodingUrl != null)}' "$WORK/open-$device" 2>/dev/null)"
+cp "$WORK/open-$device" "$OUT/client-only"
+close_stream "$device"
 device=strm-hls-$ROUND
 rm -f "$WORK/client-$device"
 check "an HLS-only client of b too" 200 "$(open_stream "$device" "$stub" "$PROFILE_HLS")"
@@ -105,10 +123,10 @@ echo "--- no URL of the .strm in what the peer and the clients got, no token of 
 docker logs "$PREFIX-b" >"$OUT/b-stdout" 2>&1
 docker exec "$PREFIX-b" sh -c 'cat /config/log/* 2>/dev/null' >"$OUT/b-log-files"
 # The logs of b name its own remotes, which go through the same gates: only the token counts there, as in leaks.sh.
-for what in peer-direct peer-query peer-master client-direct client-hls b-stdout b-log-files; do
+for what in peer-direct peer-query peer-body peer-master client-direct client-body client-only client-hls b-stdout b-log-files; do
   check "no token of the .strm in $what" 0 "$(grep -c -F "$secret" "$OUT/$what")"
 done
-for what in peer-direct peer-query peer-master client-direct client-hls; do
+for what in peer-direct peer-query peer-body peer-master client-direct client-body client-only client-hls; do
   check "no address of the .strm in $what" 0 "$(grep -c -E "$HOST_GATE|:$GATE_STOCK" "$OUT/$what")"
 done
 check "nor in the playlists of b" 0 "$(cat "$OUT"/seen-* 2>/dev/null | grep -c -E "$secret|$HOST_GATE|:$GATE_STOCK")"
