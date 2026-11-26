@@ -591,7 +591,10 @@ public sealed class PlaybackCoordinator
             var idle = now - session.LastRequest;
             if (idle >= times.SessionRetention)
             {
-                await CloseAsync(session.Id).ConfigureAwait(false);
+                if (session.TryCloseIdle())
+                {
+                    await CloseAsync(session.Id).ConfigureAwait(false);
+                }
             }
             else if (idle >= times.Idle && session.TryPark())
             {
@@ -836,7 +839,21 @@ public sealed class PlaybackCoordinator
     {
         var sessions = _sessions.All.Where(session => session.Identity.UserId == userId && session != replaced).ToList();
         var excess = sessions.Count + _fileReads.Running(userId) - PlaybackLimits.SessionsPerUser + 1;
-        var chosen = sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest).Take(Math.Max(excess, 0)).ToList();
+        var chosen = new List<PlaybackSession>();
+        foreach (var session in sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest))
+        {
+            if (chosen.Count >= excess)
+            {
+                break;
+            }
+
+            // Closed in one step with the check, so a request that begins meanwhile keeps its session.
+            if (session.TryCloseIdle())
+            {
+                chosen.Add(session);
+            }
+        }
+
         unused = chosen.Where(session => _sessions.Remove(session.Id) is not null).ToList();
         return excess <= chosen.Count;
     }
