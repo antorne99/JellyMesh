@@ -1048,7 +1048,8 @@ public class FederationAdminController : ControllerBase
             link.SeriesLibraries,
             unregistered)
         {
-            SeriesSplitWith = link.SeriesSplitWith
+            SeriesSplitWith = link.SeriesSplitWith,
+            MusicInMixed = link.MusicInMixed
         };
     }
 }

@@ -58,7 +58,7 @@ public class RemotePlaybackClientTests
         var (client, _) = Build(_ => StubHandler.Status(HttpStatusCode.InternalServerError));
 
         var stream = await client.OpenStreamAsync(_endpoint, _session, new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null), CancellationToken.None);
-        var playlist = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None);
+        var playlist = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", null, CancellationToken.None);
         var info = await client.GetPlaybackInfoAsync(_endpoint, _session, Request(), CancellationToken.None);
 
         Assert.Equal(500, stream.Status);
@@ -82,7 +82,7 @@ public class RemotePlaybackClientTests
     {
         var (client, handler) = Build(_ => StubHandler.Json("{}"));
 
-        await client.ReadPlaylistAsync(_endpoint, _session, "/videos/x/master.m3u8?a=1", CancellationToken.None);
+        await client.ReadPlaylistAsync(_endpoint, _session, "/videos/x/master.m3u8?a=1", null, CancellationToken.None);
 
         var request = Assert.Single(handler.Requests);
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
@@ -100,7 +100,7 @@ public class RemotePlaybackClientTests
             return StubHandler.Json("{}");
         });
 
-        await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None);
+        await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", null, CancellationToken.None);
 
         Assert.Equal(RemotePlaybackClient.UserAgent, seen);
     }
@@ -134,7 +134,7 @@ public class RemotePlaybackClientTests
     {
         var (client, _) = Build(_ => StubHandler.Status(HttpStatusCode.Forbidden));
 
-        Assert.Equal(RemoteFailure.Forbidden, (await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.Forbidden, (await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", null, CancellationToken.None)).Failure);
         Assert.Equal(RemoteFailure.Forbidden, (await client.StopEncodingAsync(_endpoint, _session, "ps", CancellationToken.None)).Failure);
     }
 
@@ -248,7 +248,7 @@ public class RemotePlaybackClientTests
     {
         var (client, _) = Build(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[RemotePlaybackClient.MaxDocumentBytes + 1]) });
 
-        var result = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None);
+        var result = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", null, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
     }
@@ -259,7 +259,7 @@ public class RemotePlaybackClientTests
         var factory = new StubHttpClientFactory(new ThrowingHandler());
         var client = new RemotePlaybackClient(factory);
 
-        var result = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", CancellationToken.None);
+        var result = await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", null, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.Unreachable, result.Failure);
     }

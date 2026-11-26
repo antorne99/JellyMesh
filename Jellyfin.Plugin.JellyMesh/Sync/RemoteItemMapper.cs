@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 
@@ -13,6 +15,14 @@ namespace Jellyfin.Plugin.JellyMesh.Sync;
 public static class RemoteItemMapper
 {
     private const string VideoStream = "Video";
+
+    // The book formats Jellyfin reads, and the image formats of a photo; nothing that means more to Jellyfin as a file.
+    private static readonly FrozenSet<string> _bookExtensions = FrozenSet.Create(StringComparer.Ordinal, "azw", "azw3", "cb7", "cbr", "cbt", "cbz", "epub", "mobi", "pdf");
+
+    private static readonly FrozenSet<string> _photoExtensions = new[]
+    {
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "dng", "cr2", "nef", "arw", "orf", "rw2", "raf", "pef", "srw"
+    }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
     /// Maps an item.
@@ -26,13 +36,14 @@ public static class RemoteItemMapper
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return new IndexedItem
+        var kind = KindOf(type);
+        var entry = new IndexedItem
         {
             ItemId = item.Id,
-            Kind = KindOf(type),
+            Kind = kind,
             LibraryId = libraryId,
             LastSeenUtc = seenUtc,
-            Name = item.Name,
+            Name = RemoteName.Cut(item.Name),
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines ?? [],
@@ -49,24 +60,94 @@ public static class RemoteItemMapper
             ProductionYear = item.ProductionYear,
             Status = item.Status,
             ProviderIds = ProviderIdsOf(item),
-            RunTimeTicks = item.RunTimeTicks,
+            RunTimeTicks = item.RunTimeTicks is > 0 ? item.RunTimeTicks : null,
             DateCreated = item.DateCreated,
             Etag = item.Etag,
             IndexNumber = item.IndexNumber,
             IndexNumberEnd = item.IndexNumberEnd,
             ParentIndexNumber = item.ParentIndexNumber,
             SeriesId = item.SeriesId,
-            SeriesName = item.SeriesName,
+            SeriesName = RemoteName.Cut(item.SeriesName),
             SeasonId = item.SeasonId,
-            SeasonName = item.SeasonName,
+            SeasonName = RemoteName.Cut(item.SeasonName),
             ImageTags = item.ImageTags ?? new Dictionary<string, string>(),
             BackdropImageTags = item.BackdropImageTags ?? [],
             Chapters = item.Chapters?.Select(chapter => new IndexedChapter(chapter.Name, chapter.StartPositionTicks)).ToList() ?? [],
 
             // Decision 11: a version that is the stub of another JellyMesh is not a source. An item left with no versions
             // is skipped by the dedup, and an incremental read replaces the entry, so one that changed leaves at once.
-            Versions = item.MediaSources?.Where(source => !IsFederatedStub(source)).Select(ToVersion).ToList() ?? []
+            // A track or audiobook stub of another JellyMesh has its file path, not its URL, so it is told by its folder (row 455).
+            Versions = AudioFolderOf(kind) is { } audioFolder && FederatedTrackMark.IsStub(item.Path, item.MediaSources, audioFolder)
+                ? []
+                : item.MediaSources?.Where(source => !IsFederatedStub(source)).Select(ToVersion).ToList() ?? []
         };
+
+        // Films and series keep their stored form, so that their entries are not written again.
+        return kind is IndexedItemKind.Movie or IndexedItemKind.Series or IndexedItemKind.Season or IndexedItemKind.Episode
+            ? entry
+            : WithNewTypeFields(entry, item);
+    }
+
+    // Adds the fields of music, home videos, photos and books. A book or photo placeholder of another JellyMesh gets no
+    // extension, so it gets no placeholder here, and an incremental read replaces the entry (D62).
+    private static IndexedItem WithNewTypeFields(IndexedItem entry, RemoteItem item) => entry with
+    {
+        ParentId = item.ParentId,
+        Album = RemoteName.Cut(item.Album),
+        AlbumId = item.AlbumId,
+        AlbumPrimaryImageTag = item.AlbumPrimaryImageTag,
+        Artists = NullIfEmpty(item.Artists?.OfType<string>().Select(artist => RemoteName.Cut(artist)).ToList()),
+        AlbumArtists = NullIfEmpty(item.AlbumArtists?.Select(artist => RemoteName.Cut(artist.Name)).OfType<string>().ToList())
+            ?? (string.IsNullOrEmpty(item.AlbumArtist) ? null : [RemoteName.Cut(item.AlbumArtist)]),
+        HasLyrics = item.HasLyrics,
+        Extension = entry.Kind switch
+        {
+            IndexedItemKind.Book => FederatedPlaceholderMark.IsPlaceholder(item.Path, item.ProviderIds?.Keys, TypeFolder.Books) ? null : ExtensionOf(item.Path, _bookExtensions),
+            IndexedItemKind.Photo => FederatedPlaceholderMark.IsPlaceholder(item.Path, item.ProviderIds?.Keys, TypeFolder.HomeVideos) ? null : ExtensionOf(item.Path, _photoExtensions),
+            _ => null
+        },
+        Photo = entry.Kind is IndexedItemKind.Photo ? PhotoOf(item) : null
+    };
+
+    private static TypeFolder? AudioFolderOf(IndexedItemKind kind) => kind switch
+    {
+        IndexedItemKind.Audio => TypeFolder.Music,
+        IndexedItemKind.AudioBook => TypeFolder.Books,
+        _ => null
+    };
+
+    private static List<string>? NullIfEmpty(List<string>? values) => values is { Count: > 0 } ? values : null;
+
+    // Latitude, longitude and altitude are not read at all.
+    private static IndexedPhoto PhotoOf(RemoteItem item) => new()
+    {
+        Width = item.Width,
+        Height = item.Height,
+        CameraMake = item.CameraMake,
+        CameraModel = item.CameraModel,
+        Software = item.Software,
+        ExposureTime = item.ExposureTime,
+        FocalLength = item.FocalLength,
+        Aperture = item.Aperture,
+        ShutterSpeed = item.ShutterSpeed,
+        ImageOrientation = item.ImageOrientation,
+        IsoSpeedRating = item.IsoSpeedRating
+    };
+
+    // Gets the lowercase extension of the last path segment when it is one of the allowed ones, else null.
+    private static string? ExtensionOf(string? path, FrozenSet<string> allowed)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
+        var dot = name.LastIndexOf('.');
+        var extension = dot < 0 ? string.Empty : name[(dot + 1)..];
+        return extension.Length is >= 1 and <= 5 && extension.All(char.IsAsciiLetterOrDigit) && allowed.Contains(extension.ToLowerInvariant())
+            ? extension.ToLowerInvariant()
+            : null;
     }
 
     private static IndexedItemKind KindOf(RemoteItemType type) => type switch
@@ -75,6 +156,14 @@ public static class RemoteItemMapper
         RemoteItemType.Series => IndexedItemKind.Series,
         RemoteItemType.Season => IndexedItemKind.Season,
         RemoteItemType.Episode => IndexedItemKind.Episode,
+        RemoteItemType.Audio => IndexedItemKind.Audio,
+        RemoteItemType.MusicVideo => IndexedItemKind.MusicVideo,
+        RemoteItemType.Video => IndexedItemKind.Video,
+        RemoteItemType.Photo => IndexedItemKind.Photo,
+        RemoteItemType.PhotoAlbum => IndexedItemKind.PhotoAlbum,
+        RemoteItemType.Folder => IndexedItemKind.Folder,
+        RemoteItemType.Book => IndexedItemKind.Book,
+        RemoteItemType.AudioBook => IndexedItemKind.AudioBook,
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 
@@ -112,7 +201,7 @@ public static class RemoteItemMapper
             Container = source.Container,
             Size = source.Size,
             ContainerBitRate = source.Bitrate,
-            RunTimeTicks = source.RunTimeTicks,
+            RunTimeTicks = source.RunTimeTicks is > 0 ? source.RunTimeTicks : null,
             ETag = source.ETag,
             Protocol = source.Protocol,
             IsRemote = source.IsRemote,

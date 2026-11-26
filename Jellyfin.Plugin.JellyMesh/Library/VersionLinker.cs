@@ -200,7 +200,7 @@ public sealed class VersionLinker : IVersionLinker
         var remote = copies.Where(copy => !copy.IsLocal)
             .Select(copy => (Server: Guid.TryParse(copy.ServerId, out var server) ? server : Guid.Empty, copy.ItemId, copy.Kind))
             .ToList();
-        var episodes = remote.Where(copy => copy.Kind != ContentKind.Movie)
+        var episodes = remote.Where(copy => copy.Kind == ContentKind.Episode)
             .SelectMany(copy => _registry.FindEpisodesOfSeries(copy.Server, copy.ItemId))
             .Select(stub => stub.Id)
             .ToHashSet(StringComparer.Ordinal);
@@ -208,14 +208,18 @@ public sealed class VersionLinker : IVersionLinker
             .Select(copy => Guid.TryParse(copy.ItemId, out var id) ? id : Guid.Empty)
             .Where(id => id != Guid.Empty)
             .ToHashSet();
-        bool Holds(StubEntry stub) => episodes.Contains(stub.Id) || (stub.Kind == StubKind.Movie && stub.Sources.Any(source => remote.Exists(copy =>
-            copy.Kind == ContentKind.Movie && copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase))));
+        bool Holds(StubEntry stub) => episodes.Contains(stub.Id) || (stub.Kind is StubKind.Movie or StubKind.MusicVideo && stub.Sources.Any(source => remote.Exists(copy =>
+            IsKindOf(copy.Kind, stub.Kind) && copy.Server == source.ServerId && string.Equals(copy.ItemId, source.ItemId, StringComparison.OrdinalIgnoreCase))));
 
         return _registry.State.Groups
             .Where(group => group.LocalItemIds.Any(local.Contains) || group.StubIds.Select(_registry.Find).OfType<StubEntry>().Any(Holds))
             .SelectMany(group => group.StubIds)
             .ToHashSet(StringComparer.Ordinal);
     }
+
+    // Whether a merged copy of this kind is named by a stub of that kind.
+    private static bool IsKindOf(ContentKind copy, StubKind stub)
+        => (copy == ContentKind.Movie && stub == StubKind.Movie) || (copy == ContentKind.MusicVideo && stub == StubKind.MusicVideo);
 
     /// <inheritdoc />
     public async Task DetachAsync(IReadOnlyCollection<string> stubIds, CancellationToken cancellationToken)
@@ -254,7 +258,7 @@ public sealed class VersionLinker : IVersionLinker
             return [];
         }
 
-        var run = new Run(root, true, _index, _library);
+        var run = new Run(root, true, _index, _library, everyKind: true);
         run.KnowItemsOf(stubs);
         return await DetachEachAsync(stubs, run, cancellationToken).ConfigureAwait(false);
     }
@@ -502,7 +506,7 @@ public sealed class VersionLinker : IVersionLinker
     }
 
     // What one run looks up once: the quality of the stubs and the collections.
-    private sealed class Run(string root, bool thorough, IFederationIndex index, ILibraryManager library)
+    private sealed class Run(string root, bool thorough, IFederationIndex index, ILibraryManager library, bool everyKind = false)
     {
         private const int KnownChunk = 1000;
 
@@ -532,7 +536,7 @@ public sealed class VersionLinker : IVersionLinker
         public void KnowItemsOf(IEnumerable<StubEntry> stubs)
         {
             _known.Clear();
-            foreach (var chunk in stubs.SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
+            foreach (var chunk in stubs.Where(MayBeVersion).SelectMany(IdsOf).Distinct().Chunk(KnownChunk))
             {
                 foreach (var video in library.GetItemList(new InternalItemsQuery { ItemIds = chunk }).OfType<Video>())
                 {
@@ -541,8 +545,14 @@ public sealed class VersionLinker : IVersionLinker
             }
         }
 
+        // The links of the stub's item, null for a kind the run does not read.
         public ItemLinks? FindStub(StubEntry stub)
         {
+            if (!MayBeVersion(stub))
+            {
+                return null;
+            }
+
             if (IdsOf(stub).Select(id => _known.GetValueOrDefault(id)).OfType<ItemLinks>().FirstOrDefault() is { } links)
             {
                 return links;
@@ -554,12 +564,14 @@ public sealed class VersionLinker : IVersionLinker
         // The links of any item, from the block read or else looked up.
         public ItemLinks? Find(Guid id) => _known.TryGetValue(id, out var links) ? links : library.GetItemById(id) is Video video ? LinksOf(video, this) : null;
 
+        // A removal reads every kind, since a library of another type may have made a video of any stub (Q351).
+        private bool MayBeVersion(StubEntry stub) => everyKind || StubItemTypes.IsVideo(stub.Kind);
+
         // The item of the stub's path as Jellyfin names a film or an episode, then as a plain video.
         private Guid[] IdsOf(StubEntry stub)
         {
             var path = FederatedPaths.Resolve(root, stub.RelativePath);
-            Type kind = stub.Kind == StubKind.Episode ? typeof(Episode) : typeof(Movie);
-            return [library.GetNewItemId(path, kind), library.GetNewItemId(path, typeof(Video))];
+            return [library.GetNewItemId(path, StubItemTypes.Of(stub.Kind)), library.GetNewItemId(path, typeof(Video))];
         }
 
         public string Best(IReadOnlyList<string> stubIds, StubRegistry registry)

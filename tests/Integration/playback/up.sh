@@ -33,6 +33,7 @@ add() { # name url
   put "/JellyMesh/Admin/Servers/$id" "$(jq -c --argjson l "$libs" '. + $l' <<<"$form")" >/dev/null
   echo "$1 $id"
 }
-add standard http://host.docker.internal:18321
-add jellymesh http://host.docker.internal:18322
+add standard "http://host.docker.internal:${GATE_STANDARD:-18321}"
+add jellymesh "http://host.docker.internal:${GATE_JELLYMESH:-18322}"
+for i in $(seq 1 180); do [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && break; sleep 1; done
 post /JellyMesh/Admin/Sync

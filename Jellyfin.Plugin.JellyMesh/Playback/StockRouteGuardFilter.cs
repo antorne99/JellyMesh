@@ -39,7 +39,18 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 {
     private const string StopEncodingAction = "StopEncodingProcess";
 
+    private const string LyricsController = "Lyrics";
+
+    private const string SubtitleController = "Subtitle";
+
+    private const string GetLyricsAction = "GetLyrics";
+
     private const string DownloadAction = "GetDownload";
+
+    private const string GetFileAction = "GetFile";
+    // The extension and the type of a downloaded stub whose type is not listed (rows 542 and 561).
+    private const string NeutralExtension = ".bin";
+    private const string NeutralType = "application/octet-stream";
 
     private const string LegacySegmentAction = "GetHlsVideoSegmentLegacy";
 
@@ -52,7 +63,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// </summary>
     internal const string MissingFilePrefix = "jellymesh-missing-";
 
-    // The extension a downloaded file gets for the media type of the remote file; any other type gets none.
+    // The extension a downloaded video gets for the media type of the remote file; any other type gets the neutral one.
     private static readonly Dictionary<string, string> _videoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ["video/x-matroska"] = ".mkv",
@@ -82,13 +93,56 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "MediaSegments"
     };
 
-    private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal)
+    // The routes a stub never reaches stock on: stock would send the text of the .strm, with its signed loopback URL, or
+    // write lyrics inside the federated folder. A route of a new stub type is one entry here.
+    private static readonly StubRoute[] _stubRoutes =
+    [
+        new("Library", GetFileAction, StubCover.Any, StubAccess.Visible, (filter, context, authorization, stubs) => filter.FileResultAsync(context, authorization, stubs[0])),
+        new("Library", DownloadAction, StubCover.Any, StubAccess.Download, (filter, context, authorization, stubs) => filter.FileResultAsync(context, authorization, stubs[0])),
+        new(LyricsController, null, StubCover.Audio, StubAccess.Visible, (filter, context, authorization, stubs) => filter.LyricsResultAsync(context, authorization, stubs[0])),
+        new("Videos", null, StubCover.Audio, StubAccess.Visible, (filter, context, authorization, stubs) => filter.AudioStubResultAsync(context, authorization, stubs)),
+        new("DynamicHls", null, StubCover.Audio, StubAccess.Visible, (filter, context, authorization, stubs) => filter.AudioStubResultAsync(context, authorization, stubs)),
+        new("Audio", null, StubCover.Audio, StubAccess.Visible, (filter, context, authorization, stubs) => filter.AudioStubResultAsync(context, authorization, stubs)),
+        new("UniversalAudio", null, StubCover.Audio, StubAccess.Visible, (filter, context, authorization, stubs) => filter.AudioStubResultAsync(context, authorization, stubs))
+    ];
+
+    // The extensions a downloaded audio stub gets, by the media type of the remote file (rows 532 and 561).
+    private static readonly Dictionary<string, string> _audioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Videos",
-        "DynamicHls",
-        "Audio",
-        "UniversalAudio"
+        ["audio/mpeg"] = ".mp3",
+        ["audio/mp3"] = ".mp3",
+        ["audio/flac"] = ".flac",
+        ["audio/x-flac"] = ".flac",
+        ["audio/mp4"] = ".m4a",
+        ["audio/m4a"] = ".m4a",
+        ["audio/x-m4a"] = ".m4a",
+        ["audio/m4b"] = ".m4b",
+        ["audio/x-m4b"] = ".m4b",
+        ["audio/aac"] = ".aac",
+        ["audio/ogg"] = ".ogg",
+        ["audio/vorbis"] = ".ogg",
+        ["audio/opus"] = ".opus",
+        ["audio/wav"] = ".wav",
+        ["audio/wave"] = ".wav",
+        ["audio/x-wav"] = ".wav",
+        ["audio/vnd.wave"] = ".wav",
+        ["audio/webm"] = ".webm",
+        ["audio/x-matroska"] = ".mka",
+        ["audio/x-ms-wma"] = ".wma",
+        ["video/x-matroska"] = ".mka",
+        ["video/x-ms-asf"] = ".wma",
+        ["audio/aiff"] = ".aiff",
+        ["audio/x-aiff"] = ".aiff",
+        ["audio/ape"] = ".ape",
+        ["audio/x-ape"] = ".ape",
+        ["audio/wavpack"] = ".wv",
+        ["audio/x-wavpack"] = ".wv",
+        ["audio/ac3"] = ".ac3",
+        ["audio/vnd.dts"] = ".dts"
     };
+
+    // The stock routes that would stream the file of an item, the .strm text of an audio stub included.
+    private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal) { "Videos", "DynamicHls", "Audio", "UniversalAudio" };
 
     private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
@@ -98,6 +152,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     private readonly ITranscodeManager _transcodes;
     private readonly StreamSlots _peerSlots;
     private readonly Func<string, IReadOnlyList<string>> _listFolder;
+    private readonly AudioStubRoutes _audio;
+    private readonly PlaybackVersions _versions;
     private readonly ILogger<StockRouteGuardFilter> _logger;
     private readonly ErrorLogLimits _errorLogs;
 
@@ -111,6 +167,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     /// <param name="refusal">The refusal.</param>
     /// <param name="transcodes">The transcode manager.</param>
     /// <param name="peerSlots">The play sessions of the peers, when this server is their provider.</param>
+    /// <param name="audio">The audio routes of track stubs.</param>
+    /// <param name="versions">The versions of a title, for the copies of a track.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
     public StockRouteGuardFilter(
@@ -121,9 +179,11 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
+        AudioStubRoutes audio,
+        PlaybackVersions versions,
         ILogger<StockRouteGuardFilter> logger,
         ErrorLogLimits? errorLogs = null)
-        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, ListFolder, logger, errorLogs)
+        : this(stubs, authorization, coordinator, sessions, refusal, transcodes, peerSlots, audio, versions, ListFolder, logger, errorLogs)
     {
     }
 
@@ -136,6 +196,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         PlaybackRefusal refusal,
         ITranscodeManager transcodes,
         StreamSlots peerSlots,
+        AudioStubRoutes audio,
+        PlaybackVersions versions,
         Func<string, IReadOnlyList<string>> listFolder,
         ILogger<StockRouteGuardFilter>? logger = null,
         ErrorLogLimits? errorLogs = null)
@@ -150,7 +212,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         _transcodes = transcodes;
         _peerSlots = peerSlots;
         _listFolder = listFolder;
+        _audio = audio;
+        _versions = versions;
     }
+
+    /// <summary>
+    /// Gets the routes a stub never reaches stock on, with the stubs each covers and the access it wants.
+    /// </summary>
+    internal static IReadOnlyList<StubRoute> StubRoutes => _stubRoutes;
 
     /// <inheritdoc />
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
@@ -203,9 +272,12 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
-            if (action == StopEncodingAction && caller is { } owner && _sessions.Find(playSessionId) is { } session && session.Identity.UserId == owner)
+            if (action == StopEncodingAction && caller is { } owner)
             {
-                await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
+                foreach (var session in _sessions.FindReported(owner, playSessionId))
+                {
+                    await _coordinator.CloseAsync(session.Id).ConfigureAwait(false);
+                }
             }
 
             await next().ConfigureAwait(false);
@@ -237,44 +309,56 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             await RefuseAsync(context, next, refusal, controller, action).ConfigureAwait(false);
             return;
         }
-        else if (IsFileAction(controller, action) && StubLookup.ItemIdOf(context) is { } fileId && _stubs.IsStub(fileId))
+        else if (StubRouteOf(context, controller, action, out var covered) is { } stubRoute)
         {
-            // Stock would send the text of the .strm, which holds the signed loopback URL, so it is never reached.
-            context.Result = await FileResultAsync(context, action, fileId).ConfigureAwait(false);
+            var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
+            context.Result = AccessRefusal(authorization, covered, stubRoute.Access, controller, action)
+                ?? await stubRoute.Answer(this, context, authorization, covered).ConfigureAwait(false);
             return;
         }
         else if (IsMedia(controller, action)
-            && StubsOf(context, named, out var recorded) is var stubs
-            && (stubs.Count > 0 || recorded))
+            && StubsOf(context, named, out var recorded, out var guarded) is var stubs
+            && (guarded.Count > 0 || recorded))
         {
             var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
-            if (authorization.User is not { } user)
-            {
-                _logger.LogDebug("{Controller}.{Action} on a stub came without a user: 401", controller, action);
-                context.Result = new StatusCodeResult(StatusCodes.Status401Unauthorized);
-                return;
-            }
 
             // A segment that restarts ffmpeg stops the job of the play session it names, as the stop route does.
-            if (stubs.Keys.Any(id => !_stubs.Sees(user, id)) || named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)))
+            var denied = AccessRefusal(authorization, guarded, StubAccess.Visible, controller, action);
+            if (denied is null && named.Any(id => _sessions.IsLocalOfAnother(authorization.User!.Id, id)))
             {
                 _logger.LogInformation(
                     "{Controller}.{Action} names a title the user does not see ({Unseen}) or a play session of another user ({OfAnother}): 404",
                     controller,
                     action,
-                    stubs.Keys.Any(id => !_stubs.Sees(user, id)),
-                    named.Any(id => _sessions.IsLocalOfAnother(user.Id, id)));
-                await RefuseAsync(context, next, new StatusCodeResult(StatusCodes.Status404NotFound), controller, action).ConfigureAwait(false);
+                    false,
+                    true);
+                denied = new StatusCodeResult(StatusCodes.Status404NotFound);
+            }
+
+            if (denied is not null)
+            {
+                await RefuseAsync(context, next, denied, controller, action).ConfigureAwait(false);
                 return;
             }
 
-            // Stock would start reading the .strm. The stub the named local play session plays goes on.
+            var user = authorization.User!;
+
+            // Stock would start reading the .strm. The stub the named local play session plays goes on. The subtitles of a
+            // stub are refused while the database cannot be used (row 565).
             var isSuspended = _coordinator.IsSuspended;
-            if (_streamControllers.Contains(controller)
-                && stubs.Any(entry => (isSuspended || entry.Value is null) && !named.Any(playSessionId => _sessions.LocalItemOf(playSessionId) == entry.Key)))
+            if ((_streamControllers.Contains(controller)
+                    && stubs.Any(entry => (isSuspended || entry.Value is null) && !named.Any(playSessionId => _sessions.LocalItemOf(playSessionId) == entry.Key)))
+                || (isSuspended && controller == SubtitleController))
             {
                 _logger.LogWarning("{Controller}.{Action} of a federated title is refused: database suspended {Suspended}, unknown stub {Unknown}", controller, action, isSuspended, stubs.ContainsValue(null));
                 context.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, isSuspended ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
+                return;
+            }
+
+            // A book is opened, never played: no stream or segment of it reaches stock or a remote (D63).
+            if (stubs.Values.Any(stub => stub?.Kind == StubKind.Book))
+            {
+                context.Result = _refusal.RefuseBook(context.HttpContext, authorization.DeviceId ?? string.Empty);
                 return;
             }
 
@@ -343,33 +427,66 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         context.Result = refusal;
     }
 
-    // Serves Download and File of a stub from its remote file, as a static stream of the stub reads it. File wants a user who
-    // sees the stub, Download also the download permission, as on stock; no source or no room for the user is a bare 503.
-    private async Task<IActionResult> FileResultAsync(ActionExecutingContext context, string action, Guid itemId)
+    // The single check of a route that names stubs (row 458): 401 without a user, 404 when one of the stubs is not visible
+    // to them, 403 on Download without the download permission (D12). Null when the route goes on.
+    private IActionResult? AccessRefusal(AuthorizationInfo authorization, IEnumerable<Guid> stubs, StubAccess access, string controller, string action)
     {
-        var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
         if (authorization.User is not { } user)
         {
-            _logger.LogDebug("{Action} of a federated title came without a user: 401", action);
+            _logger.LogDebug("{Controller}.{Action} on a stub came without a user: 401", controller, action);
             return new StatusCodeResult(StatusCodes.Status401Unauthorized);
         }
 
-        if (!_stubs.Sees(user, itemId))
+        if (stubs.Any(id => !_stubs.Sees(user, id)))
         {
-            _logger.LogInformation("{Action} of a federated title the user does not see: 404", action);
+            _logger.LogInformation(
+                "{Controller}.{Action} names a title the user does not see ({Unseen}) or a play session of another user ({OfAnother}): 404",
+                controller,
+                action,
+                true,
+                false);
             return new StatusCodeResult(StatusCodes.Status404NotFound);
         }
 
-        if (action == DownloadAction && !user.HasPermission(PermissionKind.EnableContentDownloading))
+        if (access == StubAccess.Download && !user.HasPermission(PermissionKind.EnableContentDownloading))
         {
-            _logger.LogInformation("Download of a federated title by a user without the download permission: 403");
+            _logger.LogInformation("{Controller}.{Action} of a federated title by a user without the download permission: 403", controller, action);
             return new StatusCodeResult(StatusCodes.Status403Forbidden);
         }
 
-        if (_stubs.Find(itemId) is not { } stub)
+        return null;
+    }
+
+    // Finds the first entry of the stub table for the action that covers a stub it names, with those stubs; null for none.
+    private StubRoute? StubRouteOf(ActionExecutingContext context, string controller, string action, out List<Guid> covered)
+    {
+        covered = [];
+        foreach (var route in _stubRoutes)
+        {
+            if (route.Controller != controller || (route.Action is not null && route.Action != action))
+            {
+                continue;
+            }
+
+            covered = StubLookup.NamedItemIdsOf(context).Where(id => route.Covers == StubCover.Audio ? _stubs.IsAudioStub(id) : _stubs.IsStub(id)).ToList();
+            if (covered.Count > 0)
+            {
+                return route;
+            }
+        }
+
+        return null;
+    }
+
+    // Serves Download and File of a stub its user may reach from its remote file; a file no source gives is a 503, with a
+    // text for a book placeholder (931).
+    private async Task<IActionResult> FileResultAsync(ActionExecutingContext context, AuthorizationInfo authorization, Guid itemId)
+    {
+        var action = StubLookup.ActionOf(context).Action;
+        if (_stubs.FindFile(itemId) is not { } stub)
         {
             _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
-            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+            return Unavailable(itemId);
         }
 
         // Before a place is taken, which could close an older session of the user.
@@ -379,6 +496,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
+        var user = authorization.User!;
         using var read = await _coordinator.TryBeginFileReadAsync(user.Id).ConfigureAwait(false);
         if (read is null)
         {
@@ -389,23 +507,60 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         var http = context.HttpContext;
         var method = HttpMethods.IsHead(http.Request.Method) ? HttpMethod.Head : HttpMethod.Get;
         var range = http.Request.Headers.Range.ToString();
-        using var opened = await _coordinator.OpenFileAsync(stub, method, string.IsNullOrEmpty(range) ? null : range, http.RequestAborted).ConfigureAwait(false);
+        var asked = string.IsNullOrEmpty(range) ? null : range;
+
+        // A track falls back to its copies the user sees (row 457); a video stub stays on its server (D22). Audio is read with
+        // its device, which shares one slot on a JellyMesh remote (rows 511 and 561).
+        using var opened = stub.Kind is StubKind.Track or StubKind.AudioBook
+            ? await _coordinator.OpenTrackFileAsync(user.Id, authorization.DeviceId ?? string.Empty, stub, _versions.Fallbacks(itemId, stub, user).Select(copy => copy.Stub).ToList(), method, asked, http.RequestAborted).ConfigureAwait(false)
+            : await _coordinator.OpenFileAsync(stub, method, asked, http.RequestAborted).ConfigureAwait(false);
         if (opened is null)
         {
             _logger.LogWarning("{Action} of stub {StubId}: no source opened its file", action, stub.Id);
             return _coordinator.TakeFileRefusal(stub.Id)
                 ? _refusal.Refuse(http, authorization.DeviceId ?? string.Empty, PlaybackRefusal.LimitText)
-                : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+                : Unavailable(itemId);
+        }
+
+        // A book or a photo goes with the type of its format, never the remote's (D62). On Download a book or a photo goes as a
+        // file with the name of its stub, audio with that name and the extension of the remote type or a neutral one (rows 532
+        // and 542), any other stub with the name of its title and the extension of the remote type or a neutral one (row 561).
+        var mediaType = stub.Kind switch
+        {
+            StubKind.Book => BookPlaceholders.MediaTypeOf(stub.RelativePath),
+            StubKind.Photo => PhotoPlaceholders.MediaTypeOf(stub.RelativePath),
+            _ => null
+        };
+        if (stub.Kind is StubKind.Book or StubKind.Photo or StubKind.Track or StubKind.AudioBook)
+        {
+            http.Response.Headers.XContentTypeOptions = "nosniff";
         }
 
         if (action == DownloadAction)
         {
             var disposition = new ContentDispositionHeaderValue("attachment");
-            disposition.SetHttpFileName(DownloadName(stub.RelativePath, opened.Headers.ContentType));
+            string name;
+            if (stub.Kind is StubKind.Track or StubKind.AudioBook)
+            {
+                var extension = AudioExtensionOf(opened.Headers.ContentType);
+                name = Path.GetFileNameWithoutExtension(stub.RelativePath) + (extension ?? NeutralExtension);
+                mediaType = extension is null ? NeutralType : null;
+            }
+            else if (stub.Kind is StubKind.Book or StubKind.Photo)
+            {
+                name = Path.GetFileName(stub.RelativePath);
+            }
+            else
+            {
+                name = DownloadName(stub.RelativePath, opened.Headers.ContentType, out var listed);
+                mediaType = listed ? null : NeutralType;
+            }
+
+            disposition.SetHttpFileName(name);
             http.Response.Headers.ContentDisposition = disposition.ToString();
         }
 
-        var relayed = await StreamRelay.RelayAsync(opened, http, _coordinator.StallLimit, http.RequestAborted).ConfigureAwait(false);
+        var relayed = await StreamRelay.RelayAsync(opened, http, _coordinator.StallLimit, http.RequestAborted, mediaType: mediaType).ConfigureAwait(false);
         if (relayed.IsAbnormal)
         {
             _logger.LogInformation("{Action} of stub {StubId} broke off: {End} after {Bytes} bytes in {Elapsed}", action, stub.Id, relayed.End, relayed.Bytes, relayed.Elapsed);
@@ -414,12 +569,81 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return new EmptyResult();
     }
 
-    // The name a download of a stub gets: the local name of its title with the extension of the remote file's media type.
-    internal static string DownloadName(string relativePath, string? contentType)
+    // The extension of a listed audio type, whatever its case and parameters, or null.
+    private static string? AudioExtensionOf(string? contentType)
+        => contentType is not null && _audioExtensions.TryGetValue(contentType.Split(';', 2)[0].Trim(), out var extension) ? extension : null;
+
+    // The name a download of a video stub gets: the local name of its title with the extension of the remote file's media
+    // type, or the neutral one for a type not listed (rows 542 and 561).
+    internal static string DownloadName(string relativePath, string? contentType, out bool listed)
     {
         var type = contentType?.Split(';', 2)[0].Trim();
-        var extension = type is not null && _videoExtensions.TryGetValue(type, out var known) ? known : string.Empty;
-        return Path.GetFileNameWithoutExtension(relativePath) + extension;
+        var extension = type is not null && _videoExtensions.TryGetValue(type, out var known) ? known : null;
+        listed = extension is not null;
+        return Path.GetFileNameWithoutExtension(relativePath) + (extension ?? NeutralExtension);
+    }
+
+    // Serves the lyrics of a track stub its user may reach from its remote; they are read, never managed.
+    private async Task<IActionResult> LyricsResultAsync(ActionExecutingContext context, AuthorizationInfo authorization, Guid track)
+    {
+        var (controller, action) = StubLookup.ActionOf(context);
+        if (action != GetLyricsAction)
+        {
+            _logger.LogInformation("{Controller}.{Action} on a track stub is refused: its lyrics are only read: 403", controller, action);
+            return new StatusCodeResult(StatusCodes.Status403Forbidden);
+        }
+
+        if (_stubs.FindFile(track) is not { } stub)
+        {
+            _logger.LogWarning("{Action} of a federated track whose stub is gone: 503", action);
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return await _audio.LyricsAsync(context.HttpContext, authorization.DeviceId ?? string.Empty, stub).ConfigureAwait(false);
+    }
+
+    // Serves a stock stream route on audio stubs their user may reach: a static stream is the file; the other audio routes
+    // go through a session, anything else is a bare 503.
+    private async Task<IActionResult> AudioStubResultAsync(ActionExecutingContext context, AuthorizationInfo authorization, List<Guid> tracks)
+    {
+        var user = authorization.User!;
+
+        // The route names the track, and may name one of its copies as the version, after a fallback (row 457).
+        var route = StubLookup.ItemIdOf(context);
+        var track = tracks switch
+        {
+            [var only] when only == route => only,
+            [_, _] when route is { } item && tracks.Contains(item) && tracks.First(id => id != item) is var copy && _versions.IsVersionOf(item, copy) => copy,
+            _ => (Guid?)null
+        };
+        if (track is not { } served || _stubs.FindFile(served) is not { } stub || string.IsNullOrEmpty(authorization.Token))
+        {
+            var (controller, action) = StubLookup.ActionOf(context);
+            _logger.LogWarning(
+                "{Controller}.{Action} of a federated track is refused: {Count} tracks named, served track found {Found}, local token present {HasToken}: 503",
+                controller,
+                action,
+                tracks.Count,
+                track is not null,
+                !string.IsNullOrEmpty(authorization.Token));
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        if (StubLookup.ActionOf(context).Controller == "Audio" && context.ActionArguments.TryGetValue("static", out var isStatic) && isStatic is true)
+        {
+            return await FileResultAsync(context, authorization, served).ConfigureAwait(false);
+        }
+
+        var access = new AudioAccess(user.Id, authorization.DeviceId ?? string.Empty, authorization.Token, served);
+        return await _audio.ServeAsync(context, access, stub, _versions.Fallbacks(served, stub, user)).ConfigureAwait(false);
+    }
+
+    // A 503, with a text for a book or photo placeholder, whose readers show it.
+    private IActionResult Unavailable(Guid itemId)
+    {
+        return _stubs.IsPlaceholder(itemId)
+            ? new ContentResult { StatusCode = StatusCodes.Status503ServiceUnavailable, Content = PlaybackRefusal.FileOfflineText, ContentType = "text/plain; charset=utf-8" }
+            : new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
     }
 
     // Tells whether a play session is recorded here, of a stub played on this server or of a peer. No peer is anonymous.
@@ -523,7 +747,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         }
     }
 
-    // Q54: when an item the action names has linked versions, its user must see every item it names. A Playstate report
+    // Q54: when an item the action names has linked versions or track copies, its user must see every item it names. A Playstate report
     // gets 204 without effect, as for the play session of another user (D8). Null when the action goes on.
     private async Task<IActionResult?> VersionRefusalAsync(ActionExecutingContext context, string controller, string action, IReadOnlyList<string> sessions)
     {
@@ -539,7 +763,8 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
             named.AddRange(sessions.Select(_sessions.LocalItemOf).OfType<Guid>());
         }
 
-        if (!named.Exists(_stubs.HasVersions))
+        // The copies of a track count as its versions (row 66).
+        if (!named.Exists(id => _stubs.HasVersions(id) || _versions.HasCopies(id)))
         {
             return null;
         }
@@ -564,8 +789,9 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     }
 
     // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub, null
-    // for one the registry does not hold. The play session counts even when its stub no longer resolves.
-    private Dictionary<Guid, StubEntry?> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded)
+    // for one the registry does not hold. The play session counts even when its stub no longer resolves. Guarded adds the
+    // named stubs of any kind the registry lacks.
+    private Dictionary<Guid, StubEntry?> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded, out HashSet<Guid> guarded)
     {
         var stubs = new Dictionary<Guid, StubEntry?>();
         var named = StubLookup.NamedItemIdsOf(context).ToList();
@@ -573,11 +799,17 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         recorded = played.Count > 0;
         named.AddRange(played);
 
+        guarded = [];
         foreach (var id in named)
         {
             if (_stubs.Resolve(id, out var isUnknown) is var stub && (stub is not null || isUnknown))
             {
                 stubs[id] = stub;
+                guarded.Add(id);
+            }
+            else if (_stubs.IsStub(id))
+            {
+                guarded.Add(id);
             }
         }
 
@@ -608,7 +840,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
     private static bool IsFileAction(string controller, string action)
     {
-        return controller == "Library" && action is DownloadAction or "GetFile";
+        return controller == "Library" && action is DownloadAction or GetFileAction;
     }
 
     // Only a segment makes stock stop the jobs of a device; playlists and live.m3u8 stop none.

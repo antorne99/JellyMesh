@@ -15,4 +15,9 @@ public sealed record ManualMergeList(IReadOnlyList<MergeCaseView> Cases, IReadOn
     /// does not show them as films.
     /// </summary>
     public IReadOnlyList<MergeCaseView> SeriesCases { get; init; } = [];
+
+    /// <summary>
+    /// Gets the music video titles that can be merged (row 454), apart from films and series for the same reason.
+    /// </summary>
+    public IReadOnlyList<MergeCaseView> MusicVideoCases { get; init; } = [];
 }

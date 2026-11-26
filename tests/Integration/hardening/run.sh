@@ -68,8 +68,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Waits for a running sync (saving a server starts one, and a second is refused with 409), then runs one.
 sync_now() {
   local i started=$SECONDS
+  for i in $(seq 1 180); do [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && break; sleep 1; done
   post /JellyMesh/Admin/Sync >/dev/null
   for i in $(seq 1 240); do
     [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && { echo $((SECONDS - started)) >"$WORK/sync-seconds"; return 0; }

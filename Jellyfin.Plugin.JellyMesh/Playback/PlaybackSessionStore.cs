@@ -175,6 +175,26 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
+    /// Finds the sessions of a user that a stop report names: the session with that id, and those whose client chose that
+    /// id for its stream (row 561).
+    /// </summary>
+    /// <param name="userId">The user who reports.</param>
+    /// <param name="playSessionId">The play session the report names.</param>
+    /// <returns>The sessions, none for another user.</returns>
+    public IReadOnlyList<PlaybackSession> FindReported(Guid userId, string? playSessionId)
+    {
+        if (string.IsNullOrEmpty(playSessionId))
+        {
+            return [];
+        }
+
+        return _sessions.Values
+            .Where(session => session.Identity.UserId == userId
+                && (string.Equals(session.Id, playSessionId, StringComparison.Ordinal) || string.Equals(session.ClientPlaySessionId, playSessionId, StringComparison.Ordinal)))
+            .ToList();
+    }
+
+    /// <summary>
     /// Finds the session the same client has on the same title, leaving out those already replaced. A new
     /// <c>PlaybackInfo</c> replaces it: that is how a client changes the audio track.
     /// </summary>

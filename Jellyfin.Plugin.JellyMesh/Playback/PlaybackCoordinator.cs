@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -40,9 +41,11 @@ public sealed class PlaybackCoordinator
     private readonly IPluginDatabase _database;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ErrorLogLimits _errorLogs;
+    private readonly DeviceHasher _devices;
     private readonly ITranscodeManager? _transcodes;
     private readonly ConcurrentDictionary<(Guid UserId, string StubId), WorkingSource> _workingSources = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _filesAtLimit = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<(Guid UserId, string DeviceId, string StubId), FileCopy> _fileCopies = new();
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
@@ -64,6 +67,7 @@ public sealed class PlaybackCoordinator
     /// <param name="clock">The clock.</param>
     /// <param name="database">The plugin database, whose state suspends new playback.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="devices">What names the devices to the JellyMesh servers.</param>
     /// <param name="transcodes">The transcode manager, which closes the local transcodes of a removed server.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
     public PlaybackCoordinator(
@@ -75,6 +79,7 @@ public sealed class PlaybackCoordinator
         TimeProvider clock,
         IPluginDatabase database,
         ILogger<PlaybackCoordinator> logger,
+        DeviceHasher devices,
         ITranscodeManager? transcodes = null,
         ErrorLogLimits? errorLogs = null)
     {
@@ -87,6 +92,7 @@ public sealed class PlaybackCoordinator
         _clock = clock;
         _database = database;
         _logger = logger;
+        _devices = devices;
         _transcodes = transcodes;
     }
 
@@ -185,7 +191,8 @@ public sealed class PlaybackCoordinator
                 refused += attempt.AtLimit ? 1 : 0;
             }
 
-            foreach (var (version, source) in reachable)
+            // No local audio transcode (row 457): a track ends its chain on the remote copies.
+            foreach (var (version, source) in reachable.Where(step => step.Version.Stub.Kind != StubKind.Track))
             {
                 if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
                 {
@@ -323,24 +330,66 @@ public sealed class PlaybackCoordinator
             return null;
         }
 
-        var chosen = ChosenFor(stub);
-        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
-        var refused = 0;
-        var tried = 0;
-        foreach (var source in Ordered(sources, chosen?.Working.Source))
+        var (content, refused, tried) = await ReadFileAsync(stub, null, method, range, cancellationToken).ConfigureAwait(false);
+        if (content is null && tried > 0 && refused == tried)
         {
-            tried++;
-            var request = new RemoteStreamRequest(method, FilePath(source), range);
-            var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
-            if (stream.IsSuccess)
-            {
-                // Without a playback that chose, the source is kept for the next read, as a source of no user.
-                _workingSources[chosen?.Key ?? (Guid.Empty, stub.Id)] = new WorkingSource(source, _clock.GetUtcNow());
-                return stream.Value;
-            }
+            _filesAtLimit[stub.Id] = _clock.GetUtcNow();
+        }
 
-            _logger.LogInformation("The file of stub {StubId} on server {ServerId} did not open: {Failure}", stub.Id, source.ServerId, stream.Describe());
-            refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
+        return content;
+    }
+
+    /// <summary>
+    /// Opens the remote file of a track for a user: the copy in use first, then the others the user sees, best first (row
+    /// 457). A read that starts past byte 0 stays in the copy it began in, since the bytes of another file would not match.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <param name="deviceId">The device of the user, which reads its own file.</param>
+    /// <param name="stub">The stub of the track.</param>
+    /// <param name="copies">The other copies of the track the user sees, best first.</param>
+    /// <param name="method">GET or HEAD.</param>
+    /// <param name="range">The <c>Range</c> header, if any.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The stream, null if no copy gives it.</returns>
+    public async Task<RemoteContent?> OpenTrackFileAsync(Guid userId, string deviceId, StubEntry stub, IReadOnlyList<StubEntry> copies, HttpMethod method, string? range, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+        ArgumentNullException.ThrowIfNull(copies);
+
+        if (IsSuspended && !_sessions.IsReadLocally(stub.Id))
+        {
+            _logger.LogWarning("The file of track {StubId} is not opened: the JellyMesh database cannot be used", stub.Id);
+            return null;
+        }
+
+        var key = (userId, deviceId ?? string.Empty, stub.Id);
+        var now = _clock.GetUtcNow();
+        var current = _fileCopies.TryGetValue(key, out var taken) && now - taken.At < Times.SessionRetention
+            ? copies.FirstOrDefault(copy => string.Equals(copy.Id, taken.StubId, StringComparison.Ordinal)) ?? stub
+            : stub;
+        IEnumerable<StubEntry> order = StartsAtZero(range)
+            ? new[] { current }.Concat(new[] { stub }.Concat(copies).Where(copy => copy != current))
+            : [current];
+
+        var (refused, tried) = (0, 0);
+        foreach (var copy in order)
+        {
+            var read = await ReadFileAsync(copy, (userId, deviceId), method, range, cancellationToken).ConfigureAwait(false);
+            (refused, tried) = (refused + read.Refused, tried + read.Tried);
+            if (read.Content is not null)
+            {
+                if (copy == stub)
+                {
+                    _fileCopies.TryRemove(key, out _);
+                }
+                else
+                {
+                    _fileCopies[key] = new FileCopy(copy.Id, _clock.GetUtcNow());
+                    ForgetFileCopies(userId);
+                }
+
+                return read.Content;
+            }
         }
 
         if (tried > 0 && refused == tried)
@@ -349,6 +398,42 @@ public sealed class PlaybackCoordinator
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Reads the lyrics of a track stub from the first source that answers, the one in use first. While the plugin database
+    /// cannot be used, none are read (row 561).
+    /// </summary>
+    /// <param name="stub">The stub.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The lyrics, or the failure of the last source when none answered.</returns>
+    public async Task<RemoteResult<RemoteLyrics>> ReadLyricsAsync(StubEntry stub, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        if (IsSuspended)
+        {
+            return RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Suspended);
+        }
+
+        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
+        var failed = RemoteResult.Fail<RemoteLyrics>(RemoteFailure.UnknownServer);
+        foreach (var source in Ordered(sources, ChosenFor(stub)?.Working.Source))
+        {
+            var read = await GatedAsync(
+                source.ServerId,
+                Times.StreamOpen,
+                (endpoint, session, token) => _client.GetLyricsAsync(endpoint, session, source.ItemId, token),
+                cancellationToken).ConfigureAwait(false);
+            if (read.IsSuccess)
+            {
+                return read;
+            }
+
+            failed = read;
+        }
+
+        return failed;
     }
 
     /// <summary>
@@ -403,6 +488,7 @@ public sealed class PlaybackCoordinator
             return RemoteResult.Fail<RemoteContent>(RemoteFailure.Busy);
         }
 
+        var told = request with { Device = Told(serverId, request.Device) };
         var handedOver = false;
         try
         {
@@ -411,7 +497,7 @@ public sealed class PlaybackCoordinator
             var opened = await GatedAsync(
                 serverId,
                 Times.StreamOpen,
-                (endpoint, session, token) => owner is { IsClosed: true } ? Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Withdrawn)) : _client.OpenStreamAsync(endpoint, session, request, token),
+                (endpoint, session, token) => owner is { IsClosed: true } ? Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Withdrawn)) : _client.OpenStreamAsync(endpoint, session, told, token),
                 cancellationToken).ConfigureAwait(false);
             if (opened.IsSuccess && end.IsCancellationRequested)
             {
@@ -449,23 +535,9 @@ public sealed class PlaybackCoordinator
         return GatedAsync(
             session.Source.ServerId,
             Times.StreamOpen,
-            (endpoint, remote, token) => session.IsClosed ? Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Withdrawn)) : _client.ReadPlaylistAsync(endpoint, remote, path, token),
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Reads a playlist of a session.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="path">The path and query.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The text.</returns>
-    public Task<RemoteResult<string>> ReadPlaylistAsync(Guid serverId, string path, CancellationToken cancellationToken)
-    {
-        return GatedAsync(
-            serverId,
-            Times.StreamOpen,
-            (endpoint, session, token) => _client.ReadPlaylistAsync(endpoint, session, path, token),
+            (endpoint, remote, token) => session.IsClosed
+                ? Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Withdrawn))
+                : _client.ReadPlaylistAsync(endpoint, remote, path, Told(session.Source.ServerId, session.RemoteDevice), token),
             cancellationToken);
     }
 
@@ -478,7 +550,7 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        return [session.RemotePlaySessionId ?? string.Empty, session.Source.ServerId.ToString("N")];
+        return [session.RemotePlaySessionId ?? string.Empty, session.Source.ServerId.ToString("N"), session.RemoteDevice ?? string.Empty];
     }
 
     /// <summary>
@@ -511,8 +583,8 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
-    /// Ends a session reported as stopped, if the report comes from whoever opened it. Stock takes any play session from any
-    /// user, and the session of someone else is left alone.
+    /// Ends the sessions reported as stopped, named by their id or by the one their client chose (row 561), if the report
+    /// comes from whoever opened them. Stock takes any play session from any user, and the session of someone else is left alone.
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <param name="users">The users behind the report.</param>
@@ -521,7 +593,7 @@ public sealed class PlaybackCoordinator
     {
         ArgumentNullException.ThrowIfNull(users);
 
-        if (_sessions.Find(sessionId) is { } session && users.Contains(session.Identity.UserId))
+        foreach (var session in users.Distinct().SelectMany(user => _sessions.FindReported(user, sessionId)).ToList())
         {
             await CloseAsync(session.Id).ConfigureAwait(false);
         }
@@ -617,6 +689,11 @@ public sealed class PlaybackCoordinator
             _workingSources.TryRemove(entry);
         }
 
+        foreach (var entry in _fileCopies.Where(entry => now - entry.Value.At >= times.SessionRetention))
+        {
+            _fileCopies.TryRemove(entry);
+        }
+
         _failures.ForgetOld(now);
     }
 
@@ -700,6 +777,50 @@ public sealed class PlaybackCoordinator
             : sources;
     }
 
+    // The remote file of a book or a photo: File asks the remote user for no download permission (F48, probe 7).
+    private static string PlaceholderFilePath(StubSource source) => "/Items/" + Uri.EscapeDataString(source.ItemId) + "/File";
+
+    // Reads the file of one stub from its sources, the one last chosen first; a stub stays on its server.
+    private async Task<(RemoteContent? Content, int Refused, int Tried)> ReadFileAsync(StubEntry stub, (Guid UserId, string? DeviceId)? reader, HttpMethod method, string? range, CancellationToken cancellationToken)
+    {
+        var chosen = ChosenFor(stub);
+        IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
+        var refused = 0;
+        var tried = 0;
+        foreach (var source in Ordered(sources, chosen?.Working.Source))
+        {
+            tried++;
+            var device = reader is { } access ? DeviceFor(stub, source, access.UserId, access.DeviceId) : null;
+            var request = new RemoteStreamRequest(method, stub.Kind is StubKind.Book or StubKind.Photo ? PlaceholderFilePath(source) : FilePath(source), range, Device: device);
+            var stream = await OpenAsync(source.ServerId, request, cancellationToken).ConfigureAwait(false);
+            if (stream.IsSuccess)
+            {
+                // Without a playback that chose, the source is kept for the next read, as a source of no user.
+                _workingSources[chosen?.Key ?? (Guid.Empty, stub.Id)] = new WorkingSource(source, _clock.GetUtcNow());
+                return (stream.Value, refused, tried);
+            }
+
+            _logger.LogInformation("The file of stub {StubId} on server {ServerId} did not open: {Failure}", stub.Id, source.ServerId, stream.Describe());
+            refused += stream.Failure == RemoteFailure.StreamLimitReached ? 1 : 0;
+        }
+
+        return (null, refused, tried);
+    }
+
+    // A client names its device as it likes, so a user keeps a limited number of copies, the latest.
+    private void ForgetFileCopies(Guid userId)
+    {
+        var copies = _fileCopies.Where(entry => entry.Key.UserId.Equals(userId)).ToList();
+        foreach (var entry in copies.OrderBy(entry => entry.Value.At).Take(copies.Count - PlaybackLimits.FileCopiesPerUser))
+        {
+            _fileCopies.TryRemove(entry);
+        }
+    }
+
+    // A read with no Range, or one whose first range starts at byte 0.
+    private static bool StartsAtZero(string? range)
+        => string.IsNullOrEmpty(range) || (RangeHeaderValue.TryParse(range, out var parsed) && parsed.Ranges.FirstOrDefault()?.From == 0);
+
     private static string FilePath(StubSource source, string? playSessionId = null)
     {
         var path = "/Videos/" + Uri.EscapeDataString(source.ItemId) + "/stream?static=true&MediaSourceId=" + Uri.EscapeDataString(source.MediaSourceId);
@@ -711,7 +832,7 @@ public sealed class PlaybackCoordinator
         return failure is RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.Suspended or RemoteFailure.UnknownServer;
     }
 
-    private static RemotePlaybackRequest ToRemote(PlaybackOpenRequest request, StubSource source, bool keepIndexes, string? replaces)
+    private static RemotePlaybackRequest ToRemote(PlaybackOpenRequest request, StubSource source, bool keepIndexes, string? replaces, string? device)
     {
         return new RemotePlaybackRequest
         {
@@ -729,7 +850,8 @@ public sealed class PlaybackCoordinator
             AllowVideoStreamCopy = request.AllowVideoStreamCopy,
             AllowAudioStreamCopy = request.AllowAudioStreamCopy,
             AlwaysBurnInSubtitleWhenTranscoding = request.AlwaysBurnInSubtitleWhenTranscoding,
-            ReplacesPlaySessionId = replaces
+            ReplacesPlaySessionId = replaces,
+            Device = device
         };
     }
 
@@ -875,6 +997,16 @@ public sealed class PlaybackCoordinator
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
     }
 
+    // What names the device of a track or an audiobook to a JellyMesh remote, so that its streams share a slot there (rows
+    // 511 and 561).
+    private string? DeviceFor(StubEntry stub, StubSource source, Guid userId, string? deviceId)
+    {
+        return stub.Kind is StubKind.Track or StubKind.AudioBook && IsJellyMesh(source.ServerId) ? _devices.Hash(source.ServerId, userId, deviceId) : null;
+    }
+
+    // A session keeps its device, and its server can stop running JellyMesh meanwhile.
+    private string? Told(Guid serverId, string? device) => device is not null && IsJellyMesh(serverId) ? device : null;
+
     // A new PlaybackInfo on the same JellyMesh server takes over the slot of the stream it replaces: on a full server a
     // change of audio track would otherwise be refused by its own stream. The provider frees it even if it then refuses.
     private string? ReplacesOf(PlaybackSession? previous, StubSource source)
@@ -885,7 +1017,8 @@ public sealed class PlaybackCoordinator
     private async Task<Attempt> TryRemoteAsync(PlaybackOpenRequest request, StubSource source, bool keepIndexes, PlaybackSession? previous, CancellationToken cancellationToken)
     {
         var replaces = ReplacesOf(previous, source);
-        var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
+        var device = DeviceFor(request.Stub, source, request.Identity.UserId, request.Identity.DeviceId);
+        var remoteRequest = ToRemote(request, source, keepIndexes, replaces, device);
         var end = EndOf(source.ServerId).Token;
         var answer = await GatedAsync(
             source.ServerId,
@@ -923,7 +1056,7 @@ public sealed class PlaybackCoordinator
         PlaybackSession? session = null;
         try
         {
-            session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, cancellationToken).ConfigureAwait(false);
+            session = await OpenStreamKindAsync(request, source, remote, info.PlaySessionId, device, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -958,15 +1091,15 @@ public sealed class PlaybackCoordinator
         return new Attempt(new PlaybackInfoResponse { MediaSources = [built], PlaySessionId = session.Id }, true);
     }
 
-    private async Task<PlaybackSession?> OpenStreamKindAsync(PlaybackOpenRequest request, StubSource source, MediaSourceInfo remote, string remotePlaySessionId, CancellationToken cancellationToken)
+    private async Task<PlaybackSession?> OpenStreamKindAsync(PlaybackOpenRequest request, StubSource source, MediaSourceInfo remote, string remotePlaySessionId, string? device, CancellationToken cancellationToken)
     {
         var now = _clock.GetUtcNow();
         if (remote.SupportsDirectPlay)
         {
             // A JellyMesh remote counts this stream by its play session. A stock request stays as it always was.
             var path = FilePath(source, IsJellyMesh(source.ServerId) ? remotePlaySessionId : null);
-            return await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, path, ProbeRange), "direct stream", cancellationToken).ConfigureAwait(false)
-                ? new PlaybackSession(request.Identity, source, remotePlaySessionId, PlaybackStreamKind.Direct, path, now)
+            return await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, path, ProbeRange, Device: device), "direct stream", cancellationToken).ConfigureAwait(false)
+                ? new PlaybackSession(request.Identity, source, remotePlaySessionId, PlaybackStreamKind.Direct, path, now) { RemoteDevice = device }
                 : null;
         }
 
@@ -985,12 +1118,12 @@ public sealed class PlaybackCoordinator
 
         var upstream = PlaybackUrls.WithoutToken(remote.TranscodingUrl);
         var kind = remote.TranscodingSubProtocol == MediaStreamProtocol.hls ? PlaybackStreamKind.Hls : PlaybackStreamKind.Progressive;
-        var session = new PlaybackSession(request.Identity, source, remotePlaySessionId, kind, upstream, now);
+        var session = new PlaybackSession(request.Identity, source, remotePlaySessionId, kind, upstream, now) { RemoteDevice = device };
         try
         {
             var works = kind == PlaybackStreamKind.Hls
                 ? await FirstSegmentWorksAsync(session, request.DeviceProfile, cancellationToken).ConfigureAwait(false)
-                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null), "progressive transcode", cancellationToken).ConfigureAwait(false);
+                : await CanOpenAsync(source.ServerId, new RemoteStreamRequest(HttpMethod.Get, upstream, null, Device: device), "progressive transcode", cancellationToken).ConfigureAwait(false);
             if (works)
             {
                 return session;
@@ -1009,7 +1142,7 @@ public sealed class PlaybackCoordinator
 
     private async Task<bool> FirstSegmentWorksAsync(PlaybackSession session, DeviceProfile? profile, CancellationToken cancellationToken)
     {
-        var master = await ReadPlaylistAsync(session.Source.ServerId, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
+        var master = await ReadPlaylistAsync(session, session.UpstreamPath, cancellationToken).ConfigureAwait(false);
         if (!master.IsSuccess)
         {
             _logger.LogInformation("The HLS master playlist of server {ServerId} could not be read: {Failure}", session.Source.ServerId, master.Describe());
@@ -1025,7 +1158,7 @@ public sealed class PlaybackCoordinator
 
         var folder = session.UpstreamFolder();
         var variantPath = folder + variant.Uri;
-        var playlist = await ReadPlaylistAsync(session.Source.ServerId, variantPath, cancellationToken).ConfigureAwait(false);
+        var playlist = await ReadPlaylistAsync(session, variantPath, cancellationToken).ConfigureAwait(false);
         if (!playlist.IsSuccess)
         {
             _logger.LogInformation("The HLS variant playlist of server {ServerId} could not be read: {Failure}", session.Source.ServerId, playlist.Describe());
@@ -1040,7 +1173,7 @@ public sealed class PlaybackCoordinator
 
         var segmentFolder = variantPath.Split('?')[0];
         segmentFolder = segmentFolder[..(segmentFolder.LastIndexOf('/') + 1)];
-        return await CanOpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, segmentFolder + segment, null), "first HLS segment", cancellationToken).ConfigureAwait(false);
+        return await CanOpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, segmentFolder + segment, null, Device: session.RemoteDevice), "first HLS segment", cancellationToken).ConfigureAwait(false);
     }
 
     private Task<bool> CanReadFileAsync(StubSource source, CancellationToken cancellationToken)
@@ -1095,7 +1228,8 @@ public sealed class PlaybackCoordinator
         }
     }
 
-    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once.
+    // On removal the stop and the slot share one short limit, so a remote that hangs costs it once. The slot is not given
+    // back with too little of it left.
     private async Task CloseForRemovalAsync(string sessionId)
     {
         if (_sessions.Remove(sessionId) is not { } session)
@@ -1111,7 +1245,7 @@ public sealed class PlaybackCoordinator
             return;
         }
 
-        if (left > TimeSpan.Zero)
+        if (left >= PlaybackTimeouts.MinimumRelease)
         {
             await ReleaseSlotAsync(session.Source.ServerId, playSessionId, left).ConfigureAwait(false);
         }
@@ -1271,6 +1405,9 @@ public sealed class PlaybackCoordinator
     private sealed record Attempt(PlaybackInfoResponse? Response, bool Reachable, bool AtLimit = false);
 
     private sealed record WorkingSource(StubSource Source, DateTimeOffset At);
+
+    // The copy of a track that took over its file for a device of a user.
+    private sealed record FileCopy(string StubId, DateTimeOffset At);
 
     private sealed record CachedPolicy(RemoteTranscodePolicy Policy, DateTimeOffset ReadAt);
 }

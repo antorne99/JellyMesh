@@ -181,10 +181,10 @@ public partial class PlaybackFiltersTests
         Assert.Empty(SourcesOf(await StockAsync(InfoOf(_localId), Signed(_unknownId))));
     }
 
-    // Row 552: a local item linked to a stub of a former folder follows row 548 until the registry is read.
+    // Row 552: a local item linked to a stub of a former folder follows row 548 until the registry is read, and row 527 after it.
     [Theory]
     [InlineData(true, 1)]
-    [InlineData(false, 2)]
+    [InlineData(false, 1)]
     public async Task A_local_item_linked_to_a_stub_of_a_former_folder_keeps_only_its_source_while_the_registry_is_unread(bool unread, int sources)
     {
         _settings.Configuration.FederatedFolderPath = "/federata";

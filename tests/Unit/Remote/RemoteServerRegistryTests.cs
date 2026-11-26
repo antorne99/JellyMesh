@@ -306,7 +306,7 @@ public class RemoteServerRegistryTests
         var libraries = await fixture.Registry.GetLibrariesAsync(server.Id, CancellationToken.None);
         var playlist = await fixture.Registry.RunWithSessionAsync(
             server.Id,
-            (endpoint, session, token) => playback.ReadPlaylistAsync(endpoint, session, "/x.m3u8", token),
+            (endpoint, session, token) => playback.ReadPlaylistAsync(endpoint, session, "/x.m3u8", null, token),
             CancellationToken.None);
         var info = await fixture.Registry.RunWithSessionAsync(
             server.Id,

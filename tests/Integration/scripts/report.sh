@@ -45,6 +45,43 @@ for instance in locale remoto-standard remoto-jellymesh; do
   echo
 done
 
+# The 0.7 types; "detail" is the audio format, chapter count, or camera and GPS.
+# Long IDs show their last four characters, MusicBrainz as Mb.
+FIELDS07=ProviderIds,MediaSources,MediaStreams,Path,ProductionYear,Chapters,ParentId
+TYPES07=MusicAlbum,Audio,MusicVideo,Video,Photo,PhotoAlbum,Book,AudioBook
+for instance in locale remoto-standard remoto-jellymesh; do
+  use_instance "$instance"
+  login
+  user=$(get /Users/Me | jq -r .Id)
+  views=$(get "/UserViews?userId=$user" | jq -c '[.Items[] | {(.Id): (.CollectionType // "mixed")}] | add // {}')
+  items=$(get "/Items?userId=$user&Recursive=true&IncludeItemTypes=$TYPES07&SortBy=Path&Fields=$FIELDS07")
+  [ "$(echo "$items" | jq '.Items | length')" -gt 0 ] || continue
+  echo "== $instance, 0.7 types (views: $(echo "$views" | jq -r 'to_entries | map(.value) | join(", ")'))"
+  {
+    printf 'type\titem\tdisc/track\tcontainer\tdetail\tids\tpath\n'
+    echo "$items" | jq -r '
+        .Items[]
+        | (.MediaSources // []) as $sources
+        | ($sources[0].MediaStreams // []) as $streams
+        | ($streams | map(select(.Type == "Audio")) | .[0] // {}) as $audio
+        | [
+            .Type,
+            (if .Type == "Audio" then "\(.Album) / \(.Name)" else .Name end),
+            (if .IndexNumber then "\(.ParentIndexNumber // "-")/\(.IndexNumber)" else "-" end),
+            ($sources[0].Container // "-"),
+            (if .Type == "Photo" then "\(.CameraMake // "-") \(.CameraModel // "-"), gps=\(if .Latitude then "\(.Latitude),\(.Longitude)" else "none" end)"
+             elif .Type == "AudioBook" then "\($audio.Codec // "-"), chapters=\(.Chapters // [] | length)"
+             elif .Type == "Audio" then "\($audio.Codec // "-") \($audio.BitDepth // "-")bit \($audio.SampleRate // "-")Hz \($audio.BitRate // "-")"
+             else "-" end),
+            ((.ProviderIds // {}) | to_entries | map("\(.key | sub("^MusicBrainz"; "Mb"))=\(.value | if length > 12 then "…" + .[-4:] else . end)")
+             | sort | join(",") | if . == "" then "none" else . end),
+            ((.Path // "-") | sub("^/media/"; ""))
+          ]
+        | @tsv'
+  } | column -t -s "$(printf '\t')"
+  echo
+done
+
 echo "== non-admin user on the remotes"
 for instance in remoto-standard remoto-jellymesh; do
   use_instance "$instance"

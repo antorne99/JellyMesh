@@ -127,6 +127,23 @@ public partial class PlaybackFiltersTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
     }
 
+    // Row 561: lyrics come from a remote, so none are read while the database cannot be used.
+    [Fact]
+    public async Task With_the_database_damaged_the_lyrics_of_a_track_stub_are_refused_and_no_remote_is_asked()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Success(RemoteLyrics.None);
+        var store = TrackStub();
+        _fixture.Damage();
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
+        Assert.Empty(_fixture.Client.LyricsAsked);
+        Assert.Contains(_audioLog.Lines, line => line.Contains("could not be read: Suspended", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task With_the_database_damaged_the_local_transcode_that_runs_goes_on_and_no_other_stub_joins_it()
     {
@@ -146,13 +163,40 @@ public partial class PlaybackFiltersTests
     }
 
     [Fact]
-    public async Task With_the_database_damaged_a_local_item_and_the_subtitles_of_a_stub_stay_with_stock()
+    public async Task With_the_database_damaged_a_local_item_stays_with_stock()
     {
         CanSeeItem();
         _fixture.Damage();
 
         Assert.True(await RunAsync(GuardFilter(), Context("Videos", "GetVideoStream", ("itemId", LocalItem()))));
-        Assert.True(await RunAsync(GuardFilter(), Context("Subtitle", "GetSubtitle", ("routeItemId", _itemId))));
+        Assert.True(await RunAsync(GuardFilter(), Context("Subtitle", "GetSubtitle", ("routeItemId", LocalItem()))));
+    }
+
+    // Row 565: stock would read the subtitles of a stub from its remote, so none are read while the database cannot be used.
+    [Theory]
+    [InlineData("GetSubtitle", "routeItemId")]
+    [InlineData("GetSubtitlePlaylist", "itemId")]
+    public async Task With_the_database_damaged_the_subtitles_of_a_stub_are_refused(string action, string argument)
+    {
+        CanSeeItem();
+        _fixture.Damage();
+        var context = Context("Subtitle", action, (argument, _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, StatusOf(context));
+        Assert.Single(_guardLog.Lines, line => line.Contains("Subtitle." + action + " of a federated title is refused: database suspended True", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task With_the_database_damaged_the_subtitles_of_a_stub_still_want_a_user_who_sees_it()
+    {
+        _fixture.Damage();
+        var context = Context("Subtitle", "GetSubtitle", ("routeItemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
     }
 
     [Fact]
@@ -212,7 +256,7 @@ public partial class PlaybackFiltersTests
         _fixture.Damage();
 
         var segment = await _fixture.Coordinator.OpenAsync(session.Source.ServerId, new RemoteStreamRequest(HttpMethod.Get, "/videos/x/0.ts", null), CancellationToken.None);
-        var playlist = await _fixture.Coordinator.ReadPlaylistAsync(session.Source.ServerId, "/videos/x/main.m3u8", CancellationToken.None);
+        var playlist = await _fixture.Coordinator.ReadPlaylistAsync(session, "/videos/x/main.m3u8", CancellationToken.None);
         await _fixture.Coordinator.CloseReportedAsync(session.Id, [_user.Id]);
 
         Assert.True(segment.IsSuccess);

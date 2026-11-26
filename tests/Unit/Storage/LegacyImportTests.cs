@@ -392,23 +392,7 @@ public sealed class LegacyImportTests : IDisposable
     {
         var oldItem = Guid.NewGuid();
         var user = Guid.NewGuid();
-        using (var old = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(Folder, "watch-state.db"), Pooling = false }.ToString()))
-        {
-            await old.OpenAsync();
-            using var command = old.CreateCommand();
-            command.CommandText = $"""
-                CREATE TABLE Titles (Id INTEGER PRIMARY KEY, OldItemId TEXT NOT NULL UNIQUE, Kind INTEGER NOT NULL, Title TEXT, Year INTEGER,
-                    Tmdb TEXT, Imdb TEXT, Tvdb TEXT, OriginalTitle TEXT, RunTimeTicks INTEGER, Overview TEXT, Genres TEXT NOT NULL,
-                    Studios TEXT NOT NULL, People TEXT NOT NULL, SeasonNumber INTEGER, EpisodeNumber INTEGER, EpisodeNumberEnd INTEGER,
-                    SavedUtc INTEGER NOT NULL);
-                CREATE TABLE UserStates (TitleId INTEGER NOT NULL, UserId TEXT NOT NULL, Played INTEGER NOT NULL, PlayCount INTEGER NOT NULL,
-                    PlaybackPositionTicks INTEGER NOT NULL, LastPlayedUtc INTEGER, IsFavorite INTEGER NOT NULL, Rating REAL,
-                    PRIMARY KEY (TitleId, UserId));
-                INSERT INTO Titles VALUES (7, '{oldItem:N}', 1, 'Pilot', 2020, '42', NULL, NULL, NULL, 100, NULL, '[]', '[]', '[]', 1, 1, NULL, 5);
-                INSERT INTO UserStates VALUES (7, '{user:N}', 1, 3, 0, 9, 1, 8.5);
-                """;
-            await command.ExecuteNonQueryAsync();
-        }
+        await WriteKeptAsync(oldItem, user, 1);
 
         var database = Open();
 
@@ -429,6 +413,40 @@ public sealed class LegacyImportTests : IDisposable
             },
             CancellationToken.None);
         Assert.Equal([$"{oldItem:N}|Episode|Pilot|{user:N}|3|8.5"], rows);
+    }
+
+    // 0.5 kept films, episodes and series only; the kinds added later are not its numbers.
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(7)]
+    [InlineData(8)]
+    public async Task AKeptKindOfAfterTheOldVersionsIsNotImported(int kind)
+    {
+        await WriteKeptAsync(Guid.NewGuid(), Guid.NewGuid(), kind);
+
+        Assert.Equal(0, await CountAsync(Open(), "kept_titles"));
+    }
+
+    // The watch-state.db of 0.5, with one title.
+    private async Task WriteKeptAsync(Guid oldItem, Guid user, int kind)
+    {
+        using var old = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(Folder, "watch-state.db"), Pooling = false }.ToString());
+        await old.OpenAsync();
+        using var command = old.CreateCommand();
+        command.CommandText = $"""
+            CREATE TABLE Titles (Id INTEGER PRIMARY KEY, OldItemId TEXT NOT NULL UNIQUE, Kind INTEGER NOT NULL, Title TEXT, Year INTEGER,
+                Tmdb TEXT, Imdb TEXT, Tvdb TEXT, OriginalTitle TEXT, RunTimeTicks INTEGER, Overview TEXT, Genres TEXT NOT NULL,
+                Studios TEXT NOT NULL, People TEXT NOT NULL, SeasonNumber INTEGER, EpisodeNumber INTEGER, EpisodeNumberEnd INTEGER,
+                SavedUtc INTEGER NOT NULL);
+            CREATE TABLE UserStates (TitleId INTEGER NOT NULL, UserId TEXT NOT NULL, Played INTEGER NOT NULL, PlayCount INTEGER NOT NULL,
+                PlaybackPositionTicks INTEGER NOT NULL, LastPlayedUtc INTEGER, IsFavorite INTEGER NOT NULL, Rating REAL,
+                PRIMARY KEY (TitleId, UserId));
+            INSERT INTO Titles VALUES (7, '{oldItem:N}', {kind}, 'Pilot', 2020, '42', NULL, NULL, NULL, 100, NULL, '[]', '[]', '[]', 1, 1, NULL, 5);
+            INSERT INTO UserStates VALUES (7, '{user:N}', 1, 3, 0, 9, 1, 8.5);
+            """;
+        await command.ExecuteNonQueryAsync();
     }
 
     // Files that come back after the migration, as a return to 0.5 would write them, are neither read nor moved over the copies.

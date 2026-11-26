@@ -1,0 +1,257 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using Jellyfin.Plugin.JellyMesh.Index;
+using MediaBrowser.Model.Entities;
+
+namespace Jellyfin.Plugin.JellyMesh.Library;
+
+/// <summary>
+/// Plans the track and audiobook stubs of one server: one <c>.strm</c> per file and local library, with no <c>.nfo</c>, in
+/// <c>&lt;type folder&gt;/&lt;album artist&gt;/&lt;album&gt;/</c> grouped by remote album, with one cover per album of music (D60, D69).
+/// </summary>
+internal static class TrackStubPlanner
+{
+    /// <summary>The artist folder of a track with no artist.</summary>
+    public const string UnknownArtist = "Unknown Artist";
+
+    /// <summary>The album folder of a track with no album.</summary>
+    public const string UnknownAlbum = "Unknown Album";
+
+    private const string CoverStem = "folder";
+
+    /// <summary>
+    /// Plans the tracks, or the audiobook parts, of a server. Paths of stubs that exist never change; the items of the index
+    /// claim their stubs by remote item, and the stubs left unclaimed go to the sweep.
+    /// </summary>
+    /// <param name="input">What is known.</param>
+    /// <param name="catalog">The index, by item.</param>
+    /// <param name="serverId">The server.</param>
+    /// <param name="kind">Track or audiobook.</param>
+    /// <param name="stubs">The stubs of that kind of the server.</param>
+    /// <param name="artistFolder">Gives the relative folder of an artist from its type folder, its name and the new stub.</param>
+    /// <returns>One work per item and local library.</returns>
+    public static List<StubWork> Plan(StubPlanInput input, IndexItemLookup catalog, Guid serverId, StubKind kind, IReadOnlyList<StubEntry> stubs, Func<string, string, string, string> artistFolder)
+    {
+        var type = TypeFolder.Of(kind);
+        var itemKind = kind == StubKind.AudioBook ? IndexedItemKind.AudioBook : IndexedItemKind.Audio;
+
+        // A federated track has no version of its own once the mapper drops the stub sources (no cycles).
+        var tracks = input.Snapshot.Find(serverId)?.Items.Where(item => item.Kind == itemKind && item.Versions.Count > 0).ToList() ?? [];
+        var albums = tracks.GroupBy(AlbumKeyOf, StringComparer.Ordinal).ToDictionary(group => group.Key, Album.Of, StringComparer.Ordinal);
+        var keys = KeysOf(input.View, serverId);
+        var paths = new Paths(serverId, type, stubs, input.PlacementOf, input.IgnoreRules, artistFolder, stub => stub.Sources.Select(source => catalog.Find(serverId, source.ItemId)).OfType<IndexedItem>().Select(AlbumKeyOf).FirstOrDefault());
+
+        var works = new List<StubWork>();
+        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var track in tracks.OrderBy(AlbumKeyOf, StringComparer.Ordinal).ThenBy(item => item.ParentIndexNumber ?? 1).ThenBy(item => item.IndexNumber ?? int.MaxValue).ThenBy(item => item.ItemId, StringComparer.Ordinal))
+        {
+            var album = albums[AlbumKeyOf(track)];
+            foreach (var (placement, library) in PlacementsOf(input, serverId, type, track))
+            {
+                var stub = paths.Claim(placement, track.ItemId);
+                var id = stub?.Id ?? Guid.NewGuid().ToString("N");
+                var relative = stub?.RelativePath ?? paths.NewTrack(library, album, FileNameOf(track, album.HasDiscs), id);
+                var folder = Path.GetDirectoryName(relative)!;
+                var key = keys.GetValueOrDefault(track.ItemId) ?? string.Create(CultureInfo.InvariantCulture, $"{kind}|item:{serverId:N}:{track.ItemId}");
+                works.Add(WorkOf(input, serverId, kind, track, library, stub, id, relative, key, kind == StubKind.Track && covered.Add(folder) ? album : null));
+            }
+        }
+
+        return works;
+    }
+
+    // The key of the remote album of a track: its id, or else its artist and album name.
+    private static string AlbumKeyOf(IndexedItem track) => track.AlbumId is { Length: > 0 } albumId
+        ? "id:" + albumId
+        : "name:" + ArtistOf(track.AlbumArtists, track.Artists) + "\n" + track.Album;
+
+    private static string ArtistOf(IReadOnlyList<string>? albumArtists, IReadOnlyList<string>? artists)
+        => albumArtists?.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? artists?.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? UnknownArtist;
+
+    private static IEnumerable<(string Placement, string Library)> PlacementsOf(StubPlanInput input, Guid serverId, TypeFolder type, IndexedItem track)
+        => track.LibraryIds.Where(FederatedPaths.IsLibraryId)
+            .Select(library => (Placement: input.PlacementOf(serverId, library, type), Library: library))
+            .DistinctBy(entry => entry.Placement, StringComparer.Ordinal);
+
+    private static string FileNameOf(IndexedItem track, bool hasDiscs)
+    {
+        var title = FederatedPaths.Sanitize(track.Name);
+        return track.IndexNumber is not { } number
+            ? title
+            : hasDiscs
+                ? string.Create(CultureInfo.InvariantCulture, $"{track.ParentIndexNumber ?? 1}-{number:00} - {title}")
+                : string.Create(CultureInfo.InvariantCulture, $"{number:00} - {title}");
+    }
+
+    // The dedup key of each track of the server (row 453); a track the view does not hold keeps a key of its own item.
+    private static Dictionary<string, string> KeysOf(FederationView view, Guid serverId)
+    {
+        var keys = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var track in view.Tracks)
+        {
+            foreach (var item in track.RemoteItems.Where(item => item.ServerId == serverId))
+            {
+                keys.TryAdd(item.ItemId, track.Identity.Key);
+            }
+        }
+
+        return keys;
+    }
+
+    private static StubWork WorkOf(StubPlanInput input, Guid serverId, StubKind kind, IndexedItem track, string library, StubEntry? stub, string id, string relative, string key, Album? cover)
+    {
+        var version = track.Versions[0];
+        var entry = (stub ?? new StubEntry { Id = id, Kind = kind, RelativePath = relative, Sources = [], IdentityKey = string.Empty }) with
+        {
+            ServerId = serverId,
+            IdentityKey = key,
+            Sources = [new StubSource(serverId, track.ItemId, version.MediaSourceId) { LibraryId = library }]
+        };
+
+        var metadata = StubMetadata.Track(track, input.IsProtected);
+        var url = input.StrmUrl(id);
+        var hash = StubPlanner.Hash(Fingerprint(metadata), url.Split('?', 2)[0]);
+        var technical = string.Join('|', serverId.ToString("N"), track.ItemId, version.MediaSourceId, version.ETag, track.Etag);
+
+        var (images, imageTag, removed) = kind == StubKind.AudioBook ? PartCoverOf(entry, track, serverId) : AlbumCoverOf(entry, cover, serverId);
+        return new StubWork(entry, stub is null, metadata, string.Empty, string.Empty, url, hash, images, imageTag, technical) { RemovedImages = removed };
+    }
+
+    // The cover of a part, named as its file beside it, and the one to delete when the remote dropped it (D69).
+    private static (List<StubImage> Images, string ImageTag, List<StubImage> Removed) PartCoverOf(StubEntry entry, IndexedItem part, Guid serverId)
+    {
+        var stem = Path.ChangeExtension(entry.RelativePath, null);
+        var images = new List<StubImage>();
+        StubPlanner.AddRemote(images, part, serverId, ImageType.Primary, stem);
+        return (images, StubPlanner.ImageTagOf(part, images), StubPlanner.Removed(entry.ImageTag, [(ImageType.Primary, stem)], images));
+    }
+
+    // One track of each album folder carries the cover, written as the folder image the album reads.
+    private static (List<StubImage> Images, string ImageTag, List<StubImage> Removed) AlbumCoverOf(StubEntry entry, Album? cover, Guid serverId)
+    {
+        var stem = Path.Combine(Path.GetDirectoryName(entry.RelativePath)!, CoverStem);
+        List<StubImage> images = cover is { Id: { } albumId, CoverTag: not null } ? [new StubImage(ImageType.Primary, stem, serverId, albumId, null)] : [];
+        var imageTag = images.Count > 0 ? string.Create(CultureInfo.InvariantCulture, $"{ImageType.Primary}={cover!.CoverTag};") : string.Empty;
+        var removed = new List<StubImage>();
+        if (cover is not null && images.Count == 0 && !string.IsNullOrEmpty(entry.ImageTag))
+        {
+            removed.Add(new StubImage(ImageType.Primary, stem, null, null, null));
+        }
+
+        return (images, imageTag, removed);
+    }
+
+    // Every field the plugin writes, so that a change of any of them reaches the item.
+    private static string Fingerprint(StubMetadata metadata)
+        => JsonSerializer.Serialize(metadata with { ProviderIds = new SortedDictionary<string, string>(metadata.ProviderIds.ToDictionary(), StringComparer.Ordinal) });
+
+    // A remote album: its id, name, artist folder, cover and whether its tracks span more than one disc.
+    private sealed record Album(string Key, string? Id, string Name, string Artist, string? CoverTag, bool HasDiscs)
+    {
+        public static Album Of(IGrouping<string, IndexedItem> tracks)
+        {
+            var first = tracks.First();
+            var artist = tracks.Select(track => track.AlbumArtists?.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name))).FirstOrDefault(name => name is not null)
+                ?? ArtistOf(null, first.Artists);
+            return new Album(
+                tracks.Key,
+                first.AlbumId is { Length: > 0 } id ? id : null,
+                tracks.Select(track => track.Album).FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)) ?? UnknownAlbum,
+                artist,
+                tracks.Select(track => track.AlbumPrimaryImageTag).FirstOrDefault(tag => !string.IsNullOrEmpty(tag)),
+                tracks.Any(track => track.ParentIndexNumber > 1));
+        }
+    }
+
+    // The stubs of the server by local library and remote item, and the folders and files already taken.
+    private sealed class Paths
+    {
+        private readonly Guid _serverId;
+        private readonly TypeFolder _type;
+        private readonly Func<string, string, string, string> _artistFolder;
+        private readonly IServerIgnoreRules _rules;
+        private readonly Dictionary<(string Placement, string ItemId), StubEntry> _byItem = [];
+        private readonly Dictionary<(string TypeFolder, string Album), string> _albumFolders = [];
+        private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
+
+        public Paths(
+            Guid serverId,
+            TypeFolder type,
+            IReadOnlyList<StubEntry> stubs,
+            Func<Guid, string, TypeFolder, string> placementOf,
+            IServerIgnoreRules rules,
+            Func<string, string, string, string> artistFolder,
+            Func<StubEntry, string?> albumOf)
+        {
+            _serverId = serverId;
+            _type = type;
+            _rules = rules;
+            _artistFolder = artistFolder;
+            foreach (var stub in stubs)
+            {
+                var folder = Path.GetDirectoryName(stub.RelativePath)!;
+                _taken.Add(stub.RelativePath);
+                _taken.Add(folder);
+                if (FederatedPaths.RemoteLibraryOf(stub.RelativePath) is not { } library)
+                {
+                    continue;
+                }
+
+                foreach (var source in stub.Sources)
+                {
+                    _byItem.TryAdd((placementOf(serverId, library, type), source.ItemId), stub);
+                }
+
+                if (albumOf(stub) is { } album)
+                {
+                    _albumFolders.TryAdd((FederatedPaths.TypeFolderOf(serverId, library, type), album), folder);
+                }
+            }
+        }
+
+        public StubEntry? Claim(string placement, string itemId)
+            => _byItem.TryGetValue((placement, itemId), out var stub) && _claimed.Add(stub.Id) ? stub : null;
+
+        // The path of a new track: the folder of its album, made on first use, and a file name unique in it. A folder or file
+        // the server would skip gets the id (row 568).
+        public string NewTrack(string library, Album album, string fileName, string id)
+        {
+            var typeFolder = FederatedPaths.TypeFolderOf(_serverId, library, _type);
+            if (!_albumFolders.TryGetValue((typeFolder, album.Key), out var folder))
+            {
+                var artist = _artistFolder(typeFolder, FederatedPaths.Sanitize(album.Artist), id);
+                var name = FederatedPaths.Sanitize(album.Name);
+                folder = Unique(Path.Combine(artist, name), id, StubPlanner.IsSkippedFolder(_rules, artist, name));
+                _albumFolders[(typeFolder, album.Key)] = folder;
+            }
+
+            var file = fileName + ".strm";
+            var path = Path.Combine(folder, file);
+            if (!_rules.Ignores(folder, file, false) && _taken.Add(path))
+            {
+                return path;
+            }
+
+            var unique = Path.Combine(folder, string.Create(CultureInfo.InvariantCulture, $"{fileName} [{id[..8]}].strm"));
+            _taken.Add(unique);
+            return unique;
+        }
+
+        private string Unique(string folder, string id, bool hidden)
+        {
+            if (!hidden && _taken.Add(folder))
+            {
+                return folder;
+            }
+
+            var unique = string.Create(CultureInfo.InvariantCulture, $"{folder} [{id[..8]}]");
+            _taken.Add(unique);
+            return unique;
+        }
+    }
+}

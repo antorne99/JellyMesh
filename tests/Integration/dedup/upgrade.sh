@@ -8,8 +8,8 @@ OLD=${OLD:?point OLD at a checkout of the build to upgrade from}
 start upgrade
 install_plugin upgrade "$OLD"
 configure_old upgrade true
-add_remote upgrade stock http://jm-dedup-s:8096 >/dev/null
-add_remote upgrade peer http://jm-dedup-j:8096 >/dev/null
+add_remote upgrade stock "http://$(container_of stock):8096" >/dev/null
+add_remote upgrade peer "http://$(container_of peer):8096" >/dev/null
 sync_and_scan upgrade
 
 echo "--- before"

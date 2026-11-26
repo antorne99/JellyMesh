@@ -192,6 +192,23 @@ public class PlaybackCoordinatorTests
         Assert.Single(fixture.Client.Stopped);
     }
 
+    // Row 561: a client that chose its own play session id reports the stop with it.
+    [Fact]
+    public async Task A_stopped_report_with_the_id_its_client_chose_closes_the_session_of_its_user_only()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+        session.NameByClient("finamp-play");
+
+        await fixture.Coordinator.CloseReportedAsync("finamp-play", [Guid.NewGuid()]);
+        Assert.NotNull(fixture.Sessions.Find(session.Id));
+
+        await fixture.Coordinator.CloseReportedAsync("finamp-play", [session.Identity.UserId]);
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Single(fixture.Client.Stopped);
+    }
+
     [Fact]
     public async Task A_stopped_report_of_another_user_leaves_the_session()
     {
@@ -304,17 +321,35 @@ public class PlaybackCoordinatorTests
         Assert.Empty(fixture.Sessions.All);
     }
 
+    // Notion 1001: under the least time a release needs, the slot is not given back, and the removal keeps its limit.
+    [Fact]
+    public async Task A_server_about_to_go_gives_no_slot_back_with_less_than_the_least_time_left()
+    {
+        var fixture = new CoordinatorFixture();
+        var leaving = PlaybackValues.Source("leaving");
+        fixture.Registry.AddJellyMesh(leaving.ServerId);
+        await fixture.OpenAsync(PlaybackValues.Stub(leaving));
+        fixture.Coordinator.RemovalLimit = PlaybackTimeouts.MinimumRelease / 2;
+
+        await fixture.Coordinator.CloseServerAsync(leaving.ServerId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Single(fixture.Client.Stopped);
+        Assert.Empty(fixture.Client.Released);
+        Assert.Empty(fixture.Sessions.All);
+    }
+
     [Fact]
     public async Task A_server_about_to_go_opens_nothing_more_until_its_removal_fails()
     {
         var fixture = new CoordinatorFixture();
         var leaving = PlaybackValues.Source("leaving");
         var request = new RemoteStreamRequest(HttpMethod.Get, "/Videos/leaving/stream", null);
+        var session = new PlaybackSession(PlaybackValues.Identity(), leaving, null, PlaybackStreamKind.Hls, "/master.m3u8", fixture.Clock.GetUtcNow());
 
         await fixture.Coordinator.CloseServerAsync(leaving.ServerId);
 
         Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.OpenAsync(leaving.ServerId, request, CancellationToken.None)).Failure);
-        Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.ReadPlaylistAsync(leaving.ServerId, "/master.m3u8", CancellationToken.None)).Failure);
+        Assert.Equal(RemoteFailure.UnknownServer, (await fixture.Coordinator.ReadPlaylistAsync(session, "/master.m3u8", CancellationToken.None)).Failure);
         Assert.NotEqual(PlaybackOutcomeKind.Remote, (await fixture.OpenAsync(PlaybackValues.Stub(leaving))).Kind);
         Assert.Empty(fixture.Client.Opened);
         Assert.Empty(fixture.Client.Requests);
@@ -1228,6 +1263,25 @@ public class PlaybackCoordinatorTests
         Assert.Contains("/Videos/backup/stream?static=true", Assert.Single(fixture.Client.Opened), StringComparison.Ordinal);
     }
 
+    // Row 515: a placeholder is read through File, which asks the remote user for no download permission, never Download.
+    [Theory]
+    [InlineData(StubKind.Book, "server/Libri/Dune (1965)/Dune (1965).epub", "GET")]
+    [InlineData(StubKind.Book, "server/Libri/Dune (1965)/Dune (1965).epub", "HEAD")]
+    [InlineData(StubKind.Photo, "server/Video domestici/Album/Spiaggia.jpg", "GET")]
+    [InlineData(StubKind.Photo, "server/Video domestici/Album/Spiaggia.jpg", "HEAD")]
+    public async Task A_placeholder_is_read_through_File_on_each_remote_and_never_through_Download(StubKind kind, string path, string method)
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source("winner"), PlaybackValues.Source("backup")) with { Kind = kind, RelativePath = path };
+        var answers = new Queue<RemoteResult<RemoteContent>>([RemoteResult.Fail<RemoteContent>(RemoteFailure.ServerError), FakePlaybackClient.Bytes()]);
+        fixture.Client.Open = (_, _) => Task.FromResult(answers.Dequeue());
+
+        using var content = await fixture.Coordinator.OpenFileAsync(stub, new HttpMethod(method), "bytes=0-", CancellationToken.None);
+
+        Assert.NotNull(content);
+        Assert.Equal(["/Items/winner/File", "/Items/backup/File"], fixture.Client.Opened);
+    }
+
     [Fact]
     public void Subtitles_of_a_local_transcode_go_to_the_remote_of_the_file()
     {
@@ -1495,7 +1549,7 @@ public class PlaybackCoordinatorTests
     {
         var logger = new CapturingLogger<PlaybackCoordinator>();
         var fixture = new CoordinatorFixture();
-        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.LastServed, fixture.Clock, fixture.Database.Object, logger);
+        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, fixture.Store, fixture.LastServed, fixture.Clock, fixture.Database.Object, logger, fixture.Hasher);
         fixture.Client.Policy = new RemoteTranscodePolicy("qsv\r\nforged line", true, true, true);
         var stub = PlaybackValues.Stub(PlaybackValues.Source());
 

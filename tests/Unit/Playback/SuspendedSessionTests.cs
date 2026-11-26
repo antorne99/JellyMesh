@@ -24,7 +24,7 @@ public sealed class SuspendedSessionTests : IDisposable
         var fixture = new CoordinatorFixture();
         var store = new PluginConfigurationStore(_database, new FixedFederatedRootSource(null), NullLogger<PluginConfigurationStore>.Instance, fixture.Clock);
         using var lastServed = new LastServedSourceStore(_database, NullLogger<LastServedSourceStore>.Instance);
-        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, store, lastServed, fixture.Clock, _database, NullLogger<PlaybackCoordinator>.Instance, fixture.Transcodes.Object);
+        var coordinator = new PlaybackCoordinator(fixture.Registry, fixture.Client, fixture.Sessions, store, lastServed, fixture.Clock, _database, NullLogger<PlaybackCoordinator>.Instance, fixture.Hasher, fixture.Transcodes.Object);
         var request = new PlaybackOpenRequest { Identity = PlaybackValues.Identity(), Stub = PlaybackValues.Stub(PlaybackValues.Source()), LocalToken = PlaybackValues.LocalToken };
         await coordinator.OpenAsync(request, CancellationToken.None);
         var session = Assert.Single(fixture.Sessions.All);

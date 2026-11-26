@@ -46,6 +46,31 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     public const int MaxImageBytes = 16 * 1024 * 1024;
 
     /// <summary>
+    /// Longest side of the local thumbnail of a remote photo, in pixels.
+    /// </summary>
+    public const int PhotoThumbnailSide = 640;
+
+    /// <summary>
+    /// Longest side of the image of a remote photo served to a client, in pixels. Above a 4K screen.
+    /// </summary>
+    public const int PhotoImageSide = 4096;
+
+    /// <summary>
+    /// Largest image of a remote photo served to a client, in bytes. It stays in memory until the client has read it.
+    /// </summary>
+    public const int MaxPhotoImageBytes = 8 * 1024 * 1024;
+
+    /// <summary>
+    /// Largest local thumbnail of a remote photo, in bytes. Well above a JPEG of <see cref="PhotoThumbnailSide"/>.
+    /// </summary>
+    public const int MaxPhotoThumbnailBytes = 1024 * 1024;
+
+    /// <summary>
+    /// Highest JPEG quality of the image of a remote photo. Below 90, so that Jellyfin always encodes it again.
+    /// </summary>
+    public const int PhotoImageQuality = 80;
+
+    /// <summary>
     /// Timeout of a whole request, the body included.
     /// </summary>
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -62,14 +87,15 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     // Everything a catalog entry keeps. ImageTags, BackdropImageTags, ratings, dates and numbers come by default, and
     // MediaSources holds the streams of each version. The list is what can reach the index: see RemoteItem.
-    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers";
+    private const string ItemFields = "ProviderIds,MediaSources,DateCreated,Etag,Overview,Genres,People,Studios,Tags,Taglines,OriginalTitle,Chapters,RemoteTrailers,ParentId,Width,Height";
 
     // Waits before each new try of a sync read, and the longest wait a Retry-After can ask for (decision 47).
+    // Each in pixels, the longest being the limit of the side of a photo image.
+    private static readonly int[] _photoImageSides = [160, 320, PhotoThumbnailSide, 960, 1280, 1920, 2560, PhotoImageSide];
     private static readonly TimeSpan[] _retryWaits = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)];
     private static readonly TimeSpan _maxRetryAfter = TimeSpan.FromSeconds(10);
 
     private static readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
-    private static readonly string[] _importableCollectionTypes = ["movies", "tvshows"];
     private static readonly string _version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0";
 
     private readonly IHttpClientFactory _httpClientFactory;
@@ -203,10 +229,12 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
 
         var libraries = views.Items
-            .Where(view => !string.IsNullOrEmpty(view.Id) && _importableCollectionTypes.Contains(view.CollectionType, StringComparer.OrdinalIgnoreCase))
-            .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!)
+            .Where(view => !string.IsNullOrEmpty(view.Id))
+            .Select(view => (View: view, Type: RemoteCollectionTypes.Of(view.CollectionType, view.Type)))
+            .Where(entry => entry.Type is not null)
+            .Select(entry => new RemoteLibrary(entry.View.Id!, entry.View.Name ?? string.Empty, entry.Type!)
             {
-                MayCombine = userViews && !string.Equals(view.Type, "CollectionFolder", StringComparison.Ordinal)
+                MayCombine = userViews && !string.Equals(entry.View.Type, "CollectionFolder", StringComparison.Ordinal)
             })
             .ToList();
         return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(new RemoteLibraryList(libraries, views.Items.Count(view => !string.IsNullOrEmpty(view.Id))));
@@ -306,6 +334,56 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             : response.Refuse<RemoteImage>(null);
     }
 
+    /// <inheritdoc />
+    public Task<RemoteResult<RemoteImage>> GetPhotoThumbnailAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+        => ReadPhotoAsync(endpoint, session, itemId, new RemotePhotoSize { MaxWidth = PhotoThumbnailSide, MaxHeight = PhotoThumbnailSide }, MaxPhotoThumbnailBytes, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<RemoteResult<RemoteImage>> GetPhotoImageAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(size);
+
+        return ReadPhotoAsync(endpoint, session, itemId, size, MaxPhotoImageBytes, cancellationToken);
+    }
+
+    // Reads a re-encoded JPEG of a photo of at most a number of bytes.
+    private async Task<RemoteResult<RemoteImage>> ReadPhotoAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, RemotePhotoSize size, int maxBytes, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        // A box to fill is asked with only the limit of each side (row 560); an exact size, as the largest one, so that
+        // rounding a side never distorts the photo.
+        var (fillWidth, fillHeight) = (StepOf(size.FillWidth), StepOf(size.FillHeight));
+        var fills = fillWidth is not null || fillHeight is not null;
+        var maxWidth = fills ? PhotoImageSide : SmallerStep(size.MaxWidth, size.Width);
+        var maxHeight = fills ? PhotoImageSide : SmallerStep(size.MaxHeight, size.Height);
+
+        // Below quality 90 Jellyfin never sends the original file, so the photo's own EXIF is not copied.
+        var path = string.Create(
+            CultureInfo.InvariantCulture,
+            $"/Items/{Uri.EscapeDataString(itemId)}/Images/Primary/0?maxWidth={maxWidth}&maxHeight={maxHeight}&quality={PhotoImageQuality}&format=Jpg");
+        path += fillWidth is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $"&fillWidth={fillWidth}");
+        path += fillHeight is null ? string.Empty : string.Create(CultureInfo.InvariantCulture, $"&fillHeight={fillHeight}");
+
+        var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, maxBytes).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return RemoteResult.Fail<RemoteImage>(response.Failure);
+        }
+
+        return string.Equals(response.ContentType, "image/jpeg", StringComparison.OrdinalIgnoreCase) && response.Body.Length > 0
+            ? RemoteResult.Success(new RemoteImage(response.Body, response.ContentType!))
+            : RemoteResult.Fail<RemoteImage>(RemoteFailure.InvalidResponse);
+    }
+
+    // The first step not below an asked side, the last one for a longer side, null for none (row 534).
+    private static int? StepOf(int? side)
+        => side is > 0 ? _photoImageSides.FirstOrDefault(step => step >= side, PhotoImageSide) : null;
+
+    // The smaller step of two asked sides, the last one for none.
+    private static int SmallerStep(int? side, int? other)
+        => Math.Min(StepOf(side) ?? PhotoImageSide, StepOf(other) ?? PhotoImageSide);
+
     // A page of names and IDs, in a fixed order, without the heavy fields of the catalog.
     private async Task<RemoteResult<RemoteItemPage>> ReadBriefPageAsync(RemoteEndpoint endpoint, RemoteSession session, string parentId, string filter, int startIndex, int limit, CancellationToken cancellationToken)
     {
@@ -355,7 +433,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             // A remote that groups films into collections would otherwise answer with the collection in their place.
             "collapseBoxSetItems=false",
             "enableUserData=false",
-            "fields=" + ItemFields,
+            // The path, which can name the remote's folders, only where the extension of the file is needed.
+            "fields=" + ItemFields + (query.Type is RemoteItemType.Book or RemoteItemType.Photo ? ",Path" : string.Empty),
             string.Create(CultureInfo.InvariantCulture, $"startIndex={query.StartIndex}"),
             string.Create(CultureInfo.InvariantCulture, $"limit={query.Limit}")
         };

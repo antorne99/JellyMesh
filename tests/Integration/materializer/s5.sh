@@ -3,8 +3,8 @@
 D=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$D/lib.sh"
 set_folder true
-A=$(add_server Standard http://host.docker.internal:8097)
-B=$(add_server JellyMeshRemote http://host.docker.internal:8098)
+A=$(add_server Standard "$STANDARD_URL")
+B=$(add_server JellyMeshRemote "$JELLYMESH_URL")
 sync_and_scan
 I=$(film_id "JM Audio e Sottotitoli")
 show() { post "/Items/$I/PlaybackInfo?userId=$USER_ID" '{}' | jq -c '[.MediaSources[0].MediaStreams[]|{I:.Index,T:.Type,E:.IsExternal,P:.Path}]'; }
@@ -15,4 +15,5 @@ echo "after replace all and a scan:"; show
 post "/Items/$I/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=Default" ; sleep 4
 echo "after full refresh:"; show
 echo "ffprobe on stub url ever: $(applog | grep -c 'ffprobe.*Play/[0-9a-f]\{32\}' || true); on the marker: $(applog | grep -c 'jellymesh-external-subtitle' || true)"
-applog | grep -E "\[ERR\]" | grep -v -i "tmdb\|TheMovieDb" | tail -5 | cut -c1-200
+applog | grep -E "\[ERR\]" | grep -v -i "tmdb\|TheMovieDb" | tail -5 | cut -c1-200 || true
+exit "${FAILED:-0}"

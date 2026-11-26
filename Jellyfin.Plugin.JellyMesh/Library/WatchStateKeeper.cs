@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,7 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -21,12 +23,19 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
 /// <see cref="IWatchStateKeeper"/> over the user data of Jellyfin and a <see cref="IKeptWatchStateStore"/>. The identity
-/// of a title is that of the dedup (plan §4.1), read from the library item of the old stub, since the index has dropped
-/// the removed server by the time its stubs go.
+/// of a title is that of the dedup (plan §4.1) or of the rule of its type, read from the library item of the old stub,
+/// since the index has dropped the removed server by the time its stubs go; a joined stub is read the same way.
 /// </summary>
 public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
 {
     private const string SavedServer = "kept";
+
+    // The most copies a kept title is put back on (row 542).
+    private const int MaxCopies = 100;
+
+    // Which titles a save is of, as the log names them.
+    private const string RemovedTitles = "of removed servers";
+    private const string JoinedTitles = "joined to another copy";
 
     // How long a record nobody used is kept (row 412).
     private static readonly TimeSpan _keptFor = TimeSpan.FromDays(90);
@@ -118,7 +127,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         // State still to clear is not of the episodes of its stub (§10 row 543).
-        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, cancellationToken).ConfigureAwait(false);
+        var kept = await SaveAsync(root, stubs.Where(stub => stub.StateOfOneUntil is null).ToList(), series, RemovedTitles, cancellationToken).ConfigureAwait(false);
         foreach (var serverId in ServersOf(stubs, series))
         {
             if (kept)
@@ -132,6 +141,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         }
 
         return kept;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> KeepJoinedAsync(string root, IReadOnlyCollection<StubEntry> stubs, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(stubs);
+        var alone = stubs.Where(stub => stub.StateOfOneUntil is null).ToList();
+        return alone.Count == 0 || await SaveAsync(root, alone, [], JoinedTitles, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -235,18 +252,88 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     // Matching reads only these two IDs on a film.
     private static bool HasNoFilmIds(ContentIds ids) => string.IsNullOrWhiteSpace(ids.Tmdb) && string.IsNullOrWhiteSpace(ids.Imdb);
 
+    // The kinds the dedup of films and episodes knows again. The others have rules of their own (rows 453, 535 and 565).
+    private static bool IsInDedup(KeptTitle title) => !IsOfItsOwn(title.Kind);
+
+    private static bool IsOfItsOwn(KeptTitleKind kind) => kind is KeptTitleKind.Track or KeptTitleKind.AudioBook or KeptTitleKind.Book or KeptTitleKind.HomeVideo or KeptTitleKind.Photo;
+
+    // A kept track or audiobook file as the dedup of music reads it.
+    private static TrackItem SavedTrack(KeptTitle title) => new()
+    {
+        ServerId = SavedServer,
+        ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+        Title = title.Title,
+        AlbumArtists = title.AlbumArtists,
+        Artists = title.Artists,
+        Album = title.Album,
+        DiscNumber = title.SeasonNumber,
+        TrackNumber = title.EpisodeNumber,
+        IsOnlyFile = title.IsOnlyFile,
+        RunTimeTicks = title.RunTimeTicks,
+        RecordingId = CatalogItemMapper.RecordingIdOf(title.ProviderIds),
+        TrackId = CatalogItemMapper.TrackIdOf(title.ProviderIds)
+    };
+
+    private static BookItem SavedBook(KeptTitle title) => new()
+    {
+        ServerId = SavedServer,
+        ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+        Title = title.Title,
+        Year = title.Year,
+        SeriesName = title.SeriesName,
+        Extension = Path.GetExtension(title.Place),
+        ProviderIds = title.ProviderIds
+    };
+
+    private static HomeVideoItem SavedHomeVideo(KeptTitle title) => new()
+    {
+        ServerId = SavedServer,
+        ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+        Title = title.Title,
+        Year = title.Year,
+        RunTimeTicks = title.RunTimeTicks,
+        Folder = FolderOf(title.Place)
+    };
+
+    private static PhotoItem SavedPhoto(KeptTitle title) => new()
+    {
+        ServerId = SavedServer,
+        ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
+        Title = title.Title,
+        Year = title.Year,
+        Folder = FolderOf(title.Place)
+    };
+
+    // The name of the folder that holds a place, null at the top.
+    private static string? FolderOf(string? place) => place?.Split('/') is { Length: > 1 } parts ? parts[^2] : null;
+
+    // The folders of the audiobooks in one file.
+    private static HashSet<string> FoldersOfOneFile(IEnumerable<StubEntry> stubs) => stubs
+        .Where(stub => stub.Kind == StubKind.AudioBook)
+        .DistinctBy(stub => stub.Id)
+        .GroupBy(stub => Path.GetDirectoryName(stub.RelativePath)!, StringComparer.Ordinal)
+        .Where(folder => folder.Count() == 1)
+        .Select(folder => folder.Key)
+        .ToHashSet(StringComparer.Ordinal);
+
+    // The provider IDs without the mark of the plugin.
+    private static Dictionary<string, string> WithoutMark(IEnumerable<KeyValuePair<string, string>>? ids) => (ids ?? [])
+        .Where(pair => !string.IsNullOrWhiteSpace(pair.Value) && !string.Equals(pair.Key, FederatedPlaceholderMark.ProviderId, StringComparison.OrdinalIgnoreCase))
+        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+
     // A kept title as the dedup reads it; a series as an episode with no numbers, the form the work resolver groups.
     private static CatalogItem Saved(KeptTitle title) => new()
     {
         ServerId = SavedServer,
         ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
-        Kind = title.Kind == KeptTitleKind.Movie ? ContentKind.Movie : ContentKind.Episode,
+        Kind = ContentKindOf(title.Kind),
 
         // Its own series, so that a merge names it like any copy.
-        SeriesId = title.Kind == KeptTitleKind.Movie ? null : title.Id.ToString(CultureInfo.InvariantCulture),
+        SeriesId = ContentKindOf(title.Kind) == ContentKind.Episode ? title.Id.ToString(CultureInfo.InvariantCulture) : null,
         Title = title.Title,
         Year = title.Year,
         Ids = title.Ids,
+        Artists = title.Artists,
         SeasonNumber = title.SeasonNumber,
         EpisodeNumber = title.EpisodeNumber,
         EpisodeNumberEnd = title.EpisodeNumberEnd,
@@ -263,6 +350,33 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             : ComparableMetadata.None
     };
 
+    /// <summary>
+    /// Gives the kind under which the state of a stub is kept (row 532).
+    /// </summary>
+    /// <param name="kind">The kind of stub.</param>
+    /// <returns>The kind of kept title.</returns>
+    internal static KeptTitleKind KeptKindOf(StubKind kind) => kind switch
+    {
+        StubKind.Movie => KeptTitleKind.Movie,
+        StubKind.Episode => KeptTitleKind.Episode,
+        StubKind.MusicVideo => KeptTitleKind.MusicVideo,
+        StubKind.Track => KeptTitleKind.Track,
+        StubKind.AudioBook => KeptTitleKind.AudioBook,
+        StubKind.Book => KeptTitleKind.Book,
+        StubKind.HomeVideo => KeptTitleKind.HomeVideo,
+        StubKind.Photo => KeptTitleKind.Photo,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "A stub kind with no kind to be kept under.")
+    };
+
+    // The dedup kind of a kept title; a series is read as its episodes.
+    private static ContentKind ContentKindOf(KeptTitleKind kind) => kind switch
+    {
+        KeptTitleKind.Movie => ContentKind.Movie,
+        KeptTitleKind.MusicVideo => ContentKind.MusicVideo,
+        KeptTitleKind.Episode or KeptTitleKind.Series => ContentKind.Episode,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "A kept kind outside the dedup of films and episodes.")
+    };
+
     // A kept title with the copies of its merges as one merge, so that each copy left finds it (D33).
     private static ManualMerge? MergeOf(KeptTitle title) => title.Copies.Count == 0 ? null : new ManualMerge
     {
@@ -274,7 +388,7 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             {
                 ServerId = SavedServer,
                 ItemId = title.Id.ToString(CultureInfo.InvariantCulture),
-                Kind = title.Kind == KeptTitleKind.Movie ? ContentKind.Movie : ContentKind.Episode
+                Kind = ContentKindOf(title.Kind)
             },
             .. title.Copies
         ]
@@ -295,8 +409,63 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             .ToList();
     }
 
-    private KeptTitle TitleOf(BaseItem item, Dictionary<Guid, BaseItem?> parents, DateTime now)
+    // The path of a stub below its type folder, the same on any server and layout of names.
+    private static string? PlaceOf(string relativePath)
     {
+        if (FederatedPaths.RemoteLibraryOf(relativePath) is null)
+        {
+            return null;
+        }
+
+        var parts = relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4);
+        return parts.Length == 4 ? parts[3].Replace(Path.DirectorySeparatorChar, '/') : null;
+    }
+
+    // A title of a kind of its own, with everything a rule of identity may read (row 532).
+    private KeptTitle OwnTitleOf(BaseItem item, KeptTitleKind kind, string relativePath, DateTime now) => new()
+    {
+        OldItemId = item.Id,
+        Kind = kind,
+        Title = item.Name,
+        Year = item.ProductionYear ?? item.PremiereDate?.Year,
+        OriginalTitle = item.OriginalTitle,
+        RunTimeTicks = item.RunTimeTicks,
+        Overview = kind == KeptTitleKind.Book ? item.Overview : null,
+        Genres = kind == KeptTitleKind.Book ? item.Genres ?? [] : [],
+        Studios = kind == KeptTitleKind.Book ? item.Studios ?? [] : [],
+        People = kind == KeptTitleKind.Book ? _library.GetPeople(item).Select(person => person.Name).OfType<string>().ToList() : [],
+        Artists = item is IHasArtist artists ? artists.Artists ?? [] : [],
+        AlbumArtists = item is IHasAlbumArtist albumArtists ? albumArtists.AlbumArtists ?? [] : [],
+        Album = item is Audio ? item.Album : null,
+        SeriesName = (item as IHasSeries)?.SeriesName,
+        ProviderIds = WithoutMark(item.ProviderIds),
+        Place = PlaceOf(relativePath),
+        SeasonNumber = item.ParentIndexNumber,
+        EpisodeNumber = item.IndexNumber,
+        SavedUtc = now
+    };
+
+    // The kind of stub decides for all but films and episodes, whatever type the library gave the item.
+    private KeptTitle TitleOf(BaseItem item, StubKind? stub, string relativePath, Dictionary<Guid, BaseItem?> parents, DateTime now)
+    {
+        var kind = stub is { } known ? KeptKindOf(known) : (KeptTitleKind?)null;
+        switch (kind)
+        {
+            case { } own when IsOfItsOwn(own):
+                return OwnTitleOf(item, own, relativePath, now);
+            case KeptTitleKind.MusicVideo:
+                return new KeptTitle
+                {
+                    OldItemId = item.Id,
+                    Kind = KeptTitleKind.MusicVideo,
+                    Title = item.Name,
+                    Year = item.ProductionYear,
+                    Ids = ContentIds.FromProviderIds(item.ProviderIds),
+                    Artists = (item as IHasArtist)?.Artists ?? [],
+                    SavedUtc = now
+                };
+        }
+
         switch (item)
         {
             case Episode episode:
@@ -353,40 +522,92 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     // The rows put back, by title and user. A user whose title has no item yet, or none the user sees, keeps the row.
     private List<(long TitleId, Guid UserId)> Restore(string root, IReadOnlyList<KeptTitle> titles, IReadOnlyList<User> users, CancellationToken cancellationToken)
     {
-        var (current, currentSeries, paths) = CurrentStubs();
-        var byId = titles.ToDictionary(title => title.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
-        var saved = titles.Where(title => title.Kind != KeptTitleKind.Series).Select(Saved).ToList();
-        var savedSeries = titles.Where(title => title.Kind == KeptTitleKind.Series).Select(Saved).ToList();
         var done = new List<(long TitleId, Guid UserId)>();
-        var pairs = DedupEngine.Pair(saved, savedSeries, current, currentSeries, [.. _merges.Merges, .. titles.Select(MergeOf).OfType<ManualMerge>()]);
-        foreach (var match in pairs.GroupBy(pair => pair.Saved.ItemId, StringComparer.Ordinal))
+        var films = titles.Where(IsInDedup).ToList();
+        var current = CurrentStubs(titles.Select(title => title.Kind).ToHashSet());
+        var paths = current.Paths;
+        var byId = titles.ToDictionary(title => title.Id.ToString(CultureInfo.InvariantCulture), StringComparer.Ordinal);
+        var saved = films.Where(title => title.Kind != KeptTitleKind.Series).Select(Saved).ToList();
+        var savedSeries = films.Where(title => title.Kind == KeptTitleKind.Series).Select(Saved).ToList();
+        var left = 0;
+        List<(string Saved, string ServerId, string ItemId)> pairs =
+        [
+            .. Match("films and series", () => new SavedPairs<CatalogItem>(
+                DedupEngine.Pair(saved, savedSeries, current.Titles, current.Series, [.. _merges.Merges, .. films.Select(MergeOf).OfType<ManualMerge>()]).Select(pair => (pair.Saved, pair.Current)).ToList(),
+                0)),
+            .. Match("tracks", () => TrackDedup.Pair(Own(KeptTitleKind.Track, SavedTrack), current.Tracks, MaxCopies, cancellationToken)),
+            .. Match("audiobooks", () => TrackDedup.Pair(Own(KeptTitleKind.AudioBook, SavedTrack), current.AudioBooks, MaxCopies, cancellationToken)),
+            .. Match("books", () => BookIdentity.Pair(Own(KeptTitleKind.Book, SavedBook), current.Books, MaxCopies, cancellationToken)),
+            .. Match("home videos", () => HomeVideoIdentity.Pair(Own(KeptTitleKind.HomeVideo, SavedHomeVideo), current.HomeVideos, MaxCopies, cancellationToken)),
+            .. Match("photos", () => PhotoIdentity.Pair(Own(KeptTitleKind.Photo, SavedPhoto), current.Photos, MaxCopies, cancellationToken))
+        ];
+        foreach (var match in pairs.GroupBy(pair => pair.Saved, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var title = byId[match.Key];
-            var isSeries = title.Kind == KeptTitleKind.Series;
-            var items = match
-                .SelectMany(pair => paths[(isSeries, pair.Current.ServerId, pair.Current.ItemId)])
-                .Distinct()
-                .Select(path => _library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder))
-                .OfType<BaseItem>()
-                .Where(item => item.Id != title.OldItemId)
-                .ToList();
-            if (items.Count == 0)
+            if (match.Count() > MaxCopies)
             {
+                left++;
                 continue;
             }
 
-            var people = users.ToDictionary(user => user.Id);
-            foreach (var state in title.Users)
+            var title = byId[match.Key];
+            try
             {
-                if (people.TryGetValue(state.UserId, out var user) && PutBack(user, state, items, isSeries, cancellationToken))
+                var isSeries = title.Kind == KeptTitleKind.Series;
+                var items = match
+                    .SelectMany(pair => paths[(isSeries, pair.ServerId, pair.ItemId)])
+                    .Distinct()
+                    .Select(path => _library.FindByPath(FederatedPaths.Resolve(root, path.Path), path.IsFolder))
+                    .OfType<BaseItem>()
+                    .Where(item => item.Id != title.OldItemId)
+                    .ToList();
+                if (items.Count == 0)
                 {
-                    done.Add((title.Id, state.UserId));
+                    continue;
                 }
+
+                var people = users.ToDictionary(user => user.Id);
+                foreach (var state in title.Users)
+                {
+                    if (people.TryGetValue(state.UserId, out var user) && PutBack(user, state, items, isSeries, cancellationToken))
+                    {
+                        done.Add((title.Id, state.UserId));
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException and not StoreSuspendedException)
+            {
+                // The rows stay for a later run.
+                _logger.LogError("Cannot put back the kept watch state of a title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
             }
         }
 
+        if (left > 0)
+        {
+            _logger.LogWarning("The kept watch state of {Count} titles stays kept: each matches more than {Max} current or kept copies", left, MaxCopies);
+        }
+
         return done;
+
+        List<T> Own<T>(KeptTitleKind kind, Func<KeptTitle, T> savedOf) => titles.Where(title => title.Kind == kind).Select(savedOf).ToList();
+
+        // The pairs of one rule, or none when it fails: the titles of its types wait for a later run.
+        List<(string Saved, string ServerId, string ItemId)> Match<T>(string types, Func<SavedPairs<T>> rule)
+            where T : IServerItem
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var found = rule();
+                left += found.Left;
+                return found.Pairs.Select(pair => (pair.Saved.ItemId, pair.Current.ServerId, pair.Current.ItemId)).ToList();
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException and not StoreSuspendedException)
+            {
+                _logger.LogError("Cannot match the kept watch state of {Types}: {Error}{Detail:l}", types, exception.GetType().Name, _errorLogs.Local.Of(exception));
+                return [];
+            }
+        }
     }
 
     // Each title gets the state once: on its primary version if the user sees it, otherwise on the first version the user
@@ -432,11 +653,13 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
     }
 
     // Every indexed source of the stubs of configured servers, as the dedup reads it, with the stubs it is in. Sources keep
-    // their server and item, so that a manual merge finds them (D21).
-    private (List<CatalogItem> Titles, List<CatalogItem> Series, Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>> Paths) CurrentStubs()
+    // their server and item, so that a manual merge finds them (D21). Tracks, audiobooks, books, home videos and photos only
+    // when their kind is kept.
+    private CurrentTitles CurrentStubs(HashSet<KeptTitleKind> kept)
     {
-        var snapshot = _index.Snapshot;
         var configured = _servers.GetServers().Select(server => server.Id).ToHashSet();
+        var snapshot = _index.Snapshot;
+        var lookup = kept.Any(IsOfItsOwn) ? IndexItemLookup.Build(snapshot) : null;
         var indexed = snapshot.Servers
             .Where(catalog => configured.Contains(catalog.ServerId))
             .SelectMany(catalog => CatalogItemMapper.ToCatalogItems(catalog).Select(item => (catalog.ServerId, Item: item)))
@@ -447,25 +670,101 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
         var seriesPaths = state.Series.DistinctBy(entry => entry.Id).ToDictionary(entry => entry.Id, entry => entry.RelativePath, StringComparer.Ordinal);
         var items = new Dictionary<(bool IsSeries, string ServerId, string ItemId), CatalogItem>();
         var paths = new Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>>();
-        void Add(CatalogItem item, bool isSeries, string path)
+        void AddPath((bool IsSeries, string ServerId, string ItemId) key, string path)
         {
-            var key = (isSeries, item.ServerId, item.ItemId);
-            items.TryAdd(key, item);
             if (!paths.TryGetValue(key, out var list))
             {
                 paths[key] = list = [];
             }
 
-            if (!list.Contains((path, isSeries)))
+            if (!list.Contains((path, key.IsSeries)))
             {
-                list.Add((path, isSeries));
+                list.Add((path, key.IsSeries));
             }
+        }
+
+        void Add(CatalogItem item, bool isSeries, string path)
+        {
+            var key = (isSeries, item.ServerId, item.ItemId);
+            items.TryAdd(key, item);
+            AddPath(key, path);
+        }
+
+        var oneFile = FoldersOfOneFile(state.Stubs);
+        var found = new CurrentTitles([], [], [], [], [], [], [], paths);
+        void AddOwn(StubEntry stub, StubSource source, IndexedItem item)
+        {
+            var serverId = source.ServerId.ToString("N");
+            switch (stub.Kind)
+            {
+                case StubKind.Track:
+                    found.Tracks.Add(CatalogItemMapper.ToTrackItem(serverId, item));
+                    break;
+                case StubKind.AudioBook:
+                    found.AudioBooks.Add(CatalogItemMapper.ToTrackItem(serverId, item) with { IsOnlyFile = oneFile.Contains(Path.GetDirectoryName(stub.RelativePath)!) });
+                    break;
+                case StubKind.Book:
+                    found.Books.Add(new BookItem
+                    {
+                        ServerId = serverId,
+                        ItemId = item.ItemId,
+                        Title = item.Name,
+                        Year = item.ProductionYear ?? item.PremiereDate?.Year,
+                        SeriesName = item.SeriesName,
+                        Extension = Path.GetExtension(stub.RelativePath),
+                        ProviderIds = WithoutMark(item.ProviderIds)
+                    });
+                    break;
+                case StubKind.HomeVideo:
+                    found.HomeVideos.Add(new HomeVideoItem
+                    {
+                        ServerId = serverId,
+                        ItemId = item.ItemId,
+                        Title = item.Name,
+                        Year = item.ProductionYear ?? item.PremiereDate?.Year,
+
+                        // The duration its library item has.
+                        RunTimeTicks = item.Versions.FirstOrDefault(version => version.MediaSourceId == source.MediaSourceId)?.RunTimeTicks ?? item.RunTimeTicks,
+                        Folder = FolderOf(PlaceOf(stub.RelativePath))
+                    });
+                    break;
+                case StubKind.Photo:
+                    found.Photos.Add(new PhotoItem
+                    {
+                        ServerId = serverId,
+                        ItemId = item.ItemId,
+                        Title = item.Name,
+
+                        // The year its library item has: a photo placeholder carries no date.
+                        Year = item.ProductionYear,
+                        Folder = FolderOf(PlaceOf(stub.RelativePath))
+                    });
+                    break;
+                default:
+                    return;
+            }
+
+            AddPath((false, serverId, item.ItemId), stub.RelativePath);
         }
 
         foreach (var stub in state.Stubs.Where(stub => stub.ServerId is { } server ? configured.Contains(server) : stub.Sources.Any(source => configured.Contains(source.ServerId))))
         {
-            var sources = stub.Sources
-                .Where(source => configured.Contains(source.ServerId))
+            var keys = stub.Sources.Where(source => configured.Contains(source.ServerId)).ToList();
+            var kind = KeptKindOf(stub.Kind);
+            if (IsOfItsOwn(kind))
+            {
+                foreach (var source in kept.Contains(kind) ? keys : [])
+                {
+                    if (lookup?.Find(source.ServerId, source.ItemId) is { } own)
+                    {
+                        AddOwn(stub, source, own);
+                    }
+                }
+
+                continue;
+            }
+
+            var sources = keys
                 .Select(source => indexed.GetValueOrDefault((source.ServerId, source.ItemId)))
                 .OfType<CatalogItem>();
             foreach (var item in sources)
@@ -479,14 +778,15 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             }
         }
 
-        return (
-            items.Where(entry => !entry.Key.IsSeries).Select(entry => entry.Value).ToList(),
-            items.Where(entry => entry.Key.IsSeries).Select(entry => entry.Value).ToList(),
-            paths);
+        return found with
+        {
+            Titles = items.Where(entry => !entry.Key.IsSeries).Select(entry => entry.Value).ToList(),
+            Series = items.Where(entry => entry.Key.IsSeries).Select(entry => entry.Value).ToList()
+        };
     }
 
-    // Saves the state of the titles, or says why not in the log; false when they must stay.
-    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, CancellationToken cancellationToken)
+    // Saves the state of the titles, or says why not in the log, naming which titles they are; false when they must stay.
+    private async Task<bool> SaveAsync(string root, IReadOnlyCollection<StubEntry> stubs, IReadOnlyCollection<SeriesStub> series, string which, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -495,14 +795,14 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             var users = _users.GetUsers().ToList();
             if (users.Count == 0)
             {
-                _logger.LogWarning("The users cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                _logger.LogWarning("The users cannot be read for now: {Count} titles {Which:l} are kept until their watch state is saved", stubs.Count + series.Count, which);
                 return false;
             }
 
             // Without the merges a kept title would miss the copies that find it (D33): the titles stay until they read.
             if (_merges.IsDamaged)
             {
-                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles of removed servers are kept until their watch state is saved", stubs.Count + series.Count);
+                _logger.LogWarning("The manual merges cannot be read for now: {Count} titles {Which:l} are kept until their watch state is saved", stubs.Count + series.Count, which);
                 return false;
             }
 
@@ -511,10 +811,11 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             var seriesById = series.Concat(_registry.State.Series).DistinctBy(entry => entry.Id).ToDictionary(entry => entry.Id, StringComparer.Ordinal);
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var parents = new Dictionary<Guid, BaseItem?>();
+            var oneFile = FoldersOfOneFile(stubs.Concat(_registry.State.Stubs));
             var titles = new List<KeptTitle>();
             var entries = stubs
-                .Select(stub => (Path: stub.RelativePath, IsFolder: false, Sources: stub.SeriesStubId is { } seriesId && seriesById.TryGetValue(seriesId, out var parent) ? parent.Sources : stub.Sources))
-                .Concat(series.Select(entry => (Path: entry.RelativePath, IsFolder: true, entry.Sources)));
+                .Select(stub => (Kind: (StubKind?)stub.Kind, Path: stub.RelativePath, IsFolder: false, Sources: stub.SeriesStubId is { } seriesId && seriesById.TryGetValue(seriesId, out var parent) ? parent.Sources : stub.Sources))
+                .Concat(series.Select(entry => (Kind: (StubKind?)null, Path: entry.RelativePath, IsFolder: true, entry.Sources)));
             foreach (var path in entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -530,21 +831,26 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
                     .ToList();
                 if (rows.Count > 0)
                 {
-                    titles.Add(TitleOf(item, parents, now) with { Users = rows, Copies = CopiesOf(path.Sources, merges, keptMerges) });
+                    titles.Add(TitleOf(item, path.Kind, path.Path, parents, now) with
+                    {
+                        IsOnlyFile = path.Kind == StubKind.AudioBook && oneFile.Contains(Path.GetDirectoryName(path.Path)!),
+                        Users = rows,
+                        Copies = CopiesOf(path.Sources, merges, keptMerges)
+                    });
                 }
             }
 
             await _kept.SaveAsync(titles, cancellationToken).ConfigureAwait(false);
             if (titles.Count > 0)
             {
-                _logger.LogInformation("Kept the watch state of {Count} titles of removed servers", titles.Count);
+                _logger.LogInformation("Kept the watch state of {Count} titles {Which:l}", titles.Count, which);
             }
 
             return true;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            _logger.LogError("Cannot keep the watch state of the titles of removed servers, so they stay for now: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            _logger.LogError("Cannot keep the watch state of the titles {Which:l}, so they stay for now: {Error}{Detail:l}", which, exception.GetType().Name, _errorLogs.Local.Of(exception));
             return false;
         }
         finally
@@ -552,4 +858,15 @@ public sealed class WatchStateKeeper : IWatchStateKeeper, IDisposable
             _gate.Release();
         }
     }
+
+    // The titles of the current stubs, as each rule of identity reads them, with the paths of their stubs.
+    private sealed record CurrentTitles(
+        List<CatalogItem> Titles,
+        List<CatalogItem> Series,
+        List<TrackItem> Tracks,
+        List<TrackItem> AudioBooks,
+        List<BookItem> Books,
+        List<HomeVideoItem> HomeVideos,
+        List<PhotoItem> Photos,
+        Dictionary<(bool IsSeries, string ServerId, string ItemId), List<(string Path, bool IsFolder)>> Paths);
 }

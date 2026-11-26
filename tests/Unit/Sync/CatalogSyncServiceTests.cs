@@ -312,6 +312,50 @@ public sealed class CatalogSyncServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TheStatusCountsTheNewTypes()
+    {
+        static RemoteItem Item(string id, string path) => new() { Id = id, Name = id, Path = path };
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Music, "Musica", "music"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.MusicVideos, "Clip", "musicvideos"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.HomeVideos, "Casa", "homevideos"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Books, "Libri", "books"));
+        _fixture.Client.Add(TestLibraries.Music, RemoteItemType.Audio, Item("t1", "/music/1.flac"), Item("t2", "/music/2.flac"), Item("t3", "/music/3.flac"));
+        _fixture.Client.Add(TestLibraries.MusicVideos, RemoteItemType.MusicVideo, Item("c1", "/clips/1.mkv"), Item("c2", "/clips/2.mkv"));
+        _fixture.Client.Add(TestLibraries.HomeVideos, RemoteItemType.Video, Item("h1", "/home/1.mp4"));
+        _fixture.Client.Add(TestLibraries.HomeVideos, RemoteItemType.Photo, Item("p1", "/home/1.jpg"), Item("p2", "/home/2.jpg"), Item("p3", "/home/3.jpg"), Item("p4", "/home/4.jpg"));
+        _fixture.Client.Add(TestLibraries.Books, RemoteItemType.Book, Item("b1", "/books/1.epub"));
+        _fixture.Client.Add(TestLibraries.Books, RemoteItemType.AudioBook, Item("a1", "/books/a/1.mp3"), Item("a2", "/books/a/2.mp3"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Music, TestLibraries.MusicVideos, TestLibraries.HomeVideos, TestLibraries.Books);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        var server = Assert.Single(_fixture.Sync.GetStatus().Servers);
+        Assert.Equal((3, 2, 1, 1, 2, 4), (server.Tracks, server.MusicVideos, server.HomeVideos, server.Books, server.AudiobookFiles, server.Photos));
+        Assert.Equal((0, 0, 0), (server.Movies, server.Series, server.Episodes));
+    }
+
+    // Row 565: a photo with no placeholder, in a format with no extension or another JellyMesh's placeholder, is not counted.
+    [Fact]
+    public async Task TheStatusCountsOnlyThePhotosThatGetAPlaceholder()
+    {
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.HomeVideos, "Casa", "homevideos"));
+        _fixture.Client.Add(
+            TestLibraries.HomeVideos,
+            RemoteItemType.Photo,
+            new RemoteItem { Id = "p1", Name = "p1", Path = "/home/1.jpg" },
+            new RemoteItem { Id = "p2", Name = "p2", Path = "/home/2.png" },
+            new RemoteItem { Id = "p3", Name = "p3", Path = "/home/3.psd" },
+            new RemoteItem { Id = "p4", Name = "p4", Path = "/home/4" },
+            new RemoteItem { Id = "p5", Name = "p5", Path = "/home/5.jpg", ProviderIds = new Dictionary<string, string?> { [global::Jellyfin.Plugin.JellyMesh.Library.FederatedPlaceholderMark.ProviderId] = "stub" } });
+        await _fixture.AddServerAsync("Friend", TestLibraries.HomeVideos);
+
+        await _fixture.Sync.RunAsync(CancellationToken.None);
+
+        var server = Assert.Single(_fixture.Sync.GetStatus().Servers);
+        Assert.Equal(2, server.Photos);
+    }
+
+    [Fact]
     public async Task TheLogsHoldNoSecretAndNoAddress()
     {
         _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));

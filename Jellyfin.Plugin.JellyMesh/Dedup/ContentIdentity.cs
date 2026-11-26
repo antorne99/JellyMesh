@@ -1,7 +1,7 @@
 namespace Jellyfin.Plugin.JellyMesh.Dedup;
 
 /// <summary>
-/// The identity of a film or episode (plan §4.1).
+/// The identity of a film, episode or track (plan §4.1, row 453).
 /// </summary>
 /// <param name="Key">
 /// A string unique to this content within one <see cref="DedupResult"/>. It depends on the whole catalog: a new source

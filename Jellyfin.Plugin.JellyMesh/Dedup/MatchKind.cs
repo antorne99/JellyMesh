@@ -27,4 +27,9 @@ public enum MatchKind
     /// The administrator merged copies shown apart (decision 20). They keep the lowest of their keys.
     /// </summary>
     Manual,
+
+    /// <summary>
+    /// A track by album artist, album, disc, number and normalized title, with durations within 2 s (row 453).
+    /// </summary>
+    AlbumPosition,
 }

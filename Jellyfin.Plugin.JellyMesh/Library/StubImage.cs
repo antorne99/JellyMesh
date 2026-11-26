@@ -11,4 +11,8 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <param name="ServerId">The server to read it from.</param>
 /// <param name="ItemId">The item on that server.</param>
 /// <param name="LocalPath">The local file to copy instead.</param>
-public sealed record StubImage(ImageType Type, string RelativeStem, Guid? ServerId, string? ItemId, string? LocalPath);
+public sealed record StubImage(ImageType Type, string RelativeStem, Guid? ServerId, string? ItemId, string? LocalPath)
+{
+    /// <summary>Gets a value indicating whether the image is read as a photo thumbnail: re-encoded, with no EXIF.</summary>
+    public bool IsPhotoCover { get; init; }
+}

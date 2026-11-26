@@ -37,9 +37,10 @@ public interface IRemotePlaybackClient
     /// <param name="endpoint">The remote.</param>
     /// <param name="session">The session.</param>
     /// <param name="path">The path and query.</param>
+    /// <param name="device">The hash of the device a track plays on, for a JellyMesh remote only.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The text.</returns>
-    Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken);
+    Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, string? device, CancellationToken cancellationToken);
 
     /// <summary>
     /// Opens a stream. It ends when the headers arrive, so the token bounds the opening and not the transfer.
@@ -50,6 +51,16 @@ public interface IRemotePlaybackClient
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The stream, to dispose.</returns>
     Task<RemoteResult<RemoteContent>> OpenStreamAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteStreamRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the lyrics of a track. A remote that has none answers <see cref="RemoteLyrics.None"/>.
+    /// </summary>
+    /// <param name="endpoint">The remote.</param>
+    /// <param name="session">The session.</param>
+    /// <param name="itemId">The track on the remote.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The lyrics.</returns>
+    Task<RemoteResult<RemoteLyrics>> GetLyricsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Ends the transcode of a play session with <c>DELETE /Videos/ActiveEncodings</c>, which leaves the watch state of

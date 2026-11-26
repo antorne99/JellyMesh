@@ -43,6 +43,25 @@ internal static class PlaybackValues
         + "#EXTINF:3.0,\n"
         + "hls1/main/0.mp4?DeviceId=" + RemoteDevice + "&PlaySessionId=" + RemotePlaySession + "&runtimeTicks=0&actualSegmentLengthTicks=30000000\n";
 
+    public const string AudioMaster = "/Audio/remote-item/master.m3u8?DeviceId=" + RemoteDevice + "&MediaSourceId=ms&AudioCodec=aac&SegmentContainer=mp4&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken;
+
+    // An audio master as stock 12.4 writes it: one variant, audio codecs only.
+    public const string AudioMasterPlaylist =
+        "#EXTM3U\n"
+        + "#EXT-X-STREAM-INF:BANDWIDTH=320000,AVERAGE-BANDWIDTH=320000,CODECS=\"mp4a.40.2\"\n"
+        + "main.m3u8?DeviceId=" + RemoteDevice + "&MediaSourceId=ms&AudioCodec=aac&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken + "\n";
+
+    public const string AudioVariantPlaylist =
+        "#EXTM3U\n"
+        + "#EXT-X-PLAYLIST-TYPE:VOD\n"
+        + "#EXT-X-VERSION:7\n"
+        + "#EXT-X-TARGETDURATION:6\n"
+        + "#EXT-X-MEDIA-SEQUENCE:0\n"
+        + "#EXT-X-MAP:URI=\"hls1/main/-1.mp4?DeviceId=" + RemoteDevice + "&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken + "&runtimeTicks=0&actualSegmentLengthTicks=0\"\n"
+        + "#EXTINF:6.000000, nodesc\n"
+        + "hls1/main/0.mp4?DeviceId=" + RemoteDevice + "&PlaySessionId=" + RemotePlaySession + "&ApiKey=" + RemoteToken + "&runtimeTicks=0&actualSegmentLengthTicks=60000000\n"
+        + "#EXT-X-ENDLIST\n";
+
     public static readonly DeviceProfile WebProfile = new()
     {
         TranscodingProfiles =
@@ -145,8 +164,24 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
             : call(_endpoint, _session, cancellationToken);
     }
 
-    public Task<RemoteResult<T>> RunPlaybackCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
-        => RunWithSessionAsync(serverId, call, cancellationToken);
+    // The outcomes a playback call hands back, which the real registry records as the last one of its server.
+    public List<RemoteFailure> Recorded { get; } = [];
+
+    public async Task<RemoteResult<T>> RunPlaybackCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
+    {
+        var result = await RunWithSessionAsync(serverId, call, cancellationToken).ConfigureAwait(false);
+        Recorded.Add(result.Failure);
+        return result;
+    }
+
+    /// <summary>Gets how many calls ran as anonymous.</summary>
+    public int AnonymousCalls { get; private set; }
+
+    public Task<RemoteResult<T>> RunAnonymousCallAsync<T>(Guid serverId, Func<RemoteEndpoint, RemoteSession, CancellationToken, Task<RemoteResult<T>>> call, CancellationToken cancellationToken)
+    {
+        AnonymousCalls++;
+        return RunWithSessionAsync(serverId, call, cancellationToken);
+    }
 }
 
 /// <summary>A remote scripted per test. Records what is asked of it, per item path.</summary>
@@ -156,6 +191,9 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
 
     public List<string> Opened { get; } = [];
 
+    /// <summary>Gets the device each playlist and stream named, in order.</summary>
+    public List<string?> Devices { get; } = [];
+
     public List<string> Stopped { get; } = [];
 
     public Func<RemotePlaybackRequest, CancellationToken, Task<RemoteResult<PlaybackInfoResponse>>> Answer { get; set; } = (request, _) => Task.FromResult(Hls(request));
@@ -163,6 +201,8 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     public Func<string, RemoteFailure> Playlists { get; set; } = _ => RemoteFailure.None;
 
     public string Master { get; set; } = PlaybackValues.MasterPlaylist;
+
+    public string Variant { get; set; } = PlaybackValues.VariantPlaylist;
 
     public Func<RemoteStreamRequest, CancellationToken, Task<RemoteResult<RemoteContent>>> Open { get; set; } = (_, _) => Task.FromResult(Bytes());
 
@@ -205,21 +245,33 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return Task.FromResult(RemoteResult.Success(Policy));
     }
 
-    public Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken)
+    public Task<RemoteResult<string>> ReadPlaylistAsync(RemoteEndpoint endpoint, RemoteSession session, string path, string? device, CancellationToken cancellationToken)
     {
+        Devices.Add(device);
         var failure = Playlists(path);
         if (failure != RemoteFailure.None)
         {
             return Task.FromResult(RemoteResult.Fail<string>(failure));
         }
 
-        return Task.FromResult(RemoteResult.Success(path.Contains("master.m3u8", StringComparison.Ordinal) ? Master : PlaybackValues.VariantPlaylist));
+        return Task.FromResult(RemoteResult.Success(path.Contains("master.m3u8", StringComparison.Ordinal) ? Master : Variant));
     }
 
     public Task<RemoteResult<RemoteContent>> OpenStreamAsync(RemoteEndpoint endpoint, RemoteSession session, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
         Opened.Add(request.Path);
+        Devices.Add(request.Device);
         return Open(request, cancellationToken);
+    }
+
+    public List<string> LyricsAsked { get; } = [];
+
+    public Func<string, RemoteResult<RemoteLyrics>> Lyrics { get; set; } = _ => RemoteResult.Success(RemoteLyrics.None);
+
+    public Task<RemoteResult<RemoteLyrics>> GetLyricsAsync(RemoteEndpoint endpoint, RemoteSession session, string itemId, CancellationToken cancellationToken)
+    {
+        LyricsAsked.Add(itemId);
+        return Task.FromResult(Lyrics(itemId));
     }
 
     public Task<RemoteResult<bool>> StopEncodingAsync(RemoteEndpoint endpoint, RemoteSession session, string playSessionId, CancellationToken cancellationToken)
@@ -286,8 +338,10 @@ internal sealed class CoordinatorFixture
     {
         LastServed = lastServed ?? new InMemoryLastServedStore();
         Database.Setup(database => database.Health).Returns(() => Health);
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, Database.Object, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, Database.Object, logger ?? NullLogger<PlaybackCoordinator>.Instance, Hasher, Transcodes.Object);
     }
+
+    public DeviceHasher Hasher { get; } = new(new byte[32]);
 
     public Mock<ITranscodeManager> Transcodes { get; } = new();
 

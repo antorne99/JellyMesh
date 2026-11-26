@@ -24,4 +24,7 @@ public sealed record ServerFolderLink(
 {
     /// <summary>Gets the servers whose series folders share a library with a series folder of this one but sit in other libraries.</summary>
     public IReadOnlyList<Guid> SeriesSplitWith { get; init; } = [];
+
+    /// <summary>Gets the mixed libraries holding a Musica folder of this server, whose music Jellyfin ignores there (row 492).</summary>
+    public IReadOnlyList<string> MusicInMixed { get; init; } = [];
 }

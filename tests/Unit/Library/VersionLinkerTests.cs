@@ -433,6 +433,33 @@ public sealed class VersionLinkerTests : IDisposable
         }
     }
 
+    // A track, an audiobook, a book and a photo are never versions: a run reads nothing of them, by ID or by path.
+    [Theory]
+    [InlineData(false, StubKind.Track)]
+    [InlineData(true, StubKind.Track)]
+    [InlineData(false, StubKind.AudioBook)]
+    [InlineData(true, StubKind.AudioBook)]
+    [InlineData(false, StubKind.Book)]
+    [InlineData(true, StubKind.Book)]
+    [InlineData(false, StubKind.Photo)]
+    [InlineData(true, StubKind.Photo)]
+    public async Task AStubThatIsNoVideoIsNotReadFromTheLibrary(bool thorough, StubKind kind)
+    {
+        var film = Stub("film", _serverA, 1080);
+        var other = Stub("other", _serverB, 2160) with { Kind = kind };
+        await SaveAsync([film, other]);
+        var item = Scanned(film);
+        var path = FederatedPaths.Resolve(Root, other.RelativePath);
+
+        await _linker.LinkAsync(thorough, CancellationToken.None);
+
+        _library.Verify(library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(item.Id))), Times.Once);
+        _library.Verify(
+            library => library.GetItemList(It.Is<InternalItemsQuery>(query => query.ItemIds.Contains(IdOf(path, StubItemTypes.Of(kind))) || query.ItemIds.Contains(IdOf(path, typeof(Video))))),
+            Times.Never);
+        _library.Verify(library => library.FindByPath(path, It.IsAny<bool?>()), Times.Never);
+    }
+
     // Q387: the link state comes from block reads; a group already linked costs no lookup of its own.
     [Theory]
     [InlineData(false)]
@@ -965,6 +992,21 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     [Fact]
+    public async Task TheStubsGroupedWithAMusicVideoCopyAreTheStubsOfItsGroup_AndNeverAFilmOfTheSameItem()
+    {
+        var (clipA, clipB) = (Stub("ma", _serverA, 1080, StubKind.MusicVideo), Stub("mb", _serverB, 720, StubKind.MusicVideo));
+        var (filmA, filmB) = (Stub("fa", _serverA, 1080), Stub("fb", _serverB, 720));
+        await SaveAsync([clipA, clipB, filmA, filmB], Group("g1", ["ma", "mb"]), Group("g2", ["fa", "fb"]));
+        MergedCopy[] copies =
+        [
+            new() { ServerId = _serverA.ToString("N"), ItemId = "item-ma", Kind = ContentKind.MusicVideo },
+            new() { ServerId = _serverA.ToString("N"), ItemId = "item-fa", Kind = ContentKind.MusicVideo }
+        ];
+
+        Assert.Equal(["ma", "mb"], _linker.GroupedStubsOf(copies).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task TheStubsGroupedWithASeriesCopyAreTheStubsOfItsEpisodesGroups()
     {
         var a1 = Stub("a1", _serverA, 1080, StubKind.Episode) with { SeriesStubId = "series-a" };
@@ -1213,8 +1255,13 @@ public sealed class VersionLinkerTests : IDisposable
     }
 
     // Q351: the old path of a stub that left the registry has no kind, so its item is found by path whatever kind is given.
-    [Fact]
-    public async Task AnEntryAboutToBeRemovedIsFoundByPathWhateverItsKind()
+    [Theory]
+    [InlineData(StubKind.Movie)]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.AudioBook)]
+    [InlineData(StubKind.Book)]
+    [InlineData(StubKind.Photo)]
+    public async Task AnEntryAboutToBeRemovedIsFoundByPathWhateverItsKind(StubKind kind)
     {
         var episode = Stub("se", _serverA, 1080, StubKind.Episode);
         await SaveAsync([]);
@@ -1223,7 +1270,7 @@ public sealed class VersionLinkerTests : IDisposable
         item.SetPrimaryVersionId(local.Id);
         local.LinkedAlternateVersions = [Link(item.Id)];
 
-        Assert.Empty(await _linker.DetachForRemovalAsync([episode with { Kind = StubKind.Movie }], CancellationToken.None));
+        Assert.Empty(await _linker.DetachForRemovalAsync([episode with { Kind = kind }], CancellationToken.None));
 
         Assert.Null(item.PrimaryVersionId);
         Assert.Empty(local.LinkedAlternateVersions);

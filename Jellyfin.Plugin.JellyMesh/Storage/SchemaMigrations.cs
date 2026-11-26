@@ -9,6 +9,16 @@ namespace Jellyfin.Plugin.JellyMesh.Storage;
 public static class SchemaMigrations
 {
     /// <summary>
+    /// The version from which the index may hold music, home videos, photos and books, which an older build cannot read.
+    /// </summary>
+    public const int NewItemKindsVersion = 9;
+
+    /// <summary>
+    /// The version from which the kept watch state may hold tracks, audiobooks, books and home videos (row 532).
+    /// </summary>
+    public const int KeptTypesVersion = 11;
+
+    /// <summary>
     /// Gets every step, with versions 1, 2, 3 and so on.
     /// </summary>
     public static IReadOnlyList<SchemaMigration> All { get; } =
@@ -37,8 +47,18 @@ public static class SchemaMigrations
         // The stubs that split and wait for their watch state (F44b).
         new(8, Library.StubTables.AddSplits),
 
+        // No table changes: the index entries of the new kinds are JSON in the same rows (F50). The version keeps an older
+        // build, which would take them for damage and empty the index, away from the file.
+        new(NewItemKindsVersion, static (_, _) => { }),
+
+        // The artists of a kept music video (F53).
+        new(10, SmallStateSchema.AddKeptArtists),
+
+        // The kinds of their own in the kept watch state (row 532).
+        new(KeptTypesVersion, SmallStateSchema.AddKeptTypes),
+
         // The operation of each watch state carry (row 575).
-        new(9, SmallStateSchema.AddCarryOperations)
+        new(12, SmallStateSchema.AddCarryOperations)
     ];
 
     /// <summary>

@@ -439,6 +439,53 @@ public sealed class FederatedFolderLinkCheckerTests
         Assert.All(LinkOfA(report).Folders, folder => Assert.Equal(FederatedPathLink.Linked, folder.Link.Link));
     }
 
+    [Theory]
+    [InlineData("music", "Musica", CollectionTypeOptions.music)]
+    [InlineData("musicvideos", "Video musicali", CollectionTypeOptions.musicvideos)]
+    [InlineData("homevideos", "Video domestici", CollectionTypeOptions.homevideos)]
+    [InlineData("books", "Libri", CollectionTypeOptions.books)]
+    public void ATypeFolderOfANewTypeCountsInTheOverallState(string kind, string folderName, CollectionTypeOptions type)
+    {
+        const string Other = "a4000000000000000000000000000001";
+        var folder = $"/federata/{_a:D}/{Other}/{folderName}";
+        var server = ServerA((FilmsA, "Film", "movies"), (Other, "Altro", kind));
+
+        var left = CheckTypeFolders(server, Movies(_aFilms));
+        var linked = CheckTypeFolders(server, Movies(_aFilms), Library("Altro", type, false, folder));
+
+        Assert.Equal(FederatedFolderLinkState.NotLinked, left.State);
+        Assert.Equal(FederatedPathLink.NotLinked, LinkOfA(left).Folders.Single(link => link.Path == folder).Link.Link);
+        Assert.Equal(FederatedFolderLinkState.Linked, linked.State);
+    }
+
+    [Theory]
+    [InlineData(CollectionTypeOptions.mixed)]
+    [InlineData(null)]
+    public void AMixedLibraryWithAMusicaFolderIsReportedAndStaysLinked(CollectionTypeOptions? type)
+    {
+        const string Music = "a4000000000000000000000000000001";
+        var folder = $"/federata/{_a:D}/{Music}/Musica";
+        var server = ServerA((FilmsA, "Film", "movies"), (Music, "Dischi", "music"));
+
+        var report = CheckTypeFolders(server, Library("Tutto", type, true, _aFilms, folder));
+
+        Assert.Equal(["Tutto"], LinkOfA(report).MusicInMixed);
+        Assert.Equal(FederatedPathLink.Linked, LinkOfA(report).Folders.Single(link => link.Path == folder).Link.Link);
+        Assert.Equal(FederatedFolderLinkState.Linked, report.State);
+    }
+
+    [Fact]
+    public void AMusicaFolderInAMusicLibraryOrAFilmFolderInAMixedLibraryIsNotReported()
+    {
+        const string Music = "a4000000000000000000000000000001";
+        var folder = $"/federata/{_a:D}/{Music}/Musica";
+        var server = ServerA((FilmsA, "Film", "movies"), (Music, "Dischi", "music"));
+
+        var report = CheckTypeFolders(server, Library("Tutto", CollectionTypeOptions.mixed, true, _aFilms), Library("Musica", CollectionTypeOptions.music, false, folder));
+
+        Assert.Empty(LinkOfA(report).MusicInMixed);
+    }
+
     [Fact]
     public void OneTypeFolderLeftOutLeavesItsKindNotLinked()
     {

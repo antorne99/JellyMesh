@@ -1,3 +1,6 @@
+using System;
+using System.Diagnostics;
+using System.Linq;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Xunit;
 
@@ -76,6 +79,20 @@ public class TitleNormalizerTests
     public void Normalize_ReturnsEmptyForBlankTitles(string? title)
     {
         Assert.Equal(string.Empty, TitleNormalizer.Normalize(title, 2026));
+    }
+
+    [Theory]
+    [InlineData("a - ")]
+    [InlineData(" -")]
+    public void WithoutArtist_IsFastOnALongTitleFullOfSeparators(string repeated)
+    {
+        var title = string.Concat(Enumerable.Repeat(repeated, 100_000)) + "end";
+        var clock = Stopwatch.StartNew();
+
+        Assert.Equal(title, TitleNormalizer.WithoutArtist(title, null, ["Someone"]));
+        Assert.Equal(title, TitleNormalizer.WithoutArtist(title, null, []));
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), clock.Elapsed.ToString());
     }
 
     [Fact]

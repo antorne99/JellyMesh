@@ -171,6 +171,15 @@ public class PlaybackVersionTests
         _user.Permissions.Add(new Permission(PermissionKind.IsAdministrator, true));
     }
 
+    // The registry no longer knows the stubs, as after the folder was changed or removed.
+    private void Forgotten(string folder)
+    {
+        _stubs.Setup(stubs => stubs.Find(It.IsAny<string>())).Returns((StubEntry?)null);
+        _stubs.Setup(stubs => stubs.FindGroup(It.IsAny<string>())).Returns((VersionGroup?)null);
+        _stubs.Setup(stubs => stubs.FindGroupOfLocal(It.IsAny<Guid>())).Returns((VersionGroup?)null);
+        _store.Configuration.FederatedFolderPath = folder;
+    }
+
     private PlaybackInfoFilter Filter()
     {
         var lookup = new StubLookup(_library.Object, _stubs.Object, _store);
@@ -244,6 +253,40 @@ public class PlaybackVersionTests
         Assert.Equal(N(_localItem), source.Id);
         Assert.Null(source.Path);
         Assert.Equal(_localItem, _fixture.Sessions.LocalItemOf("local-session"));
+    }
+
+    // Row 527: the answer for a local title never lists a linked stub the registry lacks, whatever the folder is now.
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("", true)]
+    [InlineData("/nuova", false)]
+    [InlineData("/nuova", true)]
+    [InlineData("/federata", false)]
+    public async Task An_unknown_stub_linked_as_a_version_is_not_in_the_answer_of_a_local_title(string folder, bool named)
+    {
+        Forgotten(folder);
+        var context = named ? Context(_localItem, ("mediaSourceId", N(_localItem))) : Context(_localItem);
+
+        var (passed, response) = await RunAsync(context, StockSource(_aItem), StockSource(_localItem), StockSource(_bItem));
+
+        Assert.True(passed);
+        Assert.Equal(N(_localItem), Assert.Single(response!.MediaSources).Id);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    // The other way round: a local copy the user does not see is not in the answer of an unknown stub linked with it.
+    [Theory]
+    [InlineData("")]
+    [InlineData("/nuova")]
+    public async Task A_hidden_local_copy_is_not_in_the_answer_of_an_unknown_stub(string folder)
+    {
+        Forgotten(folder);
+        Hidden(_localItem);
+
+        var (passed, response) = await RunAsync(Context(_aItem), StockSource(_localItem), StockSource(_aItem));
+
+        Assert.True(passed);
+        Assert.Equal(N(_aItem), Assert.Single(response!.MediaSources).Id);
     }
 
     // The store filter answers 503: neither a remote nor stock plays a stub on settings it cannot read.

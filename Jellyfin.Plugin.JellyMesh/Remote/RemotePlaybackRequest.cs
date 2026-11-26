@@ -53,4 +53,7 @@ public sealed record RemotePlaybackRequest
     /// Gets the play session on a JellyMesh remote that this request replaces, so that its slot passes to the new one.
     /// </summary>
     public string? ReplacesPlaySessionId { get; init; }
+
+    /// <summary>Gets the hash of the device a track plays on, for a JellyMesh remote only.</summary>
+    public string? Device { get; init; }
 }

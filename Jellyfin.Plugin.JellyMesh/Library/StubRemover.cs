@@ -15,7 +15,13 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public sealed class StubRemover
 {
+    // A type folder is {server}/{remote library}/{type}.
+    private const int TypeFolderDepth = 3;
+
     private static readonly DeleteOptions _keepFiles = new() { DeleteFileLocation = false };
+
+    // The lyric files Jellyfin saves next to a track, in the formats it reads.
+    private static readonly string[] _lyricExtensions = [".lrc", ".elrc", ".txt"];
 
     private readonly ILibraryManager _library;
 
@@ -76,8 +82,9 @@ public sealed class StubRemover
         var remaining = state.Stubs.Where(entry => !gone.Contains(entry.Id)).ToList();
         var usedFolders = remaining.Select(entry => Path.GetDirectoryName(entry.RelativePath)!).ToHashSet(StringComparer.Ordinal);
         var usedSeries = remaining.Select(entry => entry.SeriesStubId).OfType<string>().ToHashSet(StringComparer.Ordinal);
-        var episodes = stubs.Where(stub => stub.Kind != StubKind.Movie && gone.Contains(stub.Id)).ToList();
+        var episodes = stubs.Where(stub => stub.Kind == StubKind.Episode && gone.Contains(stub.Id)).ToList();
         var kept = new HashSet<string>(StringComparer.Ordinal);
+        RemoveAudioFolders(root, remaining, stubs.Where(stub => stub.Kind is StubKind.Track or StubKind.AudioBook && gone.Contains(stub.Id)).ToList(), kept, failures);
 
         foreach (var season in episodes.GroupBy(stub => Path.GetDirectoryName(stub.RelativePath)!, StringComparer.Ordinal))
         {
@@ -104,6 +111,12 @@ public sealed class StubRemover
             {
                 kept.UnionWith(series.Select(stub => stub.Id));
             }
+        }
+
+        // A folder left empty stays on a failure: its stub is gone either way.
+        foreach (var folder in stubs.Where(stub => stub.Kind is StubKind.HomeVideo or StubKind.Photo && gone.Contains(stub.Id)).Select(stub => Path.GetDirectoryName(stub.RelativePath)!).Distinct(StringComparer.Ordinal))
+        {
+            Try(failures, () => DeleteEmptyFolders(root, folder));
         }
 
         var next = state with
@@ -183,6 +196,39 @@ public sealed class StubRemover
         return new StubRemoval(state, removed, failures);
     }
 
+    // Removes the album and artist folders the removed tracks leave without a stub, deepest first, up to the music folder.
+    private void RemoveAudioFolders(string root, List<StubEntry> remaining, List<StubEntry> tracks, HashSet<string> kept, List<Exception> failures)
+    {
+        // Ignoring case: on such a disk "Artist" and "artist" are one folder.
+        var holding = remaining.SelectMany(entry => FoldersAbove(entry.RelativePath, string.Empty)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var folders = tracks.SelectMany(FoldersBelowTypeFolderOf).Distinct(StringComparer.Ordinal).OrderByDescending(folder => folder.Length);
+        foreach (var folder in folders)
+        {
+            if (holding.Contains(folder) || Try(failures, () => DeleteFolderAndRow(root, folder)))
+            {
+                continue;
+            }
+
+            kept.UnionWith(tracks.Where(track => track.RelativePath.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)).Select(track => track.Id));
+            holding.UnionWith(FoldersAbove(folder, string.Empty));
+        }
+    }
+
+    // The folders of a track or audiobook part below the type folder of its remote library.
+    private static IEnumerable<string> FoldersBelowTypeFolderOf(StubEntry track) =>
+        track.ServerId is { } server && FederatedPaths.RemoteLibraryOf(track.RelativePath) is { } library
+            ? FoldersAbove(track.RelativePath, FederatedPaths.TypeFolderOf(server, library, TypeFolder.Of(track.Kind)))
+            : [];
+
+    // The folders holding a path, deepest first, down to the given one, which is left out; every folder for an empty one.
+    private static IEnumerable<string> FoldersAbove(string path, string top)
+    {
+        for (var folder = Path.GetDirectoryName(path); !string.IsNullOrEmpty(folder) && (top.Length == 0 || folder.StartsWith(top + Path.DirectorySeparatorChar, StringComparison.Ordinal)); folder = Path.GetDirectoryName(folder))
+        {
+            yield return folder;
+        }
+    }
+
     private static bool Try(List<Exception> failures, Action action)
     {
         try
@@ -201,9 +247,27 @@ public sealed class StubRemover
     {
         var strm = FederatedPaths.Resolve(root, stub.RelativePath);
         DeleteRow(strm, false);
-        if (stub.Kind == StubKind.Movie)
+        if (stub.Kind is StubKind.Movie or StubKind.MusicVideo or StubKind.Book)
         {
             DeleteFolder(root, Path.GetDirectoryName(stub.RelativePath)!);
+        }
+        else if (stub.Kind is StubKind.Track or StubKind.AudioBook or StubKind.Photo)
+        {
+            // Track, part and photo names are the remote's, so files sharing the stem, the album cover included, are not theirs.
+            // Only the lyrics Jellyfin saves next to a track or a part are, the cover of a part and the thumbnail of a photo.
+            File.Delete(strm);
+            if (stub.Kind is StubKind.Track or StubKind.AudioBook)
+            {
+                foreach (var extension in stub.Kind == StubKind.AudioBook ? _lyricExtensions.Concat(LibraryMaterializer.ImageExtensions) : _lyricExtensions)
+                {
+                    File.Delete(Path.ChangeExtension(strm, extension));
+                }
+            }
+
+            if (stub.Kind == StubKind.Photo && PhotoThumbnails.PathOf(root, stub.Id) is { } thumbnail && File.Exists(thumbnail))
+            {
+                File.Delete(thumbnail);
+            }
         }
         else
         {
@@ -229,12 +293,51 @@ public sealed class StubRemover
         foreach (var file in Directory.EnumerateFiles(folder))
         {
             var name = Path.GetFileName(file);
-            if (name.StartsWith(stem + ".", StringComparison.Ordinal) || name.StartsWith(stem + "-thumb.", StringComparison.Ordinal))
+            if (HasExtensionOnly(name, stem + ".") || IsThumbnailOf(name, stem))
             {
                 File.Delete(file);
             }
         }
     }
+
+    // Whether a file name is the prefix and one extension, so that removing "clip" leaves "clip.final.strm".
+    private static bool HasExtensionOnly(string name, string prefix)
+        => name.StartsWith(prefix, StringComparison.Ordinal) && !name.AsSpan(prefix.Length).Contains('.');
+
+    // Whether a file is the thumbnail of a stem, and not the .strm or .nfo of a stub named like one.
+    private static bool IsThumbnailOf(string name, string stem)
+        => HasExtensionOnly(name, stem + "-thumb.")
+            && !name.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
+            && !name.EndsWith(".nfo", StringComparison.OrdinalIgnoreCase);
+
+    // Deletes a home video or photo folder and the parents it leaves empty but for an album cover, with their rows, up to
+    // the type folder, which stays.
+    private void DeleteEmptyFolders(string root, string relative)
+    {
+        while (relative.Split(Path.DirectorySeparatorChar).Length > TypeFolderDepth)
+        {
+            var folder = FederatedPaths.Resolve(root, relative);
+            if (!Directory.Exists(folder) || Directory.EnumerateFileSystemEntries(folder).Any(entry => !IsAlbumCover(entry)))
+            {
+                return;
+            }
+
+            foreach (var cover in Directory.EnumerateFiles(folder).ToList())
+            {
+                File.Delete(cover);
+            }
+
+            DeleteRow(folder, true);
+            Directory.Delete(folder);
+            relative = Path.GetDirectoryName(relative)!;
+        }
+    }
+
+    // Whether an entry is the folder.* cover written for the album of the photos in its folder.
+    private static bool IsAlbumCover(string entry)
+        => File.Exists(entry)
+            && string.Equals(Path.GetFileNameWithoutExtension(entry), "folder", StringComparison.Ordinal)
+            && LibraryMaterializer.ImageExtensions.Contains(Path.GetExtension(entry), StringComparer.Ordinal);
 
     private static void DeleteFolder(string root, string relative)
     {

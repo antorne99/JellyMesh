@@ -83,6 +83,42 @@ public class PlaySessionOwnersTests
     }
 
     [Fact]
+    public void A_session_keeps_to_the_item_it_was_recorded_with()
+    {
+        var item = Guid.NewGuid();
+        _owners.Add(_owner, "mine", item);
+
+        Assert.True(_owners.KeepsTo(_owner, "mine", item));
+        Assert.True(_owners.KeepsTo(_owner, "MINE", item));
+        Assert.False(_owners.KeepsTo(_other, "mine", item));
+        Assert.False(_owners.KeepsTo(_owner, "unknown", item));
+        Assert.True(_owners.KeepsTo(_owner, "mine", item));
+    }
+
+    [Fact]
+    public void A_session_that_played_another_item_never_keeps_to_its_own_again()
+    {
+        var (item, another) = (Guid.NewGuid(), Guid.NewGuid());
+        _owners.Add(_owner, "mine", item);
+
+        Assert.False(_owners.KeepsTo(_owner, "MINE", another));
+        Assert.False(_owners.KeepsTo(_owner, "mine", item));
+        Assert.False(_owners.KeepsTo(_owner, "mine", another));
+        Assert.True(_owners.Owns(_owner, "mine"));
+    }
+
+    [Fact]
+    public void A_session_recorded_with_no_item_keeps_to_none()
+    {
+        _owners.Add(_owner, "bare");
+        _owners.Add(_owner, "empty", Guid.Empty);
+
+        Assert.False(_owners.KeepsTo(_owner, "bare", Guid.NewGuid()));
+        Assert.False(_owners.KeepsTo(_owner, "bare", Guid.Empty));
+        Assert.False(_owners.KeepsTo(_owner, "empty", Guid.Empty));
+    }
+
+    [Fact]
     public void A_session_belongs_to_another_only_for_someone_else()
     {
         _owners.Add(_owner, "mine");

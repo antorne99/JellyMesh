@@ -49,6 +49,36 @@ public static class NfoDocument
     });
 
     /// <summary>
+    /// Writes the document of a music video, read from its own name and never from <c>movie.nfo</c>.
+    /// </summary>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>The XML.</returns>
+    public static string MusicVideo(StubMetadata metadata) => Write("musicvideo", metadata, static (writer, value) =>
+    {
+        WriteEach(writer, "artist", value.Artists);
+        WriteOptional(writer, "album", value.Album);
+        WriteOptional(writer, "premiered", FormatDate(value.PremiereDate));
+        if (value.IsProtected)
+        {
+            writer.WriteElementString("lockdata", "true");
+        }
+    });
+
+    /// <summary>
+    /// Writes the document of a home video, which Jellyfin reads with its film parser.
+    /// </summary>
+    /// <param name="metadata">The metadata.</param>
+    /// <returns>The XML.</returns>
+    public static string HomeVideo(StubMetadata metadata) => Write("movie", metadata, static (writer, value) =>
+    {
+        WriteOptional(writer, "premiered", FormatDate(value.PremiereDate));
+        if (value.IsProtected)
+        {
+            writer.WriteElementString("lockdata", "true");
+        }
+    });
+
+    /// <summary>
     /// Writes the document of an episode. Without protection it has no numbers: they come from the file name, and the
     /// provider restores them after "replace all metadata". A stub of several episodes says where it ends: on 12.4
     /// <c>episodenumberend</c> sets <c>IndexNumberEnd</c> even when the file name has a single number, as an old stub's does.

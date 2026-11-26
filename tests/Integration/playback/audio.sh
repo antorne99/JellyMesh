@@ -4,7 +4,7 @@ source "$(dirname "$0")/lib.sh"
 G=$S/run
 echo "### audio change timeline"
 : > "$G/gatelog-standard"
-MAXBIT=300000 WATCH=45 bash "$S/web.sh" "JM Audio e Sottotitoli" audio 14 "$1" 2>&1 | grep -E 'MENU|PICK|REQ POST .*PlaybackInfo|REQ DELETE|AFTER' | sed -E "s/'src': '[^']*', //; s#http://host.docker.internal:18320##g" | cut -c1-120
+MAXBIT=300000 WATCH=45 bash "$S/web.sh" "JM Audio e Sottotitoli" audio 14 "$1" 2>&1 | grep -E 'MENU|PICK|REQ POST .*PlaybackInfo|REQ DELETE|AFTER' | sed -E "s/'src': '[^']*', //; s#http://host.docker.internal:$PORT##g" | cut -c1-120
 python3 - "$G/gatelog-standard" <<'PY'
 import re, sys
 seen = {}
