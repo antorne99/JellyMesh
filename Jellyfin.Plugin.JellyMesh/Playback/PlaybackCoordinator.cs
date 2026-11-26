@@ -158,7 +158,7 @@ public sealed class PlaybackCoordinator
             if (attempt.Response is not null)
             {
                 Remember(version, source);
-                await ClosePreviousAsync(previous).ConfigureAwait(false);
+                await ReplaceAsync(previous, source, attempt.Response.PlaySessionId).ConfigureAwait(false);
                 await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
                 await RecordServedAsync(version, source).ConfigureAwait(false);
                 _logger.LogInformation(
@@ -592,6 +592,19 @@ public sealed class PlaybackCoordinator
         }));
     }
 
+    /// <summary>
+    /// Closes each replaced session whose client moved to the session that replaced it, or whose replacement ended.
+    /// </summary>
+    /// <returns>A task.</returns>
+    public Task CloseReplacedAsync()
+    {
+        return Task.WhenAll(_sessions.All.Where(IsLeftBehind).Select(session =>
+        {
+            _logger.LogDebug("The client of play session {PlaySessionId} moved to the session that replaced it: it is closed", session.Id);
+            return CloseAsync(session.Id);
+        }));
+    }
+
     // The request itself, then one request per other version the user sees, in their order.
     private static IEnumerable<PlaybackOpenRequest> VersionsOf(PlaybackOpenRequest request)
     {
@@ -718,6 +731,31 @@ public sealed class PlaybackCoordinator
         }
 
         return chosen;
+    }
+
+    // Keeps the old session serving until its client moves to the new one, as stock does. A failed session, or one whose
+    // slot a JellyMesh remote took over, closes now.
+    private async Task ReplaceAsync(PlaybackSession? previous, StubSource source, string? replacementId)
+    {
+        if (previous is null)
+        {
+            return;
+        }
+
+        if (replacementId is null || previous.HasFailed || (previous.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId)))
+        {
+            await CloseAsync(previous.Id).ConfigureAwait(false);
+            return;
+        }
+
+        previous.MarkReplaced(replacementId);
+        _logger.LogDebug("Play session {PlaySessionId} is replaced by {Replacement} and serves until its client moves", previous.Id, replacementId);
+    }
+
+    // A replaced session not in use whose replacement got a request or ended.
+    private bool IsLeftBehind(PlaybackSession session)
+    {
+        return session.ReplacedBy is { } replacementId && !session.IsActive && (_sessions.Find(replacementId) is not { } replacement || replacement.WasRequested);
     }
 
     private async Task ClosePreviousAsync(PlaybackSession? previous)

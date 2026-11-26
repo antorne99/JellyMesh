@@ -86,6 +86,9 @@ public class PlaybackFallbackTests
         var first = Assert.Single(_fixture.Sessions.All);
 
         await OpenAsync(_a, _user, _b);
+        Assert.Empty(_fixture.Client.Stopped);
+        _fixture.Sessions.All.Single(session => session.ReplacedBy is null).BeginRequest(_fixture.Clock).Dispose();
+        await _fixture.Coordinator.CloseReplacedAsync();
 
         Assert.NotEqual(first.Id, Assert.Single(_fixture.Sessions.All).Id);
         Assert.Equal(first.RemotePlaySessionId, Assert.Single(_fixture.Client.Stopped));
@@ -112,7 +115,7 @@ public class PlaybackFallbackTests
         var request = Assert.Single(_fixture.Client.Requests);
         Assert.Equal("a1", request.ItemId);
         Assert.Equal(3, request.AudioStreamIndex);
-        Assert.DoesNotContain(old, _fixture.Sessions.All);
+        Assert.NotNull(old.ReplacedBy);
     }
 
     [Fact]

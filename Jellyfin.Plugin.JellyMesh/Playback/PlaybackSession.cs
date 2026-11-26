@@ -38,6 +38,8 @@ public sealed partial class PlaybackSession
     private int _abandoned;
     private int _failed;
     private int _closedAfterFailure;
+    private int _requested;
+    private string? _replacedBy;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSession"/> class.
@@ -95,6 +97,12 @@ public sealed partial class PlaybackSession
     /// </summary>
     public bool HasFailed => Volatile.Read(ref _failed) == 1;
 
+    /// <summary>Gets a value indicating whether a client request ever reached this session.</summary>
+    public bool WasRequested => Volatile.Read(ref _requested) == 1;
+
+    /// <summary>Gets the session that replaced this one for the same stream, null while none did.</summary>
+    public string? ReplacedBy => Volatile.Read(ref _replacedBy);
+
     /// <summary>
     /// Finds the folder of the master playlist or stream on the remote.
     /// </summary>
@@ -116,6 +124,7 @@ public sealed partial class PlaybackSession
 
         Interlocked.Exchange(ref _lastRequestTicks, clock.GetUtcNow().UtcTicks);
         Interlocked.Exchange(ref _parked, 0);
+        Interlocked.Exchange(ref _requested, 1);
         Interlocked.Increment(ref _activeRequests);
         return new RequestScope(this, clock, CancellationToken.None);
     }
@@ -139,6 +148,7 @@ public sealed partial class PlaybackSession
 
         Interlocked.Exchange(ref _lastRequestTicks, clock.GetUtcNow().UtcTicks);
         Interlocked.Exchange(ref _parked, 0);
+        Interlocked.Exchange(ref _requested, 1);
         return new RequestScope(this, clock, aborted);
     }
 
@@ -147,6 +157,13 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <returns>Whether this call parked it.</returns>
     public bool TryPark() => Interlocked.Exchange(ref _parked, 1) == 0;
+
+    /// <summary>
+    /// Marks this session as replaced by a new <c>PlaybackInfo</c> of the same stream. It keeps serving until its client
+    /// moves.
+    /// </summary>
+    /// <param name="replacementId">The session that replaced it.</param>
+    public void MarkReplaced(string replacementId) => Volatile.Write(ref _replacedBy, replacementId);
 
     /// <summary>
     /// Marks the source of this session as stopped, once: the retries of a player count as one failure.

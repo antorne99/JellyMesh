@@ -175,14 +175,14 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
-    /// Finds the session the same client has on the same title. A new <c>PlaybackInfo</c> replaces it: that is how a
-    /// client changes the audio track, and the old transcode keeps running until it is closed.
+    /// Finds the session the same client has on the same title, leaving out those already replaced. A new
+    /// <c>PlaybackInfo</c> replaces it: that is how a client changes the audio track.
     /// </summary>
     /// <param name="identity">Who plays what.</param>
     /// <returns>The session, null if there is none.</returns>
     public PlaybackSession? FindSameStream(PlaybackIdentity identity)
     {
-        return _sessions.Values.FirstOrDefault(session => session.Identity == identity);
+        return _sessions.Values.FirstOrDefault(session => session.Identity == identity && session.ReplacedBy is null);
     }
 
     /// <summary>

@@ -206,6 +206,19 @@ public class PlaybackProxyTests
     }
 
     [Fact]
+    public async Task A_session_replaced_by_a_new_playback_still_relays_its_playlist()
+    {
+        var first = Session(PlaybackStreamKind.Hls);
+        var request = new PlaybackOpenRequest { Identity = first.Identity, Stub = PlaybackValues.Stub(first.Source), LocalToken = PlaybackValues.LocalToken, AudioStreamIndex = 3 };
+        var outcome = await _fixture.Coordinator.OpenAsync(request, CancellationToken.None);
+
+        var result = await _controller.GetMaster(first.Id, CancellationToken.None);
+
+        Assert.NotEqual(first.Id, outcome.Response!.PlaySessionId);
+        Assert.Contains("#EXTM3U", Assert.IsType<ContentResult>(result).Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task After_a_source_fails_the_session_answers_a_bad_gateway_at_once_without_asking_the_remote()
     {
         var session = Session(PlaybackStreamKind.Hls);
