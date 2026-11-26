@@ -118,6 +118,31 @@ public class PeerPlaybackInfoVersionTests
 
     private static int? StatusOf(IActionResult? result) => (result as StatusCodeResult)?.StatusCode;
 
+    // Runs a PlaybackInfo of the item and returns the arguments the stock action would read, as they were when it ran.
+    private async Task<Dictionary<string, object?>> ArgumentsSeenAsync(Guid item, object? body, Dictionary<string, object?>? query = null)
+    {
+        var arguments = new Dictionary<string, object?>(query ?? []) { ["itemId"] = item, ["playbackInfoDto"] = body };
+        var actionContext = new ActionContext(new DefaultHttpContext(), new RouteData(), ProviderFixture.Stock("MediaInfo", "GetPostedPlaybackInfo"));
+        var context = new ActionExecutingContext(actionContext, new List<IFilterMetadata>(), arguments, new object());
+        Dictionary<string, object?>? seen = null;
+        await _filter.OnActionExecutionAsync(context, () =>
+        {
+            seen = new Dictionary<string, object?>(context.ActionArguments);
+            return Task.FromResult(new ActionExecutedContext(actionContext, new List<IFilterMetadata>(), new object()) { Result = Answer(Source(item)) });
+        });
+        return seen ?? throw new InvalidOperationException("the action did not run");
+    }
+
+    private static MediaSourceInfo Direct(MediaSourceInfo source)
+    {
+        source.SupportsDirectPlay = true;
+        source.SupportsDirectStream = true;
+        return source;
+    }
+
+    private static (bool? Play, bool? Stream) DirectOf(Dictionary<string, object?> arguments)
+        => (arguments.GetValueOrDefault("enableDirectPlay") as bool?, arguments.GetValueOrDefault("enableDirectStream") as bool?);
+
     // The posted body as stock binds it.
     private sealed class PostedBody
     {
@@ -274,6 +299,116 @@ public class PeerPlaybackInfoVersionTests
         Assert.Equal(StatusCodes.Status404NotFound, StatusOf(result));
         Assert.Equal(0, _fixture.Slots.Count(_fixture.Peer.Id));
         Assert.False(_fixture.Slots.Owns(_fixture.Peer.Id, "play"));
+    }
+
+    // Row 570: a peer gets 404 for the direct streams of an admin's .strm, so stock must offer it only transcoded.
+    [Fact]
+    public async Task A_peer_playback_of_the_strm_of_the_admin_turns_direct_play_and_stream_off()
+    {
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var seen = await ArgumentsSeenAsync(_strm, new PostedBody());
+
+        Assert.Equal((false, false), DirectOf(seen));
+    }
+
+    [Fact]
+    public async Task A_peer_cannot_turn_direct_play_back_on_for_the_strm_of_the_admin()
+    {
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.STRM" }, ProviderFixture.SharedLibrary);
+
+        var seen = await ArgumentsSeenAsync(_strm, new PostedBody(), new() { ["enableDirectPlay"] = true, ["enableDirectStream"] = true });
+
+        Assert.Equal((false, false), DirectOf(seen));
+    }
+
+    [Fact]
+    public async Task A_version_named_in_the_body_that_is_the_strm_of_the_admin_plays_transcoded()
+    {
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var seen = await ArgumentsSeenAsync(ProviderFixture.SharedItem, new PostedBody { MediaSourceId = _strm.ToString("N") });
+
+        Assert.Equal((false, false), DirectOf(seen));
+    }
+
+    [Fact]
+    public async Task A_version_named_in_the_query_that_is_the_strm_of_the_admin_plays_transcoded()
+    {
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var seen = await ArgumentsSeenAsync(ProviderFixture.SharedItem, new PostedBody(), new() { ["mediaSourceId"] = _strm.ToString("N") });
+
+        Assert.Equal((false, false), DirectOf(seen));
+    }
+
+    [Fact]
+    public async Task A_version_in_the_query_that_is_not_an_id_plays_transcoded()
+    {
+        var seen = await ArgumentsSeenAsync(ProviderFixture.SharedItem, new PostedBody(), new() { ["mediaSourceId"] = "not-an-id", ["enableDirectPlay"] = true });
+
+        Assert.Equal((false, false), DirectOf(seen));
+    }
+
+    // Stock reads the version of the query over the body's, so the file the query names is what plays.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_file_version_of_an_item_that_is_a_strm_keeps_its_direct_play(bool inQuery)
+    {
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+        var file = ProviderFixture.SharedItem.ToString("N");
+        var query = new Dictionary<string, object?> { ["enableDirectPlay"] = true };
+        if (inQuery)
+        {
+            query["mediaSourceId"] = file;
+        }
+
+        var seen = await ArgumentsSeenAsync(_strm, new PostedBody { MediaSourceId = inQuery ? _strm.ToString("N") : file }, query);
+
+        Assert.Equal((true, null), DirectOf(seen));
+    }
+
+    [Fact]
+    public async Task A_file_of_this_server_keeps_the_direct_play_the_peer_asks_for()
+    {
+        var seen = await ArgumentsSeenAsync(ProviderFixture.SharedItem, new PostedBody(), new() { ["enableDirectPlay"] = true, ["enableDirectStream"] = true });
+
+        Assert.Equal((true, true), DirectOf(seen));
+    }
+
+    // The answer itself never offers a peer the direct play of an admin's .strm: a read without the arguments (GET) or a
+    // version stock gave beside the one asked for.
+    [Theory]
+    [InlineData("GetPostedPlaybackInfo")]
+    [InlineData("GetPlaybackInfo")]
+    public async Task The_answer_offers_no_direct_play_of_the_strm_of_the_admin_and_keeps_that_of_a_file(string action)
+    {
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+        var answer = Answer(Direct(Source(ProviderFixture.SharedItem)), Direct(Source(_strm)));
+
+        await RunAsync(answer, new PostedBody(), action);
+
+        var sources = ((PlaybackInfoResponse)answer.Value!).MediaSources;
+        Assert.True(sources[0].SupportsDirectPlay);
+        Assert.True(sources[0].SupportsDirectStream);
+        Assert.False(sources[1].SupportsDirectPlay);
+        Assert.False(sources[1].SupportsDirectStream);
+    }
+
+    [Fact]
+    public async Task Anyone_who_is_not_a_peer_plays_the_strm_of_the_admin_as_before()
+    {
+        _fixture.Caller = new User("mario", "auth", "reset");
+        _fixture.AddItem(_strm, new Movie { Path = "/media/film/remote.strm" }, ProviderFixture.SharedLibrary);
+
+        var seen = await ArgumentsSeenAsync(_strm, new PostedBody(), new() { ["enableDirectPlay"] = true });
+        var answer = Answer(Direct(Source(_strm)));
+        await RunAsync(answer, new PostedBody());
+
+        Assert.Equal((true, null), DirectOf(seen));
+        Assert.True(((PlaybackInfoResponse)answer.Value!).MediaSources[0].SupportsDirectPlay);
+        Assert.True(((PlaybackInfoResponse)answer.Value!).MediaSources[0].SupportsDirectStream);
     }
 
     [Fact]

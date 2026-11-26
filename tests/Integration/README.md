@@ -288,6 +288,7 @@ bash provider/boundaries.sh       # what a peer can reach, no cycles, shared lib
 bash provider/feed.sh             # the change feed, and polling on a stock remote
 bash provider/limits.sh           # the stream limit, about 15 minutes because it waits for real timeouts
 bash provider/network.sh          # a slow and an offline provider, after limits.sh
+STOCK=own bash provider/admin-strm.sh  # an admin's .strm plays on a direct-capable client of b, only transcoded (row 570)
 bash provider/leaks.sh            # no remote token in a client answer or a log, no remote address in a client answer
 bash provider/down.sh             # removes containers and volumes, and the recorded tokens
 ```
