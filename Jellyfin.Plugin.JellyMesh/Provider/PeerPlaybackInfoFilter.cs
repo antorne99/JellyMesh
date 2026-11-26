@@ -22,6 +22,9 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
     private const string BodyArgument = "playbackInfoDto";
     private const string LiveStreamProperty = "LiveStreamId";
     private const string VersionProperty = "MediaSourceId";
+    private const string VersionArgument = "mediaSourceId";
+    private const string DirectPlayArgument = "enableDirectPlay";
+    private const string DirectStreamArgument = "enableDirectStream";
     private const string PostedAction = "GetPostedPlaybackInfo";
 
     private readonly PeerDirectory _peers;
@@ -71,6 +74,13 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
+        }
+
+        // A peer gets 404 for the direct streams of an admin's .strm, so stock offers it only transcoded (row 570).
+        if (ReadsStrm(context, caller, itemId, version))
+        {
+            context.ActionArguments[DirectPlayArgument] = false;
+            context.ActionArguments[DirectStreamArgument] = false;
         }
 
         var peerId = caller.Grant.UserId;
@@ -137,8 +147,24 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 
         foreach (var source in response.MediaSources)
         {
+            if (Guid.TryParse(source.Id, out var id) && _catalog.IsStrmFile(caller, id))
+            {
+                source.SupportsDirectPlay = false;
+                source.SupportsDirectStream = false;
+            }
+
             _catalog.ClearUrlFields(caller, source);
         }
+    }
+
+    // Tells whether stock answers with an admin's .strm: the version named, the query over the body, else the item.
+    // A version that is not an id cannot be checked, so it counts as one.
+    private bool ReadsStrm(ActionExecutingContext context, PeerCaller caller, Guid itemId, string? bodyVersion)
+    {
+        var named = context.ActionArguments.TryGetValue(VersionArgument, out var query) && query?.ToString() is { Length: > 0 } text ? text : bodyVersion;
+        return string.IsNullOrEmpty(named)
+            ? _catalog.IsStrmFile(caller, itemId)
+            : !Guid.TryParse(named, out var id) || _catalog.IsStrmFile(caller, id);
     }
 
     // Stock takes the live stream from the query, else from the posted body.
