@@ -152,57 +152,56 @@ public sealed class PlaybackCoordinator
         var refused = 0;
         var tried = 0;
         var slotTaken = false;
-        foreach (var (version, source) in Chain(versions, previous))
+        try
         {
-            tried++;
-            slotTaken |= ReplacesOf(previous, source) is not null;
-            Attempt attempt;
-            try
+            foreach (var (version, source) in Chain(versions, previous))
             {
-                attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception) when (slotTaken)
-            {
-                // The remote may have freed the slot of the previous session already, and nothing else would close it.
-                await ClosePreviousAsync(previous).ConfigureAwait(false);
-                throw;
+                tried++;
+                slotTaken |= ReplacesOf(previous, source) is not null;
+                var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
+
+                if (attempt.Response is not null)
+                {
+                    Remember(version, source);
+                    await ReplaceAsync(previous, attempt.Response.PlaySessionId, slotTaken).ConfigureAwait(false);
+                    await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
+                    await RecordServedAsync(version, source).ConfigureAwait(false);
+                    _logger.LogInformation(
+                        "Title {StubId} plays from server {ServerId} as {Kind}, play session {PlaySessionId}, after {Tried} source(s)",
+                        version.Stub.Id,
+                        source.ServerId,
+                        _sessions.Find(attempt.Response.PlaySessionId)?.Kind,
+                        attempt.Response.PlaySessionId,
+                        tried);
+                    return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
+                }
+
+                _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
+                if (attempt.Reachable)
+                {
+                    reachable.Add((version, source));
+                }
+
+                refused += attempt.AtLimit ? 1 : 0;
             }
 
-            if (attempt.Response is not null)
+            foreach (var (version, source) in reachable)
             {
-                Remember(version, source);
-                await ReplaceAsync(previous, attempt.Response.PlaySessionId, slotTaken).ConfigureAwait(false);
-                await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
-                await RecordServedAsync(version, source).ConfigureAwait(false);
-                _logger.LogInformation(
-                    "Title {StubId} plays from server {ServerId} as {Kind}, play session {PlaySessionId}, after {Tried} source(s)",
-                    version.Stub.Id,
-                    source.ServerId,
-                    _sessions.Find(attempt.Response.PlaySessionId)?.Kind,
-                    attempt.Response.PlaySessionId,
-                    tried);
-                return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
+                if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
+                {
+                    Remember(version, source);
+                    await ClosePreviousAsync(previous).ConfigureAwait(false);
+                    await RecordServedAsync(version, source).ConfigureAwait(false);
+                    _logger.LogInformation("Title {StubId} plays from a local transcode of the file of server {ServerId}", version.Stub.Id, source.ServerId);
+                    return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true, Served: version.Identity);
+                }
             }
-
-            _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
-            if (attempt.Reachable)
-            {
-                reachable.Add((version, source));
-            }
-
-            refused += attempt.AtLimit ? 1 : 0;
         }
-
-        foreach (var (version, source) in reachable)
+        catch (Exception) when (slotTaken)
         {
-            if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
-            {
-                Remember(version, source);
-                await ClosePreviousAsync(previous).ConfigureAwait(false);
-                await RecordServedAsync(version, source).ConfigureAwait(false);
-                _logger.LogInformation("Title {StubId} plays from a local transcode of the file of server {ServerId}", version.Stub.Id, source.ServerId);
-                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true, Served: version.Identity);
-            }
+            // The remote may have freed the slot of the previous session already, and nothing else would close it.
+            await ClosePreviousAsync(previous).ConfigureAwait(false);
+            throw;
         }
 
         await ClosePreviousAsync(previous).ConfigureAwait(false);

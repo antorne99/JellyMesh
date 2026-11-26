@@ -952,6 +952,31 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
+    public async Task A_client_that_leaves_during_the_local_fallback_after_the_slot_was_freed_has_the_old_session_closed()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source("a");
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        var stub = PlaybackValues.Stub(source);
+        await fixture.OpenAsync(stub);
+        var old = Assert.Single(fixture.Sessions.All);
+        using var leaving = new CancellationTokenSource();
+        fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+        fixture.Client.Open = async (_, _) =>
+        {
+            await leaving.CancelAsync();
+            throw new OperationCanceledException(leaving.Token);
+        };
+        var request = new PlaybackOpenRequest { Identity = PlaybackValues.Identity(), Stub = stub, LocalToken = PlaybackValues.LocalToken, AudioStreamIndex = 3 };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Coordinator.OpenAsync(request, leaving.Token));
+
+        Assert.Equal(old.RemotePlaySessionId, fixture.Client.Requests[^1].ReplacesPlaySessionId);
+        Assert.Null(fixture.Sessions.Find(old.Id));
+        Assert.Contains(old.RemotePlaySessionId, fixture.Client.Stopped);
+    }
+
+    [Fact]
     public async Task A_closed_session_refuses_a_request_of_whoever_still_holds_it()
     {
         var fixture = new CoordinatorFixture();
