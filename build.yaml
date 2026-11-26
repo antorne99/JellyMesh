@@ -6,16 +6,17 @@ targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Federates multiple Jellyfin servers into one library"
 description: >
-  JellyMesh shows films and series from other Jellyfin servers in your
-  libraries and streams them through the local server. Each library you
-  import from a server gets its own folder, and JellyMesh makes a library per
-  type or per remote library for it, or leaves the folders for you to add. A
-  title shows once, with the copies of every server as versions: a local copy
-  starts first, otherwise the best quality does. Remote servers can be stock
-  Jellyfin or run JellyMesh, which adds shared libraries, stream limits and a
-  change feed between servers you trust. An admin can merge films and series
-  that can't be matched safely. Settings and state live in one database with
-  a nightly copy.
+  JellyMesh shows films, series, music, music videos, home videos, photos and
+  books from other Jellyfin servers in your libraries and streams them through
+  the local server. Each library you import from a server gets its own folder,
+  and JellyMesh makes a library per type or per remote library for it, or
+  leaves the folders for you to add. A film, series or music video shows once,
+  with the copies of every server as versions: a local copy starts first,
+  otherwise the best quality does. Remote servers can be stock Jellyfin or run
+  JellyMesh, which adds shared libraries, stream limits and a change feed
+  between servers you trust. An admin can merge films, series and music videos
+  that can't be matched safely. Settings and state live in one database with a
+  nightly copy.
 category: "General"
 owner: "antorne99"
 image: "assets/jellymesh.png"
