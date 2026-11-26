@@ -15,6 +15,20 @@ public class PlaybackSessionStoreTests
         TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromHours(1), TimeSpan.FromHours(1));
 
     [Fact]
+    public void A_session_taken_out_of_the_store_refuses_a_request_of_whoever_still_holds_it()
+    {
+        var clock = new ManualClock();
+        var sessions = new PlaybackSessionStore(clock);
+        var session = PlaybackValues.Session(clock: clock);
+        sessions.Add(session);
+
+        sessions.Remove(session.Id);
+
+        Assert.True(session.IsClosed);
+        Assert.Null(session.TryBeginRequest(clock));
+    }
+
+    [Fact]
     public void A_local_play_session_stays_guarded_through_a_pause_longer_than_the_idle_time()
     {
         var clock = new ManualClock();

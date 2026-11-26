@@ -94,6 +94,12 @@ public enum RemoteFailure
     Busy,
 
     /// <summary>
+    /// The call was dropped here before it was sent, because what it was for ended meanwhile. Says nothing about the
+    /// remote, so it is neither recorded nor logged as a failure of the server.
+    /// </summary>
+    Withdrawn,
+
+    /// <summary>
     /// Removing a server could not be saved. The server stays, with its titles, and nothing was stopped.
     /// </summary>
     RemovalFailed,

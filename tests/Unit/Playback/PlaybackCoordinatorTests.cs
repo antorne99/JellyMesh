@@ -748,17 +748,348 @@ public class PlaybackCoordinatorTests
     }
 
     [Fact]
-    public async Task A_new_playback_of_the_same_stream_closes_the_old_one_after_the_new_one_works()
+    public async Task A_new_playback_of_the_same_stream_keeps_the_old_one_serving_until_the_client_moves()
     {
         var fixture = new CoordinatorFixture();
         var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
 
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        var second = fixture.Sessions.Find(outcome.Response!.PlaySessionId);
+        Assert.NotNull(second);
+        Assert.Same(first, fixture.Sessions.Find(first.Id));
+        Assert.Empty(fixture.Client.Stopped);
+
+        second.BeginRequest(fixture.Clock).Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Same(second, Assert.Single(fixture.Sessions.All));
+        Assert.Equal(first.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
+    public async Task The_client_stopping_the_replaced_session_closes_it_once()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+
+        await fixture.Coordinator.CloseReportedAsync(first.Id, [first.Identity.UserId]);
+        fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.BeginRequest(fixture.Clock).Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Null(fixture.Sessions.Find(first.Id));
+        Assert.Equal(first.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
+    public async Task The_end_of_the_new_session_closes_the_one_it_replaced()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+
+        await fixture.Coordinator.CloseAsync(outcome.Response!.PlaySessionId!);
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Empty(fixture.Sessions.All);
+        Assert.Contains(first.RemotePlaySessionId, fixture.Client.Stopped);
+        Assert.Equal(2, fixture.Client.Stopped.Count);
+    }
+
+    [Fact]
+    public async Task A_replaced_session_its_client_leaves_alone_has_its_transcode_closed_by_the_idle_sweep()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
         await fixture.OpenAsync(stub);
         var first = Assert.Single(fixture.Sessions.All);
         await fixture.OpenAsync(stub, audio: 3);
 
-        var second = Assert.Single(fixture.Sessions.All);
-        Assert.NotEqual(first.Id, second.Id);
+        fixture.Clock.Advance(PlaybackTimeouts.Idle);
+        await fixture.Coordinator.SweepAsync();
+
+        Assert.Contains(first.RemotePlaySessionId, fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task A_third_playback_replaces_the_newest_session_and_every_older_one_goes_once_the_client_moves()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var second = await fixture.OpenAsync(stub, audio: 3);
+        var third = await fixture.OpenAsync(stub, audio: 2);
+
+        Assert.Equal(third.Response!.PlaySessionId, fixture.Sessions.FindSameStream(first.Identity)?.Id);
+
+        fixture.Sessions.Find(third.Response.PlaySessionId)!.BeginRequest(fixture.Clock).Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Equal(third.Response.PlaySessionId, Assert.Single(fixture.Sessions.All).Id);
+        Assert.Null(fixture.Sessions.Find(second.Response!.PlaySessionId));
+        Assert.Equal(2, fixture.Client.Stopped.Count);
+    }
+
+    [Fact]
+    public async Task A_failed_session_is_closed_as_soon_as_a_new_playback_replaces_it()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        fixture.Coordinator.ReportFailure(first);
+
+        await fixture.OpenAsync(stub);
+
+        Assert.Null(fixture.Sessions.Find(first.Id));
+        Assert.Equal(first.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
+    public async Task A_jellymesh_remote_told_of_the_replacement_has_the_old_session_closed_even_when_another_server_serves()
+    {
+        var fixture = new CoordinatorFixture();
+        var first = PlaybackValues.Source("a");
+        fixture.Registry.AddJellyMesh(first.ServerId);
+        var stub = PlaybackValues.Stub(first, PlaybackValues.Source("b"));
+        await fixture.OpenAsync(stub);
+        var old = Assert.Single(fixture.Sessions.All);
+        fixture.Client.Answer = (request, _) => Task.FromResult(request.ItemId == "a"
+            ? RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.StreamLimitReached)
+            : FakePlaybackClient.Hls(request));
+        fixture.Client.Requests.Clear();
+
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+
+        Assert.Equal(old.RemotePlaySessionId, fixture.Client.Requests.First(request => request.ItemId == "a").ReplacesPlaySessionId);
+        Assert.Equal("b", fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.Source.ItemId);
+        Assert.Null(fixture.Sessions.Find(old.Id));
+        Assert.Equal(old.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
+    public async Task A_client_that_leaves_after_the_jellymesh_remote_was_told_of_the_replacement_has_the_old_session_closed()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source("a");
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        var stub = PlaybackValues.Stub(source);
+        await fixture.OpenAsync(stub);
+        var old = Assert.Single(fixture.Sessions.All);
+        using var leaving = new CancellationTokenSource();
+        fixture.Client.Answer = async (_, _) =>
+        {
+            await leaving.CancelAsync();
+            throw new OperationCanceledException(leaving.Token);
+        };
+        var request = new PlaybackOpenRequest { Identity = PlaybackValues.Identity(), Stub = stub, LocalToken = PlaybackValues.LocalToken, AudioStreamIndex = 3 };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Coordinator.OpenAsync(request, leaving.Token));
+
+        Assert.Equal(old.RemotePlaySessionId, fixture.Client.Requests[^1].ReplacesPlaySessionId);
+        Assert.Null(fixture.Sessions.Find(old.Id));
+        Assert.Contains(old.RemotePlaySessionId, fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task Calls_of_a_session_queued_behind_others_are_not_sent_once_it_closed()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(fixture.Sessions.All);
+        var held = new TaskCompletionSource();
+        var arrived = 0;
+        fixture.Client.Open = async (_, token) =>
+        {
+            Interlocked.Increment(ref arrived);
+            await held.Task.WaitAsync(token);
+            return FakePlaybackClient.Bytes();
+        };
+        var read = new List<string>();
+        fixture.Client.Playlists = path =>
+        {
+            lock (read)
+            {
+                read.Add(path);
+            }
+
+            return RemoteFailure.None;
+        };
+        var busy = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        var calls = Enumerable.Range(0, PlaybackLimits.CallsPerServer)
+            .Select(_ => Task.Run(() => fixture.Coordinator.OpenAsync(source.ServerId, busy, CancellationToken.None)))
+            .ToList();
+        while (Volatile.Read(ref arrived) < PlaybackLimits.CallsPerServer)
+        {
+            await Task.Delay(10);
+        }
+
+        var segment = fixture.Coordinator.OpenAsync(session, new RemoteStreamRequest(HttpMethod.Get, "/late.ts", null), CancellationToken.None);
+        var playlist = fixture.Coordinator.ReadPlaylistAsync(session, "/late.m3u8", CancellationToken.None);
+        await fixture.Coordinator.CloseAsync(session.Id);
+        held.SetResult();
+
+        Assert.Equal(RemoteFailure.Withdrawn, (await segment).Failure);
+        Assert.Equal(RemoteFailure.Withdrawn, (await playlist).Failure);
+        Assert.DoesNotContain("/late.ts", fixture.Client.Opened);
+        Assert.DoesNotContain("/late.m3u8", read);
+        foreach (var result in await Task.WhenAll(calls))
+        {
+            result.Value?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task A_closed_session_sends_no_call_and_does_not_wait_for_a_place_in_the_queue()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        await fixture.OpenAsync(PlaybackValues.Stub(source));
+        var session = Assert.Single(fixture.Sessions.All);
+        var held = new TaskCompletionSource();
+        var arrived = 0;
+        fixture.Client.Open = async (_, token) =>
+        {
+            Interlocked.Increment(ref arrived);
+            await held.Task.WaitAsync(token);
+            return FakePlaybackClient.Bytes();
+        };
+        var busy = new RemoteStreamRequest(HttpMethod.Get, "/x.ts", null);
+        var calls = Enumerable.Range(0, PlaybackLimits.CallsPerServer)
+            .Select(_ => Task.Run(() => fixture.Coordinator.OpenAsync(source.ServerId, busy, CancellationToken.None)))
+            .ToList();
+        while (Volatile.Read(ref arrived) < PlaybackLimits.CallsPerServer)
+        {
+            await Task.Delay(10);
+        }
+
+        await fixture.Coordinator.CloseAsync(session.Id);
+        var segment = await fixture.Coordinator.OpenAsync(session, new RemoteStreamRequest(HttpMethod.Get, "/late.ts", null), CancellationToken.None);
+        var playlist = await fixture.Coordinator.ReadPlaylistAsync(session, "/late.m3u8", CancellationToken.None);
+        held.SetResult();
+
+        Assert.Equal(RemoteFailure.Withdrawn, segment.Failure);
+        Assert.Equal(RemoteFailure.Withdrawn, playlist.Failure);
+        foreach (var result in await Task.WhenAll(calls))
+        {
+            result.Value?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task A_client_that_leaves_during_the_local_fallback_after_the_slot_was_freed_has_the_old_session_closed()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source("a");
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        var stub = PlaybackValues.Stub(source);
+        await fixture.OpenAsync(stub);
+        var old = Assert.Single(fixture.Sessions.All);
+        using var leaving = new CancellationTokenSource();
+        fixture.Client.Answer = (_, _) => Task.FromResult(RemoteResult.Fail<PlaybackInfoResponse>(RemoteFailure.ServerError));
+        fixture.Client.Open = async (_, _) =>
+        {
+            await leaving.CancelAsync();
+            throw new OperationCanceledException(leaving.Token);
+        };
+        var request = new PlaybackOpenRequest { Identity = PlaybackValues.Identity(), Stub = stub, LocalToken = PlaybackValues.LocalToken, AudioStreamIndex = 3 };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Coordinator.OpenAsync(request, leaving.Token));
+
+        Assert.Equal(old.RemotePlaySessionId, fixture.Client.Requests[^1].ReplacesPlaySessionId);
+        Assert.Null(fixture.Sessions.Find(old.Id));
+        Assert.Contains(old.RemotePlaySessionId, fixture.Client.Stopped);
+    }
+
+    [Fact]
+    public async Task A_closed_session_refuses_a_request_of_whoever_still_holds_it()
+    {
+        var fixture = new CoordinatorFixture();
+        await fixture.OpenAsync(PlaybackValues.Stub(PlaybackValues.Source()));
+        var session = Assert.Single(fixture.Sessions.All);
+
+        await fixture.Coordinator.CloseAsync(session.Id);
+
+        Assert.True(session.IsClosed);
+        Assert.Null(session.TryBeginRequest(fixture.Clock));
+    }
+
+    [Fact]
+    public async Task A_replaced_session_closed_after_its_client_moved_refuses_a_late_segment()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+
+        fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.BeginRequest(fixture.Clock).Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Null(first.TryBeginRequest(fixture.Clock));
+    }
+
+    [Fact]
+    public async Task A_replaced_session_serving_a_request_is_closed_only_after_it_ends()
+    {
+        var fixture = new CoordinatorFixture();
+        var stub = PlaybackValues.Stub(PlaybackValues.Source());
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+        var outcome = await fixture.OpenAsync(stub, audio: 3);
+        fixture.Sessions.Find(outcome.Response!.PlaySessionId)!.BeginRequest(fixture.Clock).Dispose();
+
+        var running = first.TryBeginRequest(fixture.Clock);
+        await fixture.Coordinator.CloseReplacedAsync();
+        Assert.Same(first, fixture.Sessions.Find(first.Id));
+        Assert.Empty(fixture.Client.Stopped);
+
+        running!.Dispose();
+        await fixture.Coordinator.CloseReplacedAsync();
+
+        Assert.Null(fixture.Sessions.Find(first.Id));
+        Assert.Equal(first.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
+    }
+
+    [Fact]
+    public void A_session_cannot_be_closed_as_idle_while_a_request_runs()
+    {
+        var clock = new ManualClock();
+        var session = PlaybackValues.Session(clock: clock);
+        var running = session.TryBeginRequest(clock);
+
+        Assert.False(session.TryCloseIdle());
+        running!.Dispose();
+
+        Assert.True(session.TryCloseIdle());
+        Assert.Null(session.TryBeginRequest(clock));
+    }
+
+    [Fact]
+    public async Task A_jellymesh_remote_that_takes_the_slot_over_has_the_old_session_closed_at_once()
+    {
+        var fixture = new CoordinatorFixture();
+        var source = PlaybackValues.Source();
+        fixture.Registry.AddJellyMesh(source.ServerId);
+        var stub = PlaybackValues.Stub(source);
+        await fixture.OpenAsync(stub);
+        var first = Assert.Single(fixture.Sessions.All);
+
+        await fixture.OpenAsync(stub, audio: 3);
+
+        Assert.Null(fixture.Sessions.Find(first.Id));
         Assert.Equal(first.RemotePlaySessionId, Assert.Single(fixture.Client.Stopped));
     }
 
