@@ -4,7 +4,8 @@
 #   fresh    jm-dedup-f  18421  media of locale            plugin, consumer of both, from an empty folder
 #   upgrade  jm-dedup-u  18424  media of locale            plugin, consumer of both, first with the old build
 # They share the network jm-dedup-net. Never touches the jellymesh-test stack. PREFIX (default jm-dedup) and PORT (default
-# 18421, the port of fresh; stock, peer and upgrade take the next three) move it all elsewhere.
+# 18421, the port of fresh; stock, peer and upgrade take the next three) move it all elsewhere. fresh gives each server the
+# library mode "None" and links its folders by hand; upgrade keeps the flat layout of the old build.
 S=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WT=$(cd "$S/../../.." && pwd)
 MEDIA=${MEDIA:-$WT/tests/Integration/media}
@@ -105,8 +106,9 @@ run_container() {
   wait_ready "$s"
 }
 
+# start <server> [per-server]: with per-server the libraries get no federated path, which link_folders adds later.
 start() {
-  local s=$1 name opts
+  local s=$1 name opts fed_film='&paths=/federata/Film' fed_serie='&paths=/federata/Serie'
   name=$(container_of "$s")
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker volume rm "$name-config" "$name-cache" "$name-fed" "$name-extra" >/dev/null 2>&1 || true
@@ -116,11 +118,16 @@ start() {
   get "$s" /Startup/User >/dev/null
   post "$s" /Startup/User '{"Name":"admin","Password":"jellymesh-test"}' >/dev/null
   post "$s" /Startup/Complete >/dev/null
-  docker exec "$name" sh -c 'mkdir -p /federata/Film /federata/Serie /extra/film /extra/serie && touch /federata/Film/.jellymesh /federata/Serie/.jellymesh /extra/film/.keep /extra/serie/.keep && chmod -R a+rwX /extra'
+  if [ "${2:-}" = per-server ]; then
+    fed_film= fed_serie=
+  else
+    docker exec "$name" sh -c 'mkdir -p /federata/Film /federata/Serie && touch /federata/Film/.jellymesh /federata/Serie/.jellymesh'
+  fi
+  docker exec "$name" sh -c 'mkdir -p /extra/film /extra/serie && touch /extra/film/.keep /extra/serie/.keep && chmod -R a+rwX /extra'
   login "$s"
   opts='{"LibraryOptions":{"EnableInternetProviders":false}}'
-  post "$s" "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/extra/film&paths=/federata/Film" "$opts" >/dev/null
-  post "$s" "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie&paths=/extra/serie&paths=/federata/Serie" "$opts" >/dev/null
+  post "$s" "/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/media/film&paths=/extra/film$fed_film" "$opts" >/dev/null
+  post "$s" "/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/media/serie&paths=/extra/serie$fed_serie" "$opts" >/dev/null
   post "$s" /Users/New '{"Name":"jellymesh","Password":"jellymesh-test"}' >/dev/null
   scan "$s"
 }
@@ -143,9 +150,9 @@ configure() { # configure <server> <metadata protection>
   req "$1" PUT /JellyMesh/Admin/Settings "$(jq -nc --argjson p "$2" '{FederatedFolderPath: "/federata", MetadataProtection: $p}')" >/dev/null
 }
 
-add_remote() { # add_remote <consumer> <name> <url> -> server id
+add_remote() { # add_remote <consumer> <name> <url> [library mode] -> server id
   local id
-  id=$(post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
+  id=$(post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" --arg m "${4:-}" '{Name:$n,Url:$u,Username:"jellymesh",Password:"jellymesh-test"} + (if $m == "" then {} else {LibraryMode:$m} end)')" | jq -r .Id)
   import_all "$1" "$id"
   echo "$id"
 }
@@ -165,17 +172,36 @@ share_all() { # share_all <server>: everything to the dedicated user
   [ "$(cat "$WORK/status")" = 204 ] || { echo "share failed: $(cat "$WORK/status")" >&2; return 1; }
 }
 
+# link_folders <consumer>: adds each folder the page lists for a server in mode "None" to the Film or Serie library, as an
+# admin does by hand (rows 437, 443). A folder some library already holds is only named.
+link_folders() {
+  local s=$1 type path lib held
+  held=$(get "$s" /Library/VirtualFolders | jq -c '[.[].Locations[]]')
+  get "$s" /JellyMesh/Admin/Status | jq -r '.Servers[].AutomaticLibraries.ManualPaths[] | "\(.LibraryType) \(.Path)"' >"$WORK/manual-paths"
+  while read -r type path; do
+    if jq -e --arg p "$path" 'index($p)' <<<"$held" >/dev/null; then echo "already in a library: $path"; continue; fi
+    case $type in movies) lib=Film ;; tvshows) lib=Serie ;; *) check "a library of type $type for $path" yes no; continue ;; esac
+    req "$s" POST "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$lib" --arg p "$path" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null
+    check "$path linked to $lib" 204 "$(cat "$WORK/status")"
+  done <"$WORK/manual-paths"
+}
+
 admin_id() { get "$1" /Users/Me | jq -r .Id; }
 items() { # items <server> <type>
   get "$1" "/Items?userId=$(admin_id "$1")&Recursive=true&IncludeItemTypes=$2&Fields=Path,Overview&Limit=500"
 }
 stubs() { docker exec "$(container_of "$1")" sh -c 'cd /federata && find . -type f -name "*.strm" | sort'; }
 
-# Episodes of JM Serie Doppia, as "S1E3-4@stub" or "S1E1-2@local": what a client sees.
+# Episodes of JM Serie Doppia, as "E3-4@stock" for a stub with that label or "E1-2@local": what a client sees. A group of
+# versions shows as its primary.
 doppia() {
   items "$1" Episode | jq -c '[.Items[] | select(.SeriesName == "JM Serie Doppia")
-    | "E\(.IndexNumber)\(if .IndexNumberEnd then "-\(.IndexNumberEnd)" else "" end)@\(if (.Path | startswith("/federata")) then "stub" else "local" end)"] | sort_by(ltrimstr("E") | split("-")[0] | split("@")[0] | tonumber)'
+    | {s: .IndexNumber, e: (.IndexNumberEnd // .IndexNumber),
+       w: (if (.Path | startswith("/federata")) then (.Path | split(" - ") | last | rtrimstr(".strm")) else "local" end)}]
+    | sort_by(.s, .e, .w) | map("E\(.s)\(if .e != .s then "-\(.e)" else "" end)@\(.w)")'
 }
+# versions <server> <item id>: the names of the versions a client sees on an item, sorted.
+versions() { get "$1" "/Users/$(admin_id "$1")/Items/$2" | jq -c '[.MediaSources[].Name] | sort'; }
 episode_id() { # episode_id <server> <path suffix>
   items "$1" Episode | jq -r --arg p "$2" '.Items[] | select(.Path | endswith($p)) | .Id' | head -1
 }
