@@ -1425,6 +1425,36 @@ public class PeerGuardFilterTests
         Assert.True(ran);
     }
 
+    // §4.4 with row 582: an audio .strm holding a JellyMesh URL, outside the federated folder, does not exist for a peer.
+    [Theory]
+    [InlineData("Audio", "GetAudioStream", "")]
+    [InlineData("Audio", "GetAudioStream", "?static=true")]
+    [InlineData("Audio", "GetAudioStreamByContainer", "")]
+    [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist", "?PlaySessionId=play")]
+    [InlineData("Library", "GetFile", "")]
+    [InlineData("MediaInfo", "GetPostedPlaybackInfo", "")]
+    public async Task A_moved_audio_stub_is_never_given_to_a_peer(string controller, string action, string query)
+    {
+        var temp = System.IO.Directory.CreateTempSubdirectory("jm-moved-audio");
+        try
+        {
+            var strm = System.IO.Path.Combine(temp.FullName, "01 Track.strm");
+            await System.IO.File.WriteAllTextAsync(strm, Jellyfin.Plugin.JellyMesh.Playback.PlaybackRoutes.StrmUrl(8096, null, "moved", "signature"));
+            var item = Guid.Parse("32000000-0000-0000-0000-000000000000");
+            _fixture.AddItem(item, new MediaBrowser.Controller.Entities.Audio.Audio { Path = strm }, ProviderFixture.SharedMusic);
+
+            var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), "GET", item, query);
+
+            Assert.False(ran);
+            Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+            Assert.Equal(0, Slots);
+        }
+        finally
+        {
+            temp.Delete(true);
+        }
+    }
+
     [Theory]
     [InlineData("Videos", "GetVideoStream")]
     [InlineData("Audio", "GetAudioStream")]

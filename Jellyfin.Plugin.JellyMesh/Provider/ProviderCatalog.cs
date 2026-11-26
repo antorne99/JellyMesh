@@ -96,7 +96,7 @@ public sealed class ProviderCatalog
 
     /// <summary>
     /// Tells whether an item is one this server federates itself. §4.4: such an item never leaves it. The URL covers
-    /// video stubs wherever they are; the path, links resolved, covers all under the federated folder in every layout, placeholders included.
+    /// video stubs wherever they are, and audio stubs by the URL in their file (row 582); the path, links resolved, covers all under the federated folder in every layout, placeholders included.
     /// The layout of a server folder covers the stubs of every type a moved or cleared federated folder left behind, and its folders.
     /// </summary>
     /// <param name="item">The item.</param>
@@ -106,6 +106,11 @@ public sealed class ProviderCatalog
         ArgumentNullException.ThrowIfNull(item);
 
         if (item is Video video && PlaybackRoutes.IsPlaybackEndpoint(video.ShortcutPath))
+        {
+            return true;
+        }
+
+        if (item is Audio audio && PlaybackRoutes.IsPlaybackEndpoint(StrmFile.ReadUrl(audio.Path)))
         {
             return true;
         }
