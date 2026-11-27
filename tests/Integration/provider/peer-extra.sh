@@ -20,6 +20,15 @@ check "no path of this server" 0 "$(grep -c -E '"/(media|config|cache|extra|fede
 check "no key named like a path has a value but the extension of a file (row 569)" 0 "$(jq '[.. | objects | to_entries[] | select((.key | test("Path$")) and .value != null and (.key == "Path" and (.value | tostring | test("^\\.[A-Za-z0-9]+$")) | not))] | length' "$WORK/peer-items")"
 check "the name of the local server is not there" 0 "$(jq '[.. | objects | select(has("ServerName"))] | length' "$WORK/peer-items")"
 
+echo "--- the list of image details is closed, the images by type stay open (row 585)"
+pictured=$(get a '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r '[.Items[] | select((.Path | startswith("/media/")) and .ImageTags.Primary != null)][0].Id // empty')
+check "a shared title with a poster" true "$([ -n "$pictured" ] && echo true || echo false)"
+check "the list of image details" 403 "$(as_peer a "$token" GET "/Items/$pictured/Images")"
+check "its answer holds no path" 0 "$(grep -c -E '/(media|config|cache)/' "$WORK/body")"
+check "an image by type and index" 200 "$(as_peer a "$token" GET "/Items/$pictured/Images/Primary/0")"
+check "an image by type" 200 "$(as_peer a "$token" GET "/Items/$pictured/Images/Primary")"
+check "the list stays open to an ordinary user" 200 "$(as_peer a "$ordinary" GET "/Items/$pictured/Images")"
+
 echo "--- an answer of a closed route has no body worth reading"
 check "a closed route" 403 "$(as_peer a "$token" GET /System/Info)"
 echo "body of a 403: $(head -c 200 "$WORK/body")"
