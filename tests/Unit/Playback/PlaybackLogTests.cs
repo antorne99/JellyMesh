@@ -18,7 +18,7 @@ internal static class PlaybackLogAssert
         PlaybackValues.RemoteDevice,
         "aaaa-bbbb",
         "secret",
-        "remote.example",
+        "remote.invalid",
         "ApiKey"
     ];
 
