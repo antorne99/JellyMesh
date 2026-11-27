@@ -69,20 +69,20 @@ public sealed class ManualMergeStubTests : IDisposable
     // A(1, a), B(1, b), C(2, b): they stay apart, each on a server of its own, or in three libraries of one server.
     private async Task ChainAsync(bool oneServer = false)
     {
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-b", "B", "movies"));
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("films-c", "C", "movies"));
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, Film("a", "Uno", 720, "1", "tta"));
-        _fixture.Sync.Client.Add("films-b", RemoteItemType.Movie, Film("b", "Due", 1080, "1", "ttb"));
-        _fixture.Sync.Client.Add("films-c", RemoteItemType.Movie, Film("c", "Tre", 480, "2", "ttb"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, Film("a", "Uno", 720, "1", "tta"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, Film("b", "Due", 1080, "1", "ttb"));
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, Film("c", "Tre", 480, "2", "ttb"));
         if (oneServer)
         {
-            await _fixture.Sync.AddServerAsync("A", "films", "films-b", "films-c");
+            await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsB, TestLibraries.FilmsC);
         }
         else
         {
-            await _fixture.Sync.AddServerAsync("A", "films");
-            await _fixture.Sync.AddServerAsync("B", "films-b");
-            await _fixture.Sync.AddServerAsync("C", "films-c");
+            await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
+            await _fixture.Sync.AddServerAsync("B", TestLibraries.FilmsB);
+            await _fixture.Sync.AddServerAsync("C", TestLibraries.FilmsC);
         }
 
         await _fixture.SyncAndMaterializeAsync();
@@ -199,19 +199,19 @@ public sealed class ManualMergeStubTests : IDisposable
     private async Task SeriesAsync(bool oneServer = false)
     {
         RemoteItem Show(string id, string tmdb) => TestItems.Series(id) with { ProviderIds = new Dictionary<string, string?> { ["Tmdb"] = tmdb } };
-        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary("shows-b", "Shows B", "tvshows"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, Show("sa", "1"));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("a1", "sa", 1, 1), TestItems.Episode("a2", "sa", 1, 2));
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Series, Show("sb", "2"));
-        _fixture.Sync.Client.Add("shows-b", RemoteItemType.Episode, TestItems.Episode("b1", "sb", 1, 1) with { MediaSources = [TestItems.Source("b1", 1080, 9_000_000)] }, TestItems.Episode("b3", "sb", 1, 3));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsB, "Shows B", "tvshows"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, Show("sa", "1"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("a1", "sa", 1, 1), TestItems.Episode("a2", "sa", 1, 2));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Series, Show("sb", "2"));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsB, RemoteItemType.Episode, TestItems.Episode("b1", "sb", 1, 1) with { MediaSources = [TestItems.Source("b1", 1080, 9_000_000)] }, TestItems.Episode("b3", "sb", 1, 3));
         if (oneServer)
         {
-            await _fixture.Sync.AddServerAsync("A", "shows", "shows-b");
+            await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows, TestLibraries.ShowsB);
         }
         else
         {
-            await _fixture.Sync.AddServerAsync("A", "shows");
-            await _fixture.Sync.AddServerAsync("B", "shows-b");
+            await _fixture.Sync.AddServerAsync("A", TestLibraries.Shows);
+            await _fixture.Sync.AddServerAsync("B", TestLibraries.ShowsB);
         }
 
         await _fixture.SyncAndMaterializeAsync();
@@ -500,8 +500,8 @@ public sealed class ManualMergeStubTests : IDisposable
     [Fact]
     public async Task ALocalCopyMerged_LeavesTheStubAndItsState_AndAnUndoChangesNothingOnDisk()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, Film("r", "Remoto", 1080, "1", "tt1"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, Film("r", "Remoto", 1080, "1", "tt1"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         var stub = Item("Remoto");
         Give(stub, new UserItemData { Key = "s", Played = true, LastPlayedDate = _yesterday });
@@ -578,8 +578,8 @@ public sealed class ManualMergeStubTests : IDisposable
     [Fact]
     public async Task RefusesTwoTitlesWithALocalCopy()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, Film("r", "Doppio", 1080, "3", "tt3"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, Film("r", "Doppio", 1080, "3", "tt3"));
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = "l1", Kind = ContentKind.Movie, Title = "Doppio", Year = 2020, Ids = new ContentIds("1") });
         _fixture.LocalCatalog.Items.Add(new CatalogItem { ServerId = "local", ItemId = "l2", Kind = ContentKind.Movie, Title = "Doppio", Year = 2020, Ids = new ContentIds("2") });

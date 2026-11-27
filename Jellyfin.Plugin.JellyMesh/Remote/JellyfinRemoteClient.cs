@@ -106,14 +106,19 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         }
 
         var result = Parse<AuthenticateResponse>(response, out var error);
-        if (!RemoteAnswers.CanGoInAHeader(result?.AccessToken) || string.IsNullOrEmpty(result?.User?.Id) || result.User.Policy is null)
+        if (!RemoteAnswers.CanGoInAHeader(result?.AccessToken))
         {
             return response.Refuse<RemoteSession>(error, result?.AccessToken);
         }
 
-        return result.User.Policy.IsAdministrator
-            ? RemoteResult.Fail<RemoteSession>(RemoteFailure.AdministratorAccount)
-            : RemoteResult.Success<RemoteSession>(new RemoteSession(result.AccessToken!, result.User.Id) { ServerId = ServerIdOf(result.ServerId) });
+        // A refused login is handed back with its failure: the remote opened it, so it must be ended (419).
+        var opened = new RemoteSession(result!.AccessToken!, result.User?.Id ?? string.Empty) { ServerId = ServerIdOf(result.ServerId) };
+        if (string.IsNullOrEmpty(result.User?.Id) || result.User.Policy is null)
+        {
+            return new RemoteResult<RemoteSession>(opened, RemoteFailure.InvalidResponse, null, response.Call.Unusable(response.Status!.Value, response.Body, response.ContentType, null, opened.AccessToken));
+        }
+
+        return result.User.Policy.IsAdministrator ? RemoteResult.Fail(RemoteFailure.AdministratorAccount, opened) : RemoteResult.Success(opened);
     }
 
     /// <inheritdoc />
@@ -152,8 +157,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        // /Library/VirtualFolders answers 403 to a non-admin user.
-        return await ReadLibrariesAsync(endpoint, session, "/UserViews", cancellationToken).ConfigureAwait(false);
+        // /Library/VirtualFolders answers 403 to a non-admin user. A library the user hid from My Media is still one it sees.
+        return await ReadLibrariesAsync(endpoint, session, "/UserViews?includeHidden=true", true, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -161,7 +166,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        return await ReadLibrariesAsync(endpoint, session, ProviderPath + "/Libraries", cancellationToken).ConfigureAwait(false);
+        return await ReadLibrariesAsync(endpoint, session, ProviderPath + "/Libraries", false, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -182,7 +187,8 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             : response.Refuse<RemoteChangePage>(error);
     }
 
-    private async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, string path, CancellationToken cancellationToken)
+    // The views of a user can group libraries in one that is no library of its own; the shared ones of a provider never do.
+    private async Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> ReadLibrariesAsync(RemoteEndpoint endpoint, RemoteSession session, string path, bool userViews, CancellationToken cancellationToken)
     {
         var response = await ReadAsync(endpoint, path, session, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
@@ -196,11 +202,14 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
             return response.Refuse<IReadOnlyList<RemoteLibrary>>(error);
         }
 
-        IReadOnlyList<RemoteLibrary> libraries = views.Items
+        var libraries = views.Items
             .Where(view => !string.IsNullOrEmpty(view.Id) && _importableCollectionTypes.Contains(view.CollectionType, StringComparer.OrdinalIgnoreCase))
-            .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!))
+            .Select(view => new RemoteLibrary(view.Id!, view.Name ?? string.Empty, view.CollectionType!)
+            {
+                MayCombine = userViews && !string.Equals(view.Type, "CollectionFolder", StringComparison.Ordinal)
+            })
             .ToList();
-        return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(libraries);
+        return RemoteResult.Success<IReadOnlyList<RemoteLibrary>>(new RemoteLibraryList(libraries, views.Items.Count(view => !string.IsNullOrEmpty(view.Id))));
     }
 
     /// <inheritdoc />
@@ -263,6 +272,21 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
         return response.IsSuccess
             ? RemoteResult.Success(response.Date)
             : response.FailAs<DateTimeOffset?>();
+    }
+
+    /// <inheritdoc />
+    public async Task<RemoteResult<RemotePublicInfo>> GetPublicInfoAsync(RemoteEndpoint endpoint, RemoteSession? session, CancellationToken cancellationToken)
+    {
+        var response = await ReadAsync(endpoint, "/System/Info/Public", session, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return response.FailAs<RemotePublicInfo>();
+        }
+
+        var info = Parse<PublicInfoResponse>(response, out var error);
+        return info is null
+            ? response.Refuse<RemotePublicInfo>(error)
+            : RemoteResult.Success(new RemotePublicInfo(LogText.Clean(info.ServerName) ?? string.Empty, ServerIdOf(info.Id)));
     }
 
     /// <inheritdoc />
@@ -463,7 +487,7 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
     }
 
     // Sends a GET of the sync, and tries it again after a transient failure (decision 47).
-    private async Task<RawResponse> ReadAsync(RemoteEndpoint endpoint, string path, RemoteSession session, CancellationToken cancellationToken, [CallerMemberName] string step = "")
+    private async Task<RawResponse> ReadAsync(RemoteEndpoint endpoint, string path, RemoteSession? session, CancellationToken cancellationToken, [CallerMemberName] string step = "")
     {
         var response = await SendAsync(endpoint, HttpMethod.Get, path, session, null, cancellationToken, step: step).ConfigureAwait(false);
         var tries = 1;
@@ -592,9 +616,11 @@ public sealed class JellyfinRemoteClient : IJellyfinRemoteClient
 
     private sealed record CapabilitiesResponse(int ProtocolVersion);
 
+    private sealed record PublicInfoResponse(string? ServerName, string? Id);
+
     private sealed record UserViewsResponse(IReadOnlyList<UserView>? Items);
 
-    private sealed record UserView(string? Id, string? Name, string? CollectionType);
+    private sealed record UserView(string? Id, string? Name, string? CollectionType, string? Type);
 
     private sealed record ItemsResponse(IReadOnlyList<RemoteItem>? Items, int? TotalRecordCount, IReadOnlyDictionary<string, RemoteQuality>? Quality);
 

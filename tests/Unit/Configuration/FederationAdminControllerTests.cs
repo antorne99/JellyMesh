@@ -16,6 +16,7 @@ using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -30,6 +31,8 @@ namespace Jellyfin.Plugin.JellyMesh.Tests.Configuration;
 
 public class FederationAdminControllerTests
 {
+    private static readonly Guid _splitFrom = Guid.Parse("5b11c000-0000-4000-8000-000000000001");
+
     private static readonly AddServerRequest _request = new()
     {
         Name = "Friend",
@@ -38,7 +41,7 @@ public class FederationAdminControllerTests
         Password = TestValues.Password
     };
 
-    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null, IServerRenamer? renamer = null)
+    private static FederationAdminController ControllerFor(RegistryFixture fixture, IFederatedFolderLinkChecker? checker = null, string? federatedRoot = null, IServerLibraryManager? libraries = null, ILayoutMigration? migration = null, ILibraryChangeTracker? changes = null, IServerRenamer? renamer = null, IPluginDatabase? database = null)
         => new(
             fixture.Registry,
             fixture.Vault,
@@ -52,7 +55,8 @@ public class FederationAdminControllerTests
             new CapturingLogger<FederationAdminController>(),
             migration,
             changes,
-            renamer);
+            renamer,
+            database: database);
 
     [Fact]
     public async Task Removing_a_server_closes_its_sessions_while_it_can_still_be_reached()
@@ -244,6 +248,21 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
+    public async Task Forgetting_missing_servers_while_the_settings_cannot_be_read_is_unavailable()
+    {
+        using var fixture = new RegistryFixture();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(service => service.ForgetMissingServersAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new StoreSuspendedException("never read"));
+        var controller = CreateController(fixture, sync.Object);
+
+        var result = Assert.IsType<ObjectResult>((await controller.ForgetMissingServers(CancellationToken.None)).Result);
+
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(StoreUnavailableFilter.Message, Assert.IsType<FailureResponse>(result.Value).Message);
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Never);
+    }
+
+    [Fact]
     public async Task Forgetting_missing_servers_that_cannot_be_saved_says_to_try_again()
     {
         using var fixture = new RegistryFixture();
@@ -354,6 +373,68 @@ public class FederationAdminControllerTests
         libraries.Verify(manager => manager.DeleteRemovedServerLibraries(), Times.Never);
     }
 
+    // D33: the kept watch state gets the merges of the removed server before its copies leave them.
+    [Fact]
+    public async Task Removing_a_server_keeps_its_merges_for_the_watch_state_before_taking_its_copies_out()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var removed = Merge(Copy("local", "l1", isLocal: true), Copy(server.Id.ToString("N"), "a"));
+        var untouched = Merge(Copy("local", "l2", isLocal: true), Copy("0123456789abcdef0123456789abcdef", "b"));
+        var merges = new InMemoryMergeStore();
+        merges.Set(removed, untouched);
+        var mergesAtKeep = -1;
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => mergesAtKeep = merges.Merges.Count)
+            .ReturnsAsync(true);
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, merges, keeper: keeper.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        keeper.Verify(k => k.KeepMergesAsync(server.Id, It.Is<IReadOnlyList<ManualMerge>>(kept => kept.Single() == removed), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(2, mergesAtKeep);
+        Assert.Same(untouched, Assert.Single(merges.Merges));
+    }
+
+    // A server added back with its id and removed again replaces the merges kept the first time, even with none now.
+    [Fact]
+    public async Task Removing_a_server_without_merges_clears_those_kept_for_it_before()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var merges = new InMemoryMergeStore();
+        var controller = CreateController(fixture, RemovingSync(server.Id).Object, merges, keeper: keeper.Object);
+
+        await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        keeper.Verify(k => k.KeepMergesAsync(server.Id, It.Is<IReadOnlyList<ManualMerge>>(kept => kept.Count == 0), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(0, merges.Updates);
+    }
+
+    // Merges that cannot be kept for the watch state keep the copies of the removed server, shown as not found.
+    [Fact]
+    public async Task Merges_that_cannot_be_kept_for_the_watch_state_keep_the_copies_of_the_removed_server()
+    {
+        using var fixture = new RegistryFixture();
+        var server = await fixture.AddServerAsync();
+        var merge = Merge(Copy("local", "l1", isLocal: true), Copy(server.Id.ToString("N"), "a"));
+        var merges = new InMemoryMergeStore();
+        merges.Set(merge);
+        var keeper = new Mock<IWatchStateKeeper>();
+        keeper.Setup(k => k.KeepMergesAsync(server.Id, It.IsAny<IReadOnlyList<ManualMerge>>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var sync = RemovingSync(server.Id);
+        var controller = CreateController(fixture, sync.Object, merges, keeper: keeper.Object);
+
+        var result = await controller.RemoveServer(server.Id, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Same(merge, Assert.Single(merges.Merges));
+        sync.Verify(service => service.StartRemovalCleanup(), Times.Once);
+    }
+
     [Fact]
     public async Task A_removal_that_fails_keeps_the_manual_merges()
     {
@@ -427,7 +508,8 @@ public class FederationAdminControllerTests
         ICatalogSyncService sync,
         IManualMergeStore? merges = null,
         ILogger<FederationAdminController>? logger = null,
-        IServerLibraryManager? libraries = null) => new(
+        IServerLibraryManager? libraries = null,
+        IWatchStateKeeper? keeper = null) => new(
         fixture.Registry,
         fixture.Vault,
         fixture.Store,
@@ -437,7 +519,8 @@ public class FederationAdminControllerTests
         sync,
         merges ?? new InMemoryMergeStore(),
         libraries ?? Mock.Of<IServerLibraryManager>(),
-        logger ?? new CapturingLogger<FederationAdminController>());
+        logger ?? new CapturingLogger<FederationAdminController>(),
+        keeper: keeper);
 
     private static string ToJson(object? value) => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(object), JsonDefaults.Options);
 
@@ -475,125 +558,74 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public async Task Switching_on_the_libraries_of_a_server_starts_in_the_background_and_shows_the_state()
+    public async Task The_status_shows_the_libraries_of_each_server()
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
         var controller = ControllerFor(fixture, libraries: libraries.Object);
         var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
         var state = new AutomaticLibrariesState(true, true, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None);
-        libraries.Setup(manager => manager.Enable(id)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
         libraries.Setup(manager => manager.GetState(id)).Returns(state);
 
-        var result = controller.SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = true });
-
-        var accepted = Assert.IsType<AcceptedResult>(result.Result);
-        Assert.Same(state, accepted.Value);
-        Assert.Same(state, Assert.Single(controller.GetStatus().Value!.Servers).AutomaticLibraries);
+        Assert.Same(state, Assert.Single((await controller.GetStatus(CancellationToken.None)).Value!.Servers).AutomaticLibraries);
     }
 
     [Fact]
-    public void Switching_off_without_a_confirmation_answers_with_the_libraries_it_would_delete()
+    public async Task Adding_a_server_switches_its_libraries_on_in_the_mode_of_new_servers()
+    {
+        using var fixture = new RegistryFixture();
+        fixture.Store.Configuration.NewServerLibraryMode = LibraryMode.ByRemoteLibrary;
+        var libraries = new Mock<IServerLibraryManager>();
+
+        var id = (await ControllerFor(fixture, libraries: libraries.Object).AddServer(_request, CancellationToken.None)).Value!.Id;
+
+        libraries.Verify(manager => manager.Enable(id, LibraryMode.ByRemoteLibrary), Times.Once);
+    }
+
+    [Fact]
+    public async Task The_mode_of_an_added_server_is_kept_even_when_its_libraries_cannot_start_yet()
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
-        var id = Guid.NewGuid();
-        libraries.Setup(manager => manager.Disable(id, false))
-            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Friend - Film", "Friend - Serie"]));
+        libraries.Setup(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()))
+            .Returns(AutomaticLibrariesRequest.Refused(AutomaticLibrariesOutcome.NoFederatedFolder));
+        var request = new AddServerRequest { Name = _request.Name, Url = _request.Url, Username = _request.Username, Password = _request.Password, LibraryMode = LibraryMode.ByRemoteLibrary };
 
-        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false });
+        var id = (await ControllerFor(fixture, libraries: libraries.Object).AddServer(request, CancellationToken.None)).Value!.Id;
 
-        var conflict = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(409, conflict.StatusCode);
-        var body = Assert.IsType<AutomaticLibrariesRefusal>(conflict.Value);
-        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, body.Outcome);
-        Assert.Equal(["Friend - Film", "Friend - Serie"], body.ToDelete);
+        Assert.Equal(LibraryMode.ByRemoteLibrary, fixture.Store.Configuration.Servers.Single(server => server.Id == id).LibraryMode);
     }
 
     [Fact]
-    public void A_confirmed_switch_off_reaches_the_manager()
+    public async Task The_mode_of_the_add_form_wins_and_none_switches_nothing_on()
     {
         using var fixture = new RegistryFixture();
         var libraries = new Mock<IServerLibraryManager>();
-        var id = Guid.NewGuid();
-        libraries.Setup(manager => manager.Disable(id, true)).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+        var request = new AddServerRequest { Name = _request.Name, Url = _request.Url, Username = _request.Username, Password = _request.Password, LibraryMode = LibraryMode.None };
 
-        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(id, new SetAutomaticLibrariesRequest { Enabled = false, Confirmed = true });
+        var added = await ControllerFor(fixture, libraries: libraries.Object).AddServer(request, CancellationToken.None);
 
-        Assert.IsType<AcceptedResult>(result.Result);
-    }
-
-    [Theory]
-    [InlineData(AutomaticLibrariesOutcome.UnknownServer, 404)]
-    [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, 409)]
-    [InlineData(AutomaticLibrariesOutcome.Busy, 409)]
-    public void A_refused_switch_answers_with_its_reason(AutomaticLibrariesOutcome outcome, int status)
-    {
-        using var fixture = new RegistryFixture();
-        var libraries = new Mock<IServerLibraryManager>();
-        libraries.Setup(manager => manager.Enable(It.IsAny<Guid>())).Returns(AutomaticLibrariesRequest.Refused(outcome));
-
-        var result = ControllerFor(fixture, libraries: libraries.Object).SetAutomaticLibraries(Guid.NewGuid(), new SetAutomaticLibrariesRequest { Enabled = true });
-
-        var refused = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(status, refused.StatusCode);
-        var body = Assert.IsType<AutomaticLibrariesRefusal>(refused.Value);
-        Assert.Equal(outcome, body.Outcome);
-        Assert.False(string.IsNullOrWhiteSpace(body.Message));
+        Assert.NotNull(added.Value);
+        libraries.Verify(manager => manager.Enable(It.IsAny<Guid>(), It.IsAny<LibraryMode>()), Times.Never);
+        libraries.Verify(manager => manager.Enable(It.IsAny<Guid>()), Times.Never);
     }
 
     [Fact]
-    public void A_confirmed_rename_starts_in_the_background_and_shows_the_state()
+    public async Task An_unknown_library_mode_is_refused_before_the_server_is_added()
     {
         using var fixture = new RegistryFixture();
-        var renamer = new Mock<IServerRenamer>();
-        var id = Guid.NewGuid();
-        var state = new ServerRenameState(true, false, false);
-        renamer.Setup(r => r.Rename(id, "Mare", true)).Returns(new ServerRenameRequest(ServerRenameOutcome.Started, Task.CompletedTask, []));
-        renamer.Setup(r => r.GetState(id)).Returns(state);
+        var request = new AddServerRequest { Name = _request.Name, Url = _request.Url, Username = _request.Username, Password = _request.Password, LibraryMode = (LibraryMode)7 };
 
-        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare", Confirmed = true });
+        var added = await ControllerFor(fixture).AddServer(request, CancellationToken.None);
 
-        var accepted = Assert.IsType<AcceptedResult>(result.Result);
-        Assert.Same(state, accepted.Value);
+        var refusal = Assert.IsType<SettingRefusal>(Assert.IsType<BadRequestObjectResult>(added.Result).Value);
+        Assert.Equal(nameof(AddServerRequest.LibraryMode), refusal.Field);
+        Assert.Empty(fixture.Registry.GetServers());
     }
 
     [Fact]
-    public void A_rename_without_a_confirmation_answers_with_the_libraries_it_renames()
-    {
-        using var fixture = new RegistryFixture();
-        var renamer = new Mock<IServerRenamer>();
-        var id = Guid.NewGuid();
-        renamer.Setup(r => r.Rename(id, "Mare", false))
-            .Returns(new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, ["Casa - Film"]));
-
-        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(id, new RenameServerRequest { Name = "Mare" });
-
-        var conflict = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(409, conflict.StatusCode);
-        var body = Assert.IsType<ServerRenameRefusal>(conflict.Value);
-        Assert.Equal(ServerRenameOutcome.ConfirmationRequired, body.Outcome);
-        Assert.Equal(["Casa - Film"], body.Libraries);
-    }
-
-    [Theory]
-    [InlineData(ServerRenameOutcome.InvalidName, 400)]
-    [InlineData(ServerRenameOutcome.UnknownServer, 404)]
-    [InlineData(ServerRenameOutcome.Busy, 409)]
-    public void A_refused_rename_answers_with_its_reason(ServerRenameOutcome outcome, int status)
-    {
-        using var fixture = new RegistryFixture();
-        var renamer = new Mock<IServerRenamer>();
-        renamer.Setup(r => r.Rename(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<bool>())).Returns(ServerRenameRequest.Refused(outcome));
-
-        var result = ControllerFor(fixture, renamer: renamer.Object).RenameServer(Guid.NewGuid(), new RenameServerRequest { Name = " " });
-
-        var refused = Assert.IsType<ObjectResult>(result.Result);
-        Assert.Equal(status, refused.StatusCode);
-        var body = Assert.IsType<ServerRenameRefusal>(refused.Value);
-        Assert.Equal(outcome, body.Outcome);
-        Assert.False(string.IsNullOrWhiteSpace(body.Message));
-    }
+    public void Another_mode_is_refused_with_a_message()
+        => Assert.NotEqual("The operation failed.", FederationAdminController.RefusalMessage(AutomaticLibrariesOutcome.ModeChangeNotAllowed));
 
     [Fact]
     public async Task Cancelling_a_pending_rename_answers_with_the_state()
@@ -605,7 +637,7 @@ public class FederationAdminControllerTests
         renamer.Setup(r => r.CancelPendingAsync(id)).ReturnsAsync(ServerRenameOutcome.Cancelled);
         renamer.Setup(r => r.GetState(id)).Returns(state);
 
-        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(id);
+        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(id, CancellationToken.None);
 
         Assert.Same(state, result.Value);
     }
@@ -620,7 +652,7 @@ public class FederationAdminControllerTests
         var renamer = new Mock<IServerRenamer>();
         renamer.Setup(r => r.CancelPendingAsync(It.IsAny<Guid>())).ReturnsAsync(outcome);
 
-        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(Guid.NewGuid());
+        var result = await ControllerFor(fixture, renamer: renamer.Object).CancelServerRename(Guid.NewGuid(), CancellationToken.None);
 
         var refused = Assert.IsType<ObjectResult>(result.Result);
         Assert.Equal(status, refused.StatusCode);
@@ -640,7 +672,7 @@ public class FederationAdminControllerTests
         renamer.Setup(r => r.GetState(id)).Returns(state);
         renamer.Setup(r => r.NeedsRestart).Returns(true);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
 
         Assert.True(status.RenamedLibrariesNeedRestart);
         Assert.Same(state, Assert.Single(status.Servers).Rename);
@@ -656,7 +688,7 @@ public class FederationAdminControllerTests
         var id = (await controller.AddServer(_request, CancellationToken.None)).Value!.Id;
         renamer.Setup(r => r.GetState(id)).Returns(new ServerRenameState(false, true, false) { Stuck = true });
 
-        var json = ToJson(controller.GetStatus().Value);
+        var json = ToJson((await controller.GetStatus(CancellationToken.None)).Value);
 
         Assert.Contains("\"Rename\":{\"Busy\":false,\"Pending\":true,\"Failed\":false,\"Stuck\":true}", json, StringComparison.Ordinal);
         Assert.DoesNotContain(".strm", json, StringComparison.Ordinal);
@@ -671,8 +703,9 @@ public class FederationAdminControllerTests
         var added = await controller.AddServer(_request, CancellationToken.None);
         var id = added.Value!.Id;
         var test = await controller.TestServer(id, CancellationToken.None);
-        var libraries = await controller.GetLibraries(id, CancellationToken.None);
-        var status = controller.GetStatus();
+        var form = new ServerEditRequest { Name = added.Value.Name, Url = added.Value.Url, Username = TestValues.Username, Password = TestValues.Password };
+        var libraries = await controller.CheckServerEdit(id, form, CancellationToken.None);
+        var status = await controller.GetStatus(CancellationToken.None);
 
         var api = ToJson(added.Value) + ToJson(test.Value) + ToJson(libraries.Value) + ToJson(status.Value);
         AssertNoSecret(api);
@@ -740,7 +773,7 @@ public class FederationAdminControllerTests
         Assert.NotEqual(first.Id, again.Value!.Id);
         Assert.Equal("Renamed", again.Value.Name);
         Assert.DoesNotContain("Recognized", ToJson(again.Value), StringComparison.Ordinal);
-        Assert.Equal(again.Value.Id, controller.GetStatus().Value!.Servers.Single().Id);
+        Assert.Equal(again.Value.Id, (await controller.GetStatus(CancellationToken.None)).Value!.Servers.Single().Id);
     }
 
     [Fact]
@@ -792,13 +825,13 @@ public class FederationAdminControllerTests
         var logs = string.Join('\n', fixture.Logger.Lines);
         Assert.Contains("Unreachable", logs, StringComparison.Ordinal);
         Assert.Contains(TestValues.Host, logs, StringComparison.Ordinal);
-        var status = ControllerFor(fixture).GetStatus().Value!.Servers.Single();
+        var status = (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.Servers.Single();
         Assert.Equal("Offline", status.Connection);
         Assert.Contains("No route to " + TestValues.Host, status.LastError, StringComparison.Ordinal);
 
         failing = false;
         await ControllerFor(fixture).TestServer(server.Id, CancellationToken.None);
-        Assert.Null(ControllerFor(fixture).GetStatus().Value!.Servers.Single().LastError);
+        Assert.Null((await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.Servers.Single().LastError);
     }
 
     [Fact]
@@ -914,7 +947,7 @@ public class FederationAdminControllerTests
         using var fixture = new RegistryFixture(key: key);
         var controller = ControllerFor(fixture);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
         var add = await controller.AddServer(_request, CancellationToken.None);
 
         Assert.Equal(expected, status.KeyState);
@@ -933,7 +966,7 @@ public class FederationAdminControllerTests
         fixture.KeySource.Key = TestValues.OtherKey;
         var controller = ControllerFor(fixture);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
         var test = await controller.TestServer(server.Id, CancellationToken.None);
 
         Assert.Equal(KeyState.Wrong, status.KeyState);
@@ -951,23 +984,24 @@ public class FederationAdminControllerTests
         var server = await fixture.AddServerAsync();
         fixture.KeySource.Key = TestValues.OtherKey;
         var controller = ControllerFor(fixture);
-        Assert.True(controller.GetStatus().Value!.Servers.Single().NeedsPassword);
+        Assert.True((await controller.GetStatus(CancellationToken.None)).Value!.Servers.Single().NeedsPassword);
 
-        var result = await controller.UpdateCredentials(server.Id, new CredentialsRequest { Username = TestValues.Username, Password = TestValues.Password }, CancellationToken.None);
+        var form = new ServerEditRequest { Name = server.Name, Url = server.Url, Username = TestValues.Username, Password = TestValues.Password };
+        var result = await controller.SaveServerEdit(server.Id, form, CancellationToken.None);
 
         Assert.False(result.Value!.NeedsPassword);
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
         Assert.Equal(KeyState.Ok, status.KeyState);
         Assert.False(status.Suspended);
         Assert.DoesNotContain(TestValues.Password, System.Text.Json.JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void AGoodKeyShowsNoWarning()
+    public async Task AGoodKeyShowsNoWarning()
     {
         using var fixture = new RegistryFixture();
 
-        var status = ControllerFor(fixture).GetStatus().Value!;
+        var status = (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(KeyState.Ok, status.KeyState);
         Assert.False(status.Suspended);
@@ -975,25 +1009,12 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public async Task LibrariesAreMarkedWhenSelected()
-    {
-        using var fixture = new RegistryFixture();
-        var controller = ControllerFor(fixture);
-        var server = await fixture.AddServerAsync();
-
-        Assert.IsType<NoContentResult>(controller.SetLibraries(server.Id, new SetLibrariesRequest(["2"])));
-        var libraries = await controller.GetLibraries(server.Id, CancellationToken.None);
-
-        Assert.Equal([false, true], libraries.Value!.Select(library => library.Selected));
-    }
-
-    [Fact]
-    public void WithNoFolderNothingIsChecked()
+    public async Task WithNoFolderNothingIsChecked()
     {
         using var fixture = new RegistryFixture();
         var checker = new RecordingChecker(FederatedFolderLinkState.NotLinked);
 
-        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(FederatedFolderLinkState.NotChecked, folder.Link);
         Assert.False(checker.Called);
@@ -1004,11 +1025,11 @@ public class FederationAdminControllerTests
     [InlineData("relative/path", false)]
     [InlineData("  ", false)]
     [InlineData(null, false)]
-    public void TheFolderSaysWhetherAUsableVariableSetsIt(string? federatedRoot, bool expected)
+    public async Task TheFolderSaysWhetherAUsableVariableSetsIt(string? federatedRoot, bool expected)
     {
         using var fixture = new RegistryFixture();
 
-        var folder = ControllerFor(fixture, federatedRoot: federatedRoot).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, federatedRoot: federatedRoot).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(expected, folder.FromEnvironment);
     }
@@ -1021,17 +1042,17 @@ public class FederationAdminControllerTests
         var server = await fixture.AddServerAsync();
         var checker = new RecordingChecker(FederatedFolderLinkState.NotLinked);
 
-        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal([server.Id], checker.Servers);
         var shown = Assert.Single(folder.Servers);
         Assert.Equal(server.Id, shown.Id);
         Assert.Equal("Friend", shown.Name);
-        Assert.Equal($"/federata/{server.Id:D}/Film", shown.MoviesPath);
-        Assert.Equal($"/federata/{server.Id:D}/Serie", shown.SeriesPath);
+        Assert.Equal(["/federata/m", "/federata/s"], shown.Folders.Select(folder => folder.Path));
         Assert.Equal(["Film"], shown.Movies.Libraries);
         Assert.Equal(["Serie"], shown.SeriesGroupingOff);
         Assert.Equal(["Serie"], shown.SeriesLibraries);
+        Assert.Equal([_splitFrom], shown.SeriesSplitWith);
         Assert.Equal(FederatedFolderLinkState.NotLinked, folder.Link);
         Assert.Equal(["Tutto"], folder.Covering);
         Assert.True(folder.SeriesSplit);
@@ -1048,7 +1069,7 @@ public class FederationAdminControllerTests
             .Returns(new AutomaticLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Friend - Film")], [], AutomaticLibrariesError.None));
         var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Friend - Film", "Mia"] };
 
-        var folder = ControllerFor(fixture, checker, libraries: libraries.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker, libraries: libraries.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(["Mia"], Assert.Single(folder.Servers).Unregistered);
     }
@@ -1063,7 +1084,7 @@ public class FederationAdminControllerTests
         fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = server.Id, Name = "Copia", Url = saved.Url, EncryptedCredentials = saved.EncryptedCredentials });
         var checker = new RecordingChecker(FederatedFolderLinkState.Linked);
 
-        var status = ControllerFor(fixture, checker).GetStatus().Value!;
+        var status = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(server.Name, Assert.Single(status.Servers).Name);
         Assert.Equal(server.Name, Assert.Single(status.FederatedFolder.Servers).Name);
@@ -1078,19 +1099,19 @@ public class FederationAdminControllerTests
         await fixture.AddServerAsync();
         var checker = new RecordingChecker(FederatedFolderLinkState.Linked) { OnlyOnItsFolders = ["Mia"] };
 
-        var folder = ControllerFor(fixture, checker).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, checker).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Empty(Assert.Single(folder.Servers).Unregistered);
     }
 
     [Fact]
-    public void TheLibrariesLeftByRemovedServersAreListed()
+    public async Task TheLibrariesLeftByRemovedServersAreListed()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Vecchio - Film" } });
         fixture.Store.Configuration.RemovedServerLibraries.Add(new RemovedServerLibrariesConfig { ServerId = Guid.NewGuid(), ReleasedLibraries = { "Altro - Serie" } });
 
-        var status = ControllerFor(fixture).GetStatus().Value!;
+        var status = (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(["Vecchio - Film", "Altro - Serie"], status.ReleasedLibraries.Select(library => library.Name));
         Assert.Equal(fixture.Store.Configuration.RemovedServerLibraries.Select(held => held.ServerId), status.ReleasedLibraries.Select(library => library.ServerId));
@@ -1098,7 +1119,7 @@ public class FederationAdminControllerTests
 
     // Row 416: each removed server whose removal waits for its watch state, by name only.
     [Fact]
-    public void TheStatusListsTheRemovalsHeldForTheirWatchState()
+    public async Task TheStatusListsTheRemovalsHeldForTheirWatchState()
     {
         using var fixture = new RegistryFixture();
         var keeper = new Mock<IWatchStateKeeper>();
@@ -1116,15 +1137,15 @@ public class FederationAdminControllerTests
             new CapturingLogger<FederationAdminController>(),
             keeper: keeper.Object);
 
-        var status = controller.GetStatus().Value!;
+        var status = (await controller.GetStatus(CancellationToken.None)).Value!;
 
         Assert.Equal(["Vecchio", null], status.HeldRemovals.Select(held => held.Name));
         Assert.Contains("\"HeldRemovals\":[{\"Name\":\"Vecchio\"},{", ToJson(status), StringComparison.Ordinal);
-        Assert.Empty(ControllerFor(fixture).GetStatus().Value!.HeldRemovals);
+        Assert.Empty((await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.HeldRemovals);
     }
 
     [Fact]
-    public void HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
+    public async Task HidingReleasedLibrariesTakesThemOffTheStatusAndLeavesTheLibrariesAlone()
     {
         using var fixture = new RegistryFixture();
         var removed = Guid.NewGuid();
@@ -1135,15 +1156,16 @@ public class FederationAdminControllerTests
         var result = controller.HideReleasedLibraries(new HideReleasedLibrariesRequest([new ReleasedLibrary(removed, "Vecchio - Film")]));
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Equal(["Vecchio - Serie"], controller.GetStatus().Value!.ReleasedLibraries.Select(library => library.Name));
+        Assert.Equal(["Vecchio - Serie"], (await controller.GetStatus(CancellationToken.None)).Value!.ReleasedLibraries.Select(library => library.Name));
         var held = Assert.Single(fixture.Store.Configuration.RemovedServerLibraries);
         Assert.Equal(["Vecchio - Film", "Vecchio - Serie"], held.ReleasedLibraries);
         Assert.Equal(["Vecchio - Film"], held.HiddenReleasedLibraries);
+        libraries.Verify(item => item.GetSharedState());
         libraries.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public void HidingAReleasedLibraryTwiceKeepsOneMark()
+    public async Task HidingAReleasedLibraryTwiceKeepsOneMark()
     {
         using var fixture = new RegistryFixture();
         var removed = Guid.NewGuid();
@@ -1156,14 +1178,14 @@ public class FederationAdminControllerTests
 
         Assert.IsType<NoContentResult>(result);
         Assert.Equal(["Vecchio - Film"], Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
-        Assert.Empty(controller.GetStatus().Value!.ReleasedLibraries);
+        Assert.Empty((await controller.GetStatus(CancellationToken.None)).Value!.ReleasedLibraries);
     }
 
     [Theory]
     [InlineData(false, "Vecchio - Film")]
     [InlineData(true, "Vecchio - Serie")]
     [InlineData(true, "vecchio - film")]
-    public void HidingAReleasedLibraryThatIsNotListedHidesNothing(bool sameServer, string name)
+    public async Task HidingAReleasedLibraryThatIsNotListedHidesNothing(bool sameServer, string name)
     {
         using var fixture = new RegistryFixture();
         var removed = Guid.NewGuid();
@@ -1175,11 +1197,11 @@ public class FederationAdminControllerTests
 
         Assert.Equal(404, Assert.IsAssignableFrom<ObjectResult>(result).StatusCode);
         Assert.Empty(Assert.Single(fixture.Store.Configuration.RemovedServerLibraries).HiddenReleasedLibraries);
-        Assert.Equal(2, controller.GetStatus().Value!.ReleasedLibraries.Count);
+        Assert.Equal(2, (await controller.GetStatus(CancellationToken.None)).Value!.ReleasedLibraries.Count);
     }
 
     [Fact]
-    public void TheFolderCarriesTheMigrationOfItsPaths()
+    public async Task TheFolderCarriesTheMigrationOfItsPaths()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.FederatedFolderPath = "/federata";
@@ -1187,13 +1209,13 @@ public class FederationAdminControllerTests
         var migration = new Mock<ILayoutMigration>();
         migration.Setup(item => item.GetStatus("/federata")).Returns(status);
 
-        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, migration: migration.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Same(status, folder.Migration);
     }
 
     [Fact]
-    public void TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
+    public async Task TheFolderSaysWhichLibrariesChangedOnItSinceTheSync()
     {
         using var fixture = new RegistryFixture();
         fixture.Store.Configuration.FederatedFolderPath = "/federata";
@@ -1201,19 +1223,19 @@ public class FederationAdminControllerTests
         var found = new LibraryChanges(["Tutto"], ["Film"]);
         changes.Setup(tracker => tracker.Compare()).Returns(found);
 
-        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, changes: changes.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Same(found, folder.Changes);
         changes.Verify(tracker => tracker.Record(), Times.Never);
     }
 
     [Fact]
-    public void WithNoFolderThereAreNoChanges()
+    public async Task WithNoFolderThereAreNoChanges()
     {
         using var fixture = new RegistryFixture();
         var changes = new Mock<ILibraryChangeTracker>(MockBehavior.Strict);
 
-        var folder = ControllerFor(fixture, changes: changes.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, changes: changes.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Equal(LibraryChanges.None, folder.Changes);
     }
@@ -1324,23 +1346,62 @@ public class FederationAdminControllerTests
     }
 
     [Fact]
-    public void TheStatusCarriesTheModeOfTheNewServers()
+    public async Task TheStatusCarriesTheStateOfTheDatabase()
+    {
+        var kept = new DateTimeOffset(2026, 12, 18, 3, 0, 0, TimeSpan.Zero);
+        var recovery = new StoreRecovery(kept.AddDays(-30), "jellymesh.db.damaged-20261118", kept.AddDays(-31));
+        var database = new Mock<IPluginDatabase>();
+        database.Setup(item => item.Health).Returns(StoreHealth.Healthy);
+        database.Setup(item => item.Recovery).Returns(recovery);
+        database.Setup(item => item.MigratedKeptUntilAsync(It.IsAny<CancellationToken>())).ReturnsAsync(kept);
+
+        var status = (await ControllerFor(new RegistryFixture(), database: database.Object).GetStatus(CancellationToken.None)).Value!;
+
+        Assert.Equal(new StoreStatus(StoreState.Healthy, null, recovery, kept), status.Store);
+    }
+
+    [Fact]
+    public async Task AnErrorReadingTheOldFilesLeavesTheStatus()
+    {
+        var database = new Mock<IPluginDatabase>();
+        database.Setup(item => item.Health).Returns(StoreHealth.Healthy);
+        database.Setup(item => item.MigratedKeptUntilAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/config/data/migrated-0.5 cannot be read"));
+
+        var status = (await ControllerFor(new RegistryFixture(), database: database.Object).GetStatus(CancellationToken.None)).Value!;
+
+        Assert.Contains("/config/data/migrated-0.5 cannot be read", status.Store!.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheStatusCarriesTheLibrariesOfAllServers()
+    {
+        var state = new SharedLibrariesState(true, false, [], ["Vecchia"], AutomaticLibrariesError.None) { Unblocked = ["Tutti i server - Film"] };
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(item => item.GetSharedState()).Returns(state);
+
+        var status = (await ControllerFor(new RegistryFixture(), libraries: libraries.Object).GetStatus(CancellationToken.None)).Value!;
+
+        Assert.Same(state, status.SharedLibraries);
+    }
+
+    [Fact]
+    public async Task TheStatusCarriesTheModeOfTheNewServers()
     {
         using var fixture = new RegistryFixture();
         var migration = new Mock<ILayoutMigration>();
         migration.Setup(item => item.NewServerMode).Returns(LayoutMigrationMode.Automatic);
 
-        Assert.Equal(LayoutMigrationMode.Automatic, ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder.NewServerMode);
-        Assert.Equal(LayoutMigrationMode.Manual, ControllerFor(fixture).GetStatus().Value!.FederatedFolder.NewServerMode);
+        Assert.Equal(LayoutMigrationMode.Automatic, (await ControllerFor(fixture, migration: migration.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder.NewServerMode);
+        Assert.Equal(LayoutMigrationMode.Manual, (await ControllerFor(fixture).GetStatus(CancellationToken.None)).Value!.FederatedFolder.NewServerMode);
     }
 
     [Fact]
-    public void WithNoFolderThereIsNoMigration()
+    public async Task WithNoFolderThereIsNoMigration()
     {
         using var fixture = new RegistryFixture();
         var migration = new Mock<ILayoutMigration>();
 
-        var folder = ControllerFor(fixture, migration: migration.Object).GetStatus().Value!.FederatedFolder;
+        var folder = (await ControllerFor(fixture, migration: migration.Object).GetStatus(CancellationToken.None)).Value!.FederatedFolder;
 
         Assert.Null(folder.Migration);
         migration.Verify(item => item.GetStatus(It.IsAny<string>()), Times.Never);
@@ -1371,15 +1432,111 @@ public class FederationAdminControllerTests
             var servers = serverIds
                 .Select(id => new ServerFolderLink(
                     id,
-                    FederatedFolderLayout.ServerMoviesPath(federatedFolderPath, id),
-                    FederatedFolderLayout.ServerSeriesPath(federatedFolderPath, id),
+                    [new TypeFolderLink(federatedFolderPath + "/m", "movies", "Film", new(link, ["Film"])), new TypeFolderLink(federatedFolderPath + "/s", "tvshows", "Serie", new(link, []))],
                     new(link, ["Film"]),
                     new(link, []),
                     ["Serie"],
                     ["Serie"],
-                    OnlyOnItsFolders))
+                    OnlyOnItsFolders) { SeriesSplitWith = [_splitFrom] })
                 .ToList();
             return new FederatedFolderLinkReport(servers, ["Tutto"], true);
         }
+    }
+
+    [Fact]
+    public void TheSharedLibrariesShowTheirState()
+    {
+        using var fixture = new RegistryFixture();
+        var state = new SharedLibrariesState(true, false, [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Tutti i server - Film")], [], AutomaticLibrariesError.None)
+        {
+            Conflicts = [new LibraryConflict("Tutto", LibraryConflictReason.ParentPath, ServerLibraryKind.Series, string.Empty, ["/federata/x/Serie"])]
+        };
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.GetSharedState()).Returns(state);
+
+        Assert.Same(state, ControllerFor(fixture, libraries: libraries.Object).GetSharedLibraries().Value);
+    }
+
+    [Fact]
+    public void SwitchingTheSharedLibrariesOnStartsWithNoConfirmation()
+    {
+        using var fixture = new RegistryFixture();
+        var state = new SharedLibrariesState(true, true, [], [], AutomaticLibrariesError.None);
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.EnableShared()).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+        libraries.Setup(manager => manager.GetSharedState()).Returns(state);
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = true }).Result;
+
+        var accepted = Assert.IsType<AcceptedResult>(result);
+        Assert.Same(state, accepted.Value);
+        libraries.Verify(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation?>()), Times.Never);
+    }
+
+    [Fact]
+    public void SwitchingTheSharedLibrariesOffAsksToConfirmWithTheLibrariesItWouldDeleteAndRelease()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.DisableShared(null))
+            .Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.ConfirmationRequired, Task.CompletedTask, ["Tutti i server - Film"]) { ToRelease = ["Serie di tutti"] });
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = false }).Result;
+
+        var conflict = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(409, conflict.StatusCode);
+        var refusal = Assert.IsType<SharedLibrariesRefusal>(conflict.Value);
+        Assert.Equal(AutomaticLibrariesOutcome.ConfirmationRequired, refusal.Outcome);
+        Assert.Equal("Confirm to delete the shared libraries the plugin made and release the adopted ones.", refusal.Message);
+        Assert.Equal(["Tutti i server - Film"], refusal.ToDelete);
+        Assert.Equal(["Serie di tutti"], refusal.ToRelease);
+    }
+
+    [Fact]
+    public void AConfirmedSwitchOffStartsTheDeletion()
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation>())).Returns(new AutomaticLibrariesRequest(AutomaticLibrariesOutcome.Started, Task.CompletedTask, []));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object)
+            .SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true, ToDelete = ["Tutti i server - Film"], ToRelease = ["Serie di tutti"] }).Result;
+
+        Assert.IsType<AcceptedResult>(result);
+        libraries.Verify(
+            manager => manager.DisableShared(It.Is<SharedLibrariesConfirmation>(confirmation =>
+                confirmation.ToDelete.SequenceEqual(new[] { "Tutti i server - Film" }) && confirmation.ToRelease.SequenceEqual(new[] { "Serie di tutti" }))),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ASwitchOffWithAListSentAsNullIsRefusedAsABadRequest(bool nullDelete, bool nullRelease)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+
+        var result = ControllerFor(fixture, libraries: libraries.Object)
+            .SetSharedLibraries(new SharedLibrariesRequest { Enabled = false, Confirmed = true, ToDelete = nullDelete ? null! : [], ToRelease = nullRelease ? null! : [] }).Result;
+
+        var refusal = Assert.IsType<SettingRefusal>(Assert.IsType<BadRequestObjectResult>(result).Value);
+        Assert.Equal(nullDelete ? nameof(SharedLibrariesRequest.ToDelete) : nameof(SharedLibrariesRequest.ToRelease), refusal.Field);
+        libraries.Verify(manager => manager.DisableShared(It.IsAny<SharedLibrariesConfirmation?>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(AutomaticLibrariesOutcome.NoFederatedFolder, "Set the federated folder first.")]
+    [InlineData(AutomaticLibrariesOutcome.Busy, "The shared libraries are being updated. Try again when it is done.")]
+    public void ARefusedSwitchOnSaysWhy(AutomaticLibrariesOutcome outcome, string message)
+    {
+        using var fixture = new RegistryFixture();
+        var libraries = new Mock<IServerLibraryManager>();
+        libraries.Setup(manager => manager.EnableShared()).Returns(AutomaticLibrariesRequest.Refused(outcome));
+
+        var result = ControllerFor(fixture, libraries: libraries.Object).SetSharedLibraries(new SharedLibrariesRequest { Enabled = true }).Result;
+
+        var refusal = Assert.IsType<SharedLibrariesRefusal>(Assert.IsType<ObjectResult>(result).Value);
+        Assert.Equal((outcome, message), (refusal.Outcome, refusal.Message));
     }
 }

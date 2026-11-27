@@ -216,6 +216,20 @@ public class PluginConfigurationTests
         }
     }
 
+    // The server writes "None" when the remote had no problem, so the page never reads the warning as a flag (D28).
+    [Fact]
+    public void TheWarningOfAnEditIsShownOnlyForAProblem()
+    {
+        var page = ConfigPage();
+        var warning = Slice(page, "function remoteWarning(answer)", "function modeLabel(value)");
+
+        Assert.Contains("answer.RemoteWarning && answer.RemoteWarning !== 'None' ? connectionLabel(answer.RemoteWarning) : ''", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (check.RemoteWarning)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("saved.RemoteWarning", page, StringComparison.Ordinal);
+        Assert.Contains("remoteWarning(check)", page, StringComparison.Ordinal);
+        Assert.Contains("remoteWarning(saved)", page, StringComparison.Ordinal);
+    }
+
     // Decision 211: the intro of the history names the totals line under the server lines.
     [Fact]
     public void TheSyncHistoryIntroMentionsTheTotals()
@@ -364,6 +378,30 @@ public class PluginConfigurationTests
         Assert.Equal(2, Regex.Matches(page, "config\\." + setting + "\\b").Count);
     }
 
+    // The plugin has no Jellyfin configuration, so the stock endpoint answers 404 (§3.2).
+    [Fact]
+    public void TheConfigPageReadsAndSavesTheSettingsThroughTheirOwnEndpoint()
+    {
+        var page = ConfigPage();
+
+        Assert.Contains("read('Settings')", page, StringComparison.Ordinal);
+        Assert.Contains("api('PUT', 'Settings', config)", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("PluginConfiguration(", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheConfigPageHasAnInputForEverySetting()
+    {
+        var page = ConfigPage();
+
+        string[] notInputs = [nameof(PluginSettings.FixedByEnvironment)];
+        foreach (var setting in typeof(PluginSettings).GetProperties().Where(property => !notInputs.Contains(property.Name)))
+        {
+            var id = Regex.Match(page, "\\b" + setting.Name + ": '(jm\\w+)'").Groups[1].Value;
+            Assert.Matches("<(input|select) id=\"" + id + "\"", page);
+        }
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("3:00")]
@@ -393,16 +431,5 @@ public class PluginConfigurationTests
     public void FolderCanBeEmptyOrAbsolute(string path)
     {
         new PluginConfiguration { FederatedFolderPath = path }.Validate();
-    }
-
-    [Fact]
-    public void AdoptingFromItselfKeepsTheServers()
-    {
-        var config = new PluginConfiguration();
-        config.Servers.Add(new RemoteServerConfig());
-
-        config.AdoptServersFrom(config);
-
-        Assert.Single(config.Servers);
     }
 }

@@ -28,7 +28,7 @@ add_show() {
 }
 
 # episode_of <server id> <episode>: the id of an episode stub in the folder of a server, hidden alternates included.
-episode_of() { vid "$(server_folder "$1")/Serie/JM Spola%S01E0$2"; }
+episode_of() { vid "$(server_folder "$1")/%/Serie/JM Spola%S01E0$2"; }
 series_cases() { list local | jq -c '[.SeriesCases[] | select(any(.Titles[].Copies[]; .Copy.Title | test("JM Spola")))]'; }
 series_keys() { series_cases | jq -c '{WorkKeys: [.[].Titles[].WorkKey]}'; }
 series_merge_id() { list local | jq -r '[.Merges[] | select(any(.Copies[]; .Copy.Title | test("JM Spola"))) | .Id] | first'; }
@@ -45,7 +45,7 @@ for s in remote peer; do
   import_all local "$(cat "$WORK/id-$s")"
 done
 sync_now local
-library local Serie tvshows "$(server_folder "$A")/Serie" "$(server_folder "$B")/Serie"
+library local Serie tvshows "$(type_folder "$A" Serie)" "$(type_folder "$B" Serie)"
 scan local
 sync_now local
 settle local

@@ -4,7 +4,10 @@ using System.Net;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Controller;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -87,7 +90,7 @@ public class ErrorLogLimitTests
 
         for (var attempt = 0; attempt < 25; attempt++)
         {
-            await fixture.Registry.UpdateCredentialsAsync(failing.Id, TestValues.Credentials, CancellationToken.None);
+            await fixture.Registry.CheckEditAsync(failing.Id, new RemoteServerEdit { Name = failing.Name, Url = TestValues.Url, Username = TestValues.Credentials.Username, Password = TestValues.Credentials.Password }, CancellationToken.None);
         }
 
         Assert.NotEqual("whole", fixture.ErrorLogs.For(failing.Id).Of("whole"));
@@ -120,6 +123,15 @@ public class ErrorLogLimitTests
         Assert.All(holders, type => Assert.Contains(
             type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
             constructor => constructor.GetParameters().Any(parameter => parameter.ParameterType == typeof(ErrorLogLimits))));
+    }
+
+    // Row 554: the database and the settings store are local log points of 0.6; row 564 adds the nightly task and the import.
+    [Fact]
+    public void TheDatabaseAndTheSettingsStoreLogTheirErrorsWithinTheLimits()
+    {
+        Assert.All(
+            new[] { typeof(PluginDatabase), typeof(PluginConfigurationStore), typeof(ReconciliationTask), typeof(LegacyImport) },
+            type => Assert.Contains(type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic), field => field.FieldType == typeof(ErrorLogLimits)));
     }
 
     [Fact]

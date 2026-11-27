@@ -12,6 +12,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Sync;
@@ -54,12 +55,16 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     private readonly ILibraryChangeTracker? _changes;
     private readonly ILastServedSourceStore? _lastServed;
     private readonly IUnchangedSyncGate? _gate;
+    private readonly IPluginDatabase? _database;
     private readonly CancellationTokenSource _shutdown = new();
-    private readonly ConcurrentDictionary<Guid, string> _feedCursors = new();
+    private readonly ConcurrentDictionary<Guid, (string Cursor, long Generation)> _feedCursors = new();
     private readonly ConcurrentDictionary<Guid, KeyValuePair<string, RemoteFailure>> _runFailures = new();
     private readonly ConcurrentDictionary<Guid, string?> _failureDetails = new();
     private readonly ConcurrentDictionary<Guid, int> _runReads = new();
     private readonly UnreadablePasswords _unreadablePasswords = new();
+
+    private readonly Lock _pendingLock = new();
+    private readonly HashSet<Guid> _pendingServers = [];
 
     private TimeSpan _serverReadLimit = MaxServerRead;
     private int _busy;
@@ -86,6 +91,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     /// <param name="changes">What remembers the libraries on the federated folder at each sync, for the page (Q53).</param>
     /// <param name="lastServed">The last server that served each stub, pruned after every sync (Q76).</param>
     /// <param name="gate">What tells a sync that nothing changed since the last one, so it skips its stubs and links (Q386).</param>
+    /// <param name="database">The plugin database: while it is suspended, so is the sync.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
     public CatalogSyncService(
         IRemoteServerRegistry registry,
@@ -105,6 +111,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         ILibraryChangeTracker? changes = null,
         ILastServedSourceStore? lastServed = null,
         IUnchangedSyncGate? gate = null,
+        IPluginDatabase? database = null,
         ErrorLogLimits? errorLogs = null)
     {
         _errorLogs = errorLogs ?? new ErrorLogLimits();
@@ -125,6 +132,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _changes = changes;
         _lastServed = lastServed;
         _gate = gate;
+        _database = database;
+    }
+
+    // Which servers a run reads: all of them in full, all of them for changes, or only those waiting for a sync of their own.
+    private enum ServerScope
+    {
+        All,
+        Changes,
+        Pending
     }
 
     /// <summary>
@@ -149,6 +165,31 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
     }
 
     /// <inheritdoc />
+    public SyncStartResult StartServerSync(Guid serverId)
+    {
+        SyncStartResult claim;
+
+        // Claimed under the lock a run ends under, so a request never falls between its last look and its release.
+        lock (_pendingLock)
+        {
+            _pendingServers.Add(serverId);
+            claim = TryClaim();
+            if (claim is not SyncStartResult.Started and not SyncStartResult.AlreadyRunning)
+            {
+                _pendingServers.Clear();
+            }
+        }
+
+        if (claim == SyncStartResult.Started)
+        {
+            var cancellationToken = _shutdown.Token;
+            _ = Task.Run(() => RunPendingGuardedAsync(cancellationToken), CancellationToken.None);
+        }
+
+        return claim;
+    }
+
+    /// <inheritdoc />
     public async Task<SyncStartResult> RunAsync(CancellationToken cancellationToken)
     {
         ReportUnreadablePasswords();
@@ -156,7 +197,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         if (claim == SyncStartResult.Started)
         {
             // The nightly reconciliation also checks every stub's item: the safety net for an item left on an old URL.
-            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, true, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, true, ServerScope.All, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -169,7 +210,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var claim = TryClaim();
         if (claim == SyncStartResult.Started)
         {
-            await SyncAllAsync(SyncChangesAsync, SyncRunKind.Incremental, false, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncChangesAsync, SyncRunKind.Incremental, false, ServerScope.Changes, cancellationToken).ConfigureAwait(false);
         }
 
         return claim;
@@ -285,7 +326,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private SyncStartResult TryClaim()
     {
-        if (_vault.GetKeyState() != KeyState.Ok)
+        // Without the database the index and the stubs cannot be kept, nor the settings read, so the sync waits for it.
+        var keyState = _database?.Health.Suspended == true ? null : KeyStateOrUnreadable();
+        if (keyState is null)
+        {
+            MarkLibraryFollowSkipped();
+            return SyncStartResult.DatabaseSuspended;
+        }
+
+        if (keyState != KeyState.Ok)
         {
             MarkLibraryFollowSkipped();
             return SyncStartResult.Suspended;
@@ -301,11 +350,15 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         return SyncStartResult.Started;
     }
 
-    private async Task RunGuardedAsync(CancellationToken cancellationToken)
+    private Task RunGuardedAsync(CancellationToken cancellationToken) => RunGuardedAsync(ServerScope.All, cancellationToken);
+
+    private Task RunPendingGuardedAsync(CancellationToken cancellationToken) => RunGuardedAsync(ServerScope.Pending, cancellationToken);
+
+    private async Task RunGuardedAsync(ServerScope scope, CancellationToken cancellationToken)
     {
         try
         {
-            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, false, cancellationToken).ConfigureAwait(false);
+            await SyncAllAsync(SyncServerAsync, SyncRunKind.Reconciliation, false, scope, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -336,13 +389,16 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         await _index.DropServersAsync(removed, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, SyncRunKind kind, bool verifyEveryStub, CancellationToken cancellationToken)
+    private async Task SyncAllAsync(Func<RemoteServerInfo, CancellationToken, Task> syncServer, SyncRunKind kind, bool verifyEveryStub, ServerScope scope, CancellationToken cancellationToken)
     {
         var started = _run.StartedUtc ?? _timeProvider.GetUtcNow();
         IReadOnlyList<RemoteServerInfo> servers = [];
         var materialized = new Materialized(null, false);
         SyncRunOutcome? stopped = null;
         var followed = false;
+
+        // Taken before anything can fail, so that a failed run does not start again for the same servers.
+        var pending = TakePending(scope);
         try
         {
             if (_libraries is not null)
@@ -352,7 +408,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
             _runFailures.Clear();
             _runReads.Clear();
-            servers = _registry.GetServers();
+            var configured = _registry.GetServers();
+            servers = scope == ServerScope.Pending ? configured.Where(server => pending.Contains(server.Id)).ToList() : configured;
             foreach (var server in servers)
             {
                 await SyncWithinLimitAsync(server, syncServer, cancellationToken).ConfigureAwait(false);
@@ -398,6 +455,41 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             // Before the run shows finished: the page reads the history again when it sees a new end.
             await RecordAsync(kind, started, servers, materialized, stopped).ConfigureAwait(false);
             _run = _run with { IsRunning = false, FinishedUtc = _timeProvider.GetUtcNow() };
+            EndRun();
+        }
+    }
+
+    // Takes the servers waiting for a sync of their own. A full read of every server also covers them; the incremental one
+    // does not, since it reads only changes.
+    private HashSet<Guid> TakePending(ServerScope scope)
+    {
+        lock (_pendingLock)
+        {
+            var pending = _pendingServers.ToHashSet();
+            if (scope != ServerScope.Changes)
+            {
+                _pendingServers.Clear();
+            }
+
+            return pending;
+        }
+    }
+
+    // Releases the claim, or keeps it for the servers waiting for a sync of their own, so no other run comes between.
+    private void EndRun()
+    {
+        lock (_pendingLock)
+        {
+            if (_pendingServers.Count > 0 && !_shutdown.IsCancellationRequested
+                && _database?.Health.Suspended != true && KeyStateOrUnreadable() == KeyState.Ok)
+            {
+                _run = _run with { IsRunning = true, IndexSaveFailed = false, StartedUtc = _timeProvider.GetUtcNow() };
+                var cancellationToken = _shutdown.Token;
+                _ = Task.Run(() => RunPendingGuardedAsync(cancellationToken), CancellationToken.None);
+                return;
+            }
+
+            _pendingServers.Clear();
             var idle = _idle;
             Interlocked.Exchange(ref _busy, 0);
             idle.TrySetResult();
@@ -419,7 +511,11 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             {
                 var counts = report?.ByServer.GetValueOrDefault(server.Id) ?? new StubCounts(0, 0, 0, 0);
                 RemoteFailure? failure = _runFailures.TryGetValue(server.Id, out var failed) ? failed.Value : null;
-                return new SyncRunServer(server.Id, server.Name, _runReads.GetValueOrDefault(server.Id), counts.Created, counts.Updated, counts.Removed, counts.Failed, failure);
+                var vanished = _reader.TakeVanishedLibraries(server.Id);
+                return new SyncRunServer(server.Id, server.Name, _runReads.GetValueOrDefault(server.Id), counts.Created, counts.Updated, counts.Removed, counts.Failed, failure)
+                {
+                    Warning = vanished.Count > 0 ? new SyncRunWarning(vanished) : null
+                };
             }).ToList();
             var run = new SyncRun(started, (long)(_timeProvider.GetUtcNow() - started).TotalMilliseconds, kind, stopped ?? OutcomeOf(rows, report, materialized.Failed), rows)
             {
@@ -624,6 +720,8 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     private async Task SyncServerAsync(RemoteServerInfo server, CancellationToken cancellationToken)
     {
+        // Before the read: after a restore during it, the cursor is of an earlier opening and the next read is full again.
+        var generation = _database?.Generation ?? _index.Snapshot.Generation;
         var started = await ReadClockAsync(server, cancellationToken).ConfigureAwait(false);
         if (!started.IsSuccess)
         {
@@ -658,13 +756,16 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         var mark = new SyncMark(started.Value, server.ImportedLibraryIds);
         var saved = await _index.ReplaceServerAsync(server.Id, entries, _timeProvider.GetUtcNow(), mark, cancellationToken).ConfigureAwait(false);
         TrackSave(saved);
-        RememberCursor(server.Id, saved ? cursor : null);
+        RememberCursor(server.Id, saved ? cursor : null, generation);
     }
 
     private async Task SyncChangesAsync(RemoteServerInfo server, CancellationToken cancellationToken)
     {
-        var catalog = _index.Snapshot.Find(server.Id);
-        if (catalog is not { State: ServerSyncState.Complete, Mark: { } mark } || !CoversSameLibraries(mark, server))
+        // An index not yet read again from a restored database does not say what is missing.
+        var snapshot = _index.Snapshot;
+        var catalog = snapshot.Find(server.Id);
+        if (catalog is not { State: ServerSyncState.Complete, Mark: { } mark } || !CoversSameLibraries(mark, server)
+            || (_database is not null && _database.Generation != snapshot.Generation))
         {
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
             return;
@@ -672,7 +773,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
         if (server.Mode == RemoteMode.JellyMesh)
         {
-            await SyncFeedAsync(server, catalog, cancellationToken).ConfigureAwait(false);
+            await SyncFeedAsync(server, catalog, snapshot.Generation, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -694,14 +795,14 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger.LogInformation("Read {Count} changed catalog entries from remote server {ServerName}", read.Value!.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
-        TrackSave(await _index.MergeServerAsync(server.Id, KeepCollections(read.Value, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false));
+        TrackSave(await _index.MergeServerAsync(server.Id, KeepCollections(read.Value, catalog), _timeProvider.GetUtcNow(), next, snapshot.Generation, cancellationToken).ConfigureAwait(false));
     }
 
     // The change feed instead of polling. The mark still moves: if the remote stops being a JellyMesh one, polling goes on
-    // from here. Without a cursor, as after a restart of this server, only a full read can tell where things stand.
-    private async Task SyncFeedAsync(RemoteServerInfo server, ServerCatalog catalog, CancellationToken cancellationToken)
+    // from here. Without a cursor, as after a restart or a restored database, only a full read can tell where things stand.
+    private async Task SyncFeedAsync(RemoteServerInfo server, ServerCatalog catalog, long generation, CancellationToken cancellationToken)
     {
-        if (!_feedCursors.TryGetValue(server.Id, out var cursor))
+        if (!_feedCursors.TryGetValue(server.Id, out var place) || place.Generation != generation)
         {
             await SyncServerAsync(server, cancellationToken).ConfigureAwait(false);
             return;
@@ -715,7 +816,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         var known = catalog.Items.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
-        var read = await _reader.ReadFeedAsync(server, cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        var read = await _reader.ReadFeedAsync(server, place.Cursor, known, _timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
             await MarkFailedAsync(server, read.Failure, read.Error?.ToString(), cancellationToken).ConfigureAwait(false);
@@ -732,13 +833,13 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         _logger.LogInformation("Read {Count} entries from the change feed of remote server {ServerName}", read.Value.Items.Count, LogText.Clean(server.Name));
         _runReads[server.Id] = read.Value.Items.Count;
         var next = new SyncMark(started.Value, server.ImportedLibraryIds);
-        var saved = await _index.MergeServerAsync(server.Id, KeepCollections(read.Value.Items, catalog), _timeProvider.GetUtcNow(), next, cancellationToken).ConfigureAwait(false);
+        var saved = await _index.MergeServerAsync(server.Id, KeepCollections(read.Value.Items, catalog), _timeProvider.GetUtcNow(), next, generation, cancellationToken).ConfigureAwait(false);
         TrackSave(saved);
 
         // Not saved means not applied, so the old cursor reads the same changes again.
         if (saved)
         {
-            RememberCursor(server.Id, read.Value.Cursor);
+            RememberCursor(server.Id, read.Value.Cursor, generation);
         }
     }
 
@@ -761,7 +862,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
 
         var films = entries.Where(item => item.Kind == IndexedItemKind.Movie).ToList();
-        var libraries = films.Select(item => item.LibraryId).Distinct(StringComparer.Ordinal).ToList();
+        var libraries = films.SelectMany(item => item.LibraryIds).Distinct(StringComparer.Ordinal).ToList();
         if (libraries.Count == 0)
         {
             return entries;
@@ -780,7 +881,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
             .ToList();
     }
 
-    private void RememberCursor(Guid serverId, string? cursor)
+    private void RememberCursor(Guid serverId, string? cursor, long generation)
     {
         if (cursor is null)
         {
@@ -788,7 +889,7 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
         }
         else
         {
-            _feedCursors[serverId] = cursor;
+            _feedCursors[serverId] = (cursor, generation);
         }
     }
 
@@ -816,9 +917,22 @@ public sealed class CatalogSyncService : ICatalogSyncService, IDisposable
 
     // A scheduled sync, before it claims the run, writes once each stored password that no longer decrypts (49). A missing
     // key is not that.
+    // Null while the settings cannot be read from the database.
+    private KeyState? KeyStateOrUnreadable()
+    {
+        try
+        {
+            return _vault.GetKeyState();
+        }
+        catch (StoreSuspendedException)
+        {
+            return null;
+        }
+    }
+
     private void ReportUnreadablePasswords()
     {
-        if (_activity is null || _vault.GetKeyState() == KeyState.Missing)
+        if (_activity is null || KeyStateOrUnreadable() is null or KeyState.Missing)
         {
             return;
         }

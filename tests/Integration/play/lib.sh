@@ -37,6 +37,9 @@ FAILED=0
 check() { # check <what> <expected> <got>
   if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected [$2], got [$3]"; FAILED=1; fi
 }
+check_some() { # check_some <what> <expected> <got>: the same, and fails when there is nothing to compare
+  if [ -n "$2" ]; then check "$@"; else echo "FAIL $1: nothing to compare with, got [$3]"; FAILED=1; fi
+}
 
 wait_ready() {
   local i
@@ -108,20 +111,59 @@ sync_now() {
   return 1
 }
 
-settings() { # settings <server> <jq filter>: changes the plugin settings
+settings() { # settings <server> <jq filter>: changes the plugin settings, as the page saves them
+  local c
+  c=$(get "$1" /JellyMesh/Admin/Settings | jq -c "($2) | del(.FixedByEnvironment)")
+  req "$1" PUT /JellyMesh/Admin/Settings "$c" >/dev/null
+  status
+}
+
+# old_settings <server> <jq filter>: the same on a build before 0.6, which kept its settings in the stock plugin XML.
+old_settings() {
   local c
   c=$(get "$1" "/Plugins/$PLUGIN/Configuration" | jq -c "$2")
   post "$1" "/Plugins/$PLUGIN/Configuration" "$c" >/dev/null
   status
 }
 
+# Where 0.6 and later keep their data, and where the migration leaves the files of 0.4 and 0.5.
+DATA=/config/plugins/Jellyfin.Plugin.JellyMesh
+OLD_XML=/config/plugins/configurations/Jellyfin.Plugin.JellyMesh.xml
+# db_query <server> <sql>: reads the plugin database from a copy, so the running server is not disturbed.
+db_query() {
+  docker run --rm -v "$(name_of "$1")-config:/config:ro" "$PW_IMAGE" python3 -c '
+import glob, shutil, sqlite3, sys
+for f in glob.glob(sys.argv[1] + "/jellymesh.db*"): shutil.copy(f, "/tmp/")
+for row in sqlite3.connect("/tmp/jellymesh.db").execute(sys.argv[2]): print("|".join(map(str, row)))
+' "$DATA" "$2"
+}
+
 add_remote() { # add_remote <consumer> <name> <url> <user> -> server id
   post "$1" /JellyMesh/Admin/Servers "$(jq -n --arg n "$2" --arg u "$3" --arg x "$4" '{Name:$n,Url:$u,Username:$x,Password:"jellymesh-test"}')" | jq -r .Id
 }
 
-import_all() { # import_all <consumer> <server id>
+# server_form <consumer> <server id> [json]: the edit form of a server with those fields changed. An empty user and
+# password keep the saved ones.
+server_form() {
+  local changes=${3:-'{}'}
+  get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" --argjson c "$changes" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""} + $c'
+}
+# save_server / check_server <consumer> <server id> [json]: saves or checks that form. The status goes to $WORK/status.
+save_server() { req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(server_form "$1" "$2" "${3:-}")"; }
+check_server() { req "$1" POST "/JellyMesh/Admin/Servers/$2/Edit/Check" "$(server_form "$1" "$2" "${3:-}")"; }
+
+import_all() { # import_all <consumer> <server id>: every library the remote user sees, saved with the edit form
+  local form ids
+  form=$(get "$1" /JellyMesh/Admin/Status | jq -c --arg id "$2" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  ids=$(post "$1" "/JellyMesh/Admin/Servers/$2/Edit/Check" "$form" | jq -c '[.Libraries[].Id] | select(length > 0)')
+  [ -n "$ids" ] || { echo "$1 listed no library of $2: $(status)" >&2; return 1; }
+  req "$1" PUT "/JellyMesh/Admin/Servers/$2" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
+}
+# import_all_old <consumer> <server id>: the same on a build before 0.6, which has no edit form.
+import_all_old() {
   local ids
-  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)}')
+  ids=$(get "$1" "/JellyMesh/Admin/Servers/$2/Libraries" | jq -c '{LibraryIds: map(.Id)} | select(.LibraryIds | length > 0)')
+  [ -n "$ids" ] || { echo "$1 listed no library of $2: $(status)" >&2; return 1; }
   post "$1" "/JellyMesh/Admin/Servers/$2/Libraries" "$ids" >/dev/null
 }
 
@@ -130,12 +172,16 @@ stub_item() { get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path
 local_item() { get "$1" '/Items?Recursive=true&IncludeItemTypes=Movie&Fields=Path' | jq -r --arg t "$2" '[.Items[] | select((.Path // "") | (contains($t) and startswith("/media")))][0].Id // ""'; }
 stub_url() { get "$1" "/Items?Ids=$2&Fields=MediaSources" | jq -r '.Items[0].MediaSources[0].Path'; }
 
-# strm_file <server> <title> [folder]: the .strm of a title, by default in the Film folder of a remote server.
-strm_file() { docker exec "$(name_of "$1")" sh -c "find ${3:-/federata/*/Film} -name '*.strm' | grep -F \"$2\" | head -1"; }
-strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find ${3:-/federata/*/Film} -name '*.strm' | grep -F \"$2\" | head -1)\""; }
+# strm_file <server> <title> [folder]: the .strm of a title, by default in the Film folder of a remote library.
+strm_file() { docker exec "$(name_of "$1")" sh -c "find ${3:-/federata/*/*/Film} -name '*.strm' | grep -F \"$2\" | head -1"; }
+strm_text() { docker exec "$(name_of "$1")" sh -c "cat \"\$(find ${3:-/federata/*/*/Film} -name '*.strm' | grep -F \"$2\" | head -1)\""; }
 
 # server_folder <server id>: the folder of a remote server, as the plugin names it.
 server_folder() { local id=${1//-/}; echo "/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}"; }
+# type_folder <server id> <Film|Serie> [server]: the type folder of the one remote library of that kind of a remote server.
+type_folder() {
+  docker exec "$(name_of "${3:-local}")" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null | head -1 | grep ." || { echo "no $2 folder of $1" >&2; return 1; }
+}
 # link_folder <server> <library> <path>: adds a path to a library, as an admin does. Prints the status.
 link_folder() {
   post "$1" "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg n "$2" --arg p "$3" '{Name: $n, PathInfo: {Path: $p}}')" >/dev/null

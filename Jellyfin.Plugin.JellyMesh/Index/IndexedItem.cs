@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace Jellyfin.Plugin.JellyMesh.Index;
 
@@ -20,8 +21,15 @@ public sealed record IndexedItem
     /// <summary>Gets the kind of entry.</summary>
     public required IndexedItemKind Kind { get; init; }
 
-    /// <summary>Gets the remote library the entry was read from.</summary>
+    /// <summary>Gets the remote library the entry was read from, the first one when several imported libraries hold it.</summary>
     public required string LibraryId { get; init; }
+
+    /// <summary>Gets the other imported libraries that hold the same entry, in the order they were read.</summary>
+    public IReadOnlyList<string> OtherLibraryIds { get; init; } = [];
+
+    /// <summary>Gets every imported library that holds the entry, <see cref="LibraryId"/> first.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> LibraryIds => [LibraryId, .. OtherLibraryIds];
 
     /// <summary>Gets when the entry was last seen on the server.</summary>
     public required DateTimeOffset LastSeenUtc { get; init; }

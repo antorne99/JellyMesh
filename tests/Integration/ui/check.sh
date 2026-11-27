@@ -39,6 +39,8 @@ else
   run controls control-themes
   run merge-details
   run cards cards-in-place cards-themes
+  run edit-form edit-locks edit-gone mode-change adopted recreate
+  run server-notes store shared-libraries shared-errors new-library-mode
 
   block_key first
   run first-nokey overview-first-nokey

@@ -18,6 +18,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Entities;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -32,6 +33,7 @@ public sealed class VersionLinkerTests : IDisposable
     private static readonly Guid _serverC = Guid.NewGuid();
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-linker-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
@@ -54,7 +56,8 @@ public sealed class VersionLinkerTests : IDisposable
     public VersionLinkerTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
-        _registry = new StubRegistry(Path.Combine(_data, "plugin"), _store, new CapturingLogger<StubRegistry>());
+        _database = new TestDatabase(Path.Combine(_data, "plugin"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
 
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), It.IsAny<Type>())).Returns((string key, Type type) => IdOf(key, type));
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
@@ -94,6 +97,7 @@ public sealed class VersionLinkerTests : IDisposable
     public void Dispose()
     {
         _registry.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);
@@ -646,6 +650,31 @@ public sealed class VersionLinkerTests : IDisposable
         Assert.Equal(0, Data(itemA).PlayCount);
         _userData.Verify(data => data.SaveUserData(_user, itemA, It.IsAny<UserItemData>(), UserDataSaveReason.Import, It.IsAny<CancellationToken>()), Times.Once);
         _userData.Verify(data => data.SaveUserData(_user, local, It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Row 543: what it was played is of one episode, and a local copy would take it.
+    [Fact]
+    public async Task AStubWithTheStateOfOneEpisodeIsNotLinkedBeforeItIsCleared()
+    {
+        var local = Local();
+        var a = Stub("sa", _serverA, 1080) with { StateOfOneUntil = _newer };
+        var b = Stub("sb", _serverB, 2160);
+        await SaveAsync([a, b], Group("g", ["sa", "sb"], [local.Id]));
+        var itemA = Scanned(a);
+        var itemB = Scanned(b);
+        Data(itemA).Played = true;
+        Data(itemA).LastPlayedDate = _older;
+
+        await _linker.LinkAsync(true, CancellationToken.None);
+        Assert.Equal((false, false), (Data(local).Played, Data(itemB).Played));
+        Assert.Equal([itemB.Id], LinkedIds(local));
+        Assert.Null(itemA.PrimaryVersionId);
+
+        Data(itemA).Played = false;
+        Data(itemA).LastPlayedDate = null;
+        await SaveAsync([a with { StateOfOneUntil = null }, b], Group("g", ["sa", "sb"], [local.Id]));
+        await _linker.LinkAsync(false, CancellationToken.None);
+        Assert.Equal(local.Id, itemA.PrimaryVersionId);
     }
 
     [Fact]

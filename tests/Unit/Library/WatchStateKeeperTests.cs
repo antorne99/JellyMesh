@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.JellyMesh.Dedup;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Sync;
@@ -15,6 +16,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -85,7 +87,7 @@ public sealed class WatchStateKeeperTests : IDisposable
                 _byPath.Remove(item.Path);
             });
 
-        _kept = new KeptWatchStateStore(_data, new CapturingLogger<KeptWatchStateStore>());
+        _kept = new KeptWatchStateStore(_fixture.Database);
         _keeper = Keeper(_kept);
         _materializer = MaterializerWith(_keeper);
     }
@@ -93,7 +95,6 @@ public sealed class WatchStateKeeperTests : IDisposable
     public void Dispose()
     {
         _keeper.Dispose();
-        _kept.Dispose();
         _fixture.Dispose();
         if (Directory.Exists(_data))
         {
@@ -104,7 +105,7 @@ public sealed class WatchStateKeeperTests : IDisposable
     private static RemoteItem FilmWithoutIds(string id = "nf", long runtime = NinetyMinutes) =>
         TestItems.Movie(id, "Sonda Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = runtime };
 
-    private WatchStateKeeper Keeper(IKeptWatchStateStore store) => new(
+    private WatchStateKeeper Keeper(IKeptWatchStateStore store, IManualMergeStore? merges = null) => new(
         _fixture.Registry,
         _fixture.Sync.Index,
         _fixture.Sync.Registry,
@@ -113,6 +114,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         _users.Object,
         _userData.Object,
         store,
+        merges ?? _fixture.Merges,
         _fixture.Sync.Clock,
         _logger);
 
@@ -206,8 +208,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AFilmWithoutIdsGetsItsStateBackWhenItsServerIsAddedAgain()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Resume(_bruno, old, 9_000_000_000);
@@ -220,7 +222,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Equal(2, kept.Users.Count);
 
         // Added again it is a new server (row 408), and its stub has no item until the scan.
-        var again = await AddAndMaterializeAsync("A", "films");
+        var again = await AddAndMaterializeAsync("A", TestLibraries.Films);
         await _keeper.RestoreAsync(CancellationToken.None);
         Assert.Single(await _kept.ReadAsync(CancellationToken.None));
 
@@ -235,12 +237,40 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // The numbers of a database that came back from its copy meanwhile may be those of other titles.
+    [Fact]
+    public async Task ADatabaseReopenedWhileTheStateGoesBackForgetsNothing()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        Watch(_anna, FilmItem(a));
+        await RemoveAsync(a);
+        FilmItem(await AddAndMaterializeAsync("A", TestLibraries.Films));
+        var reopened = false;
+        _userData.Setup(data => data.SaveUserData(It.IsAny<User>(), It.IsAny<BaseItem>(), It.IsAny<UserItemData>(), It.IsAny<UserDataSaveReason>(), It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                if (!reopened)
+                {
+                    reopened = true;
+                    _fixture.Database.Reopen();
+                }
+            });
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+        Assert.DoesNotContain(_logger.Lines, line => line.Contains("Put back", StringComparison.Ordinal));
+        await _keeper.RestoreAsync(CancellationToken.None);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task TheStateGoesRightAwayToAServerThatAlreadyHasTheContent()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
-        var b = await AddAndMaterializeAsync("B", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var old = FilmItem(a);
         var other = FilmItem(b);
         Watch(_anna, old);
@@ -254,13 +284,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task EveryServerThatHasTheContentGetsTheState()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
-        var a = await _fixture.Sync.AddServerAsync("A", "films", "shows");
-        var b = await _fixture.Sync.AddServerAsync("B", "films", "shows");
-        var c = await _fixture.Sync.AddServerAsync("C", "films", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
+        var b = await _fixture.Sync.AddServerAsync("B", TestLibraries.Films, TestLibraries.Shows);
+        var c = await _fixture.Sync.AddServerAsync("C", TestLibraries.Films, TestLibraries.Shows);
         await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
         await _materializer.MaterializeAsync(CancellationToken.None);
         var old = FilmItem(a, "Film");
@@ -282,9 +312,9 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheRecordsOfTwoRemovedServersBothComeBack()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
-        var b = await AddAndMaterializeAsync("B", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         Watch(_anna, FilmItem(a), 1, _watched);
         Row(_bruno, FilmItem(b)).IsFavorite = true;
         using (var sync = SyncWith(_materializer))
@@ -296,7 +326,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.Equal(2, (await _kept.ReadAsync(CancellationToken.None)).Count);
 
-        var c = await AddAndMaterializeAsync("C", "films");
+        var c = await AddAndMaterializeAsync("C", TestLibraries.Films);
         var fresh = FilmItem(c);
         await _keeper.RestoreAsync(CancellationToken.None);
 
@@ -308,14 +338,14 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AFilmWithoutIdsWhoseMetadataDiffersGetsNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         await RemoveAsync(a);
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)].Clear();
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds("other", NinetyMinutes * 2));
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].Clear();
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds("other", NinetyMinutes * 2));
 
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var other = FilmItem(b, NinetyMinutes * 2);
         await _keeper.RestoreAsync(CancellationToken.None);
 
@@ -326,13 +356,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ANewerStateOnTheNewCopyWinsAndAFavoriteIsAdded()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Row(_anna, old).IsFavorite = true;
         await RemoveAsync(a);
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var fresh = FilmItem(b);
         Row(_anna, fresh).PlaybackPositionTicks = 5;
         Row(_anna, fresh).LastPlayedDate = _watched.AddDays(1);
@@ -348,13 +378,13 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AUserWhoDoesNotSeeTheNewCopyKeepsTheRecord()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Watch(_bruno, old);
         await RemoveAsync(a);
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var fresh = FilmItem(b);
         _hidden.Add((_bruno.Id, fresh.Id));
 
@@ -368,11 +398,11 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ARowThatCannotBeSavedStaysForALaterRun()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         await RemoveAsync(a);
-        var b = await AddAndMaterializeAsync("B", "films");
+        var b = await AddAndMaterializeAsync("B", TestLibraries.Films);
         var fresh = FilmItem(b);
         _failingSaves.Add(fresh.Id);
 
@@ -391,8 +421,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ARecordNobodyUsedGoesAfter90Days()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         await RemoveAsync(a);
 
@@ -408,8 +438,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheRowsOfAUserWhoIsGoneAreForgotten()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         Watch(_bruno, old);
@@ -424,8 +454,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task WithoutUsersTheStubsOfARemovedServerStayUntilTheirStateIsSaved()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         Watch(_anna, old);
         var path = old.Path;
@@ -435,7 +465,7 @@ public sealed class WatchStateKeeperTests : IDisposable
 
         Assert.True(File.Exists(path));
         Assert.Single(_fixture.Registry.State.Stubs);
-        Assert.False(File.Exists(Path.Combine(_data, KeptWatchStateStore.FileName)));
+        Assert.Equal(0, _fixture.Database.Count("kept_titles"));
 
         _everyone = [_anna, _bruno];
         using var sync = SyncWith(_materializer);
@@ -449,10 +479,11 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AStoreThatFailsHoldsTheRemovalAndTheServerFolder()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var failing = new Mock<IKeptWatchStateStore>();
+        failing.Setup(store => store.ReadMergesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         failing.Setup(store => store.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("/secret"));
         using var keeper = Keeper(failing.Object);
 
@@ -467,11 +498,12 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AHeldRemovalIsListedByNameUntilTheSaveSucceeds()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("Casa di <b>Anna</b>", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("Casa di <b>Anna</b>", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var fails = true;
         var store = new Mock<IKeptWatchStateStore>();
+        store.Setup(kept => kept.ReadMergesAsync(It.IsAny<CancellationToken>())).Returns<CancellationToken>(_kept.ReadMergesAsync);
         store.Setup(kept => kept.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>()))
             .Returns((IReadOnlyCollection<KeptTitle> titles, CancellationToken token) => fails ? throw new IOException("/secret") : _kept.SaveAsync(titles, token));
         using var keeper = Keeper(store.Object);
@@ -500,8 +532,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task ARemovalHeldForUsersThatCannotBeReadIsListedToo()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         _everyone = [];
 
@@ -519,8 +551,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AServerThatRemovesWithNoTroubleIsNeverListed()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
 
         await RemoveAsync(a);
@@ -582,11 +614,12 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task AStoreThatFailsHoldsTheAutomaticLibrariesOfTheRemovedServer()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         Watch(_anna, FilmItem(a));
         var fails = true;
         var store = new Mock<IKeptWatchStateStore>();
+        store.Setup(kept => kept.ReadMergesAsync(It.IsAny<CancellationToken>())).Returns<CancellationToken>(_kept.ReadMergesAsync);
         store.Setup(kept => kept.SaveAsync(It.IsAny<IReadOnlyCollection<KeptTitle>>(), It.IsAny<CancellationToken>()))
             .Returns((IReadOnlyCollection<KeptTitle> titles, CancellationToken token) => fails ? throw new IOException("/secret") : _kept.SaveAsync(titles, token));
         using var keeper = Keeper(store.Object);
@@ -601,6 +634,8 @@ public sealed class WatchStateKeeperTests : IDisposable
             Mock.Of<ILibraryMaterializer>(),
             new ServerLibraryManagerTests.FakeRenamer { Libraries = libraries },
             _fixture.Registry,
+            new LibraryPaths(libraries.Object, new CapturingLogger<LibraryPaths>()),
+            Mock.Of<MediaBrowser.Controller.IServerApplicationHost>(),
             new CapturingLogger<ServerLibraryManager>());
         await manager.Enable(a.Id).Job;
         var created = libraries.Folders.Select(folder => folder.Name).ToList();
@@ -608,7 +643,10 @@ public sealed class WatchStateKeeperTests : IDisposable
         await RemoveAsync(a, MaterializerWith(keeper));
         await manager.DeleteRemovedServerLibraries();
 
-        Assert.Equal(2, created.Count);
+        Assert.Single(created);
+        Assert.Equal(
+            [FederatedPaths.Resolve(_fixture.Root, FederatedPaths.TypeFolderOf(a.Id, TestLibraries.Films, TypeFolder.Movies))],
+            libraries.Created.Single().Options.PathInfos.Select(info => info.Path));
         Assert.Empty(libraries.Removed);
         Assert.Single(_fixture.Registry.State.Stubs);
 
@@ -625,8 +663,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TheStubOfTheRemovedServerItselfGetsNothing()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         var old = FilmItem(a);
         await _kept.SaveAsync(
             [new KeptTitle { OldItemId = Guid.NewGuid(), Kind = KeptTitleKind.Movie, Title = "Sonda Senza ID", Year = 2026, RunTimeTicks = NinetyMinutes, SavedUtc = _fixture.Sync.Clock.Now.UtcDateTime, Users = [new KeptUserState(_anna.Id, true, 1, 0, _watched, false, null)] }],
@@ -643,8 +681,8 @@ public sealed class WatchStateKeeperTests : IDisposable
     [Fact]
     public async Task TitlesNobodyWatchedAreNotKept()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        var a = await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
         FilmItem(a);
 
         await RemoveAsync(a);
@@ -652,24 +690,41 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    // Row 543: the state still to clear is of one episode of the several its stub covers.
     [Fact]
-    public async Task AServerThatNeverRemovedOneMakesNoFile()
+    public async Task AStateStillToClearIsNotKept()
     {
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, FilmWithoutIds());
-        await AddAndMaterializeAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        Watch(_anna, FilmItem(a));
+        var stub = StubOf(a);
+
+        Assert.True(await _keeper.KeepAsync(_fixture.Root, [stub with { StateOfOneUntil = _watched }], [], CancellationToken.None));
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+
+        Assert.True(await _keeper.KeepAsync(_fixture.Root, [stub], [], CancellationToken.None));
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AServerThatNeverRemovedOneWritesNothing()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var writes = _fixture.Database.Writes;
 
         await _keeper.RestoreAsync(CancellationToken.None);
 
-        Assert.False(File.Exists(Path.Combine(_data, KeptWatchStateStore.FileName)));
+        Assert.Equal(writes, _fixture.Database.Writes);
     }
 
     [Fact]
     public async Task ASeriesWithoutIdsGetsItsEpisodesAndItsFavoriteBack()
     {
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
-        _fixture.Sync.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
-        var a = await AddAndMaterializeAsync("A", "shows");
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
         var (oldSeries, oldEpisode) = ShowItems(a);
         Row(_anna, oldSeries).IsFavorite = true;
         Watch(_anna, oldEpisode, 1);
@@ -680,7 +735,7 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(_fixture.Registry.State.Series);
         Assert.Equal(2, (await _kept.ReadAsync(CancellationToken.None)).Count);
 
-        var again = await AddAndMaterializeAsync("A", "shows");
+        var again = await AddAndMaterializeAsync("A", TestLibraries.Shows);
         var (series, episode) = ShowItems(again);
         await _keeper.RestoreAsync(CancellationToken.None);
 
@@ -690,18 +745,288 @@ public sealed class WatchStateKeeperTests : IDisposable
         Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ASeriesWithTwoRowsOfOneIdGetsItsStateBack()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID"));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
+        var (_, oldEpisode) = ShowItems(a);
+        Watch(_anna, oldEpisode, 1);
+        await RemoveAsync(a);
+
+        var again = await AddAndMaterializeAsync("A", TestLibraries.Shows);
+        var (_, episode) = ShowItems(again);
+        var state = _fixture.Registry.State;
+        await _fixture.Registry.SaveAsync(state with { Series = [.. state.Series, state.Series[0] with { WorkKey = "other" }] }, CancellationToken.None);
+        Assert.Equal(2, _fixture.Registry.State.Series.Count);
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, episode).Played);
+    }
+
+    // D21: a title merged by hand gets the kept state of each of its identities, on every copy of it.
+    [Fact]
+    public async Task AMergedTitleGetsTheKeptStateOfEachOfItsIdentities()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
+        await MergeAsync((a, "x", "1"), (c, "y", null));
+        var alfa = FilmItem(a);
+        var sonda = FilmItem(c);
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna), KeptFilm("Sonda Senza ID", null, _bruno)], CancellationToken.None);
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.All(new[] { alfa, sonda }, film => Assert.True(Row(_anna, film).Played));
+        Assert.All(new[] { alfa, sonda }, film => Assert.True(Row(_bruno, film).Played));
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D21: two films of one server merged by hand are one stub, which gets the kept state of each.
+    [Fact]
+    public async Task AStubOfTwoFilmsMergedByHandGetsTheKeptStateOfEach()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films, TestLibraries.FilmsC);
+        await _fixture.Sync.Sync.RunAsync(CancellationToken.None);
+        await MergeAsync((a, "x", "1"), (a, "y", null));
+        var film = FilmItem(a);
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna), KeptFilm("Sonda Senza ID", null, _bruno)], CancellationToken.None);
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.True(Row(_anna, film).Played);
+        Assert.True(Row(_bruno, film).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D21 through a removal: the copy of the removed server finds the merged title by its own identity, and every copy of it.
+    [Fact]
+    public async Task TheCopyOfARemovedServerFindsEveryCopyOfAMergedTitle()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.FilmsC);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
+        await MergeAsync((a, "x", "1"), (c, "y", null));
+        var alfa = FilmItem(a);
+        var sonda = FilmItem(c);
+        Watch(_bruno, FilmItem(b));
+
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(b.Id, () => _fixture.Sync.Registry.RemoveAsync(b.Id), CancellationToken.None);
+            await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, b.Id.ToString("N")), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.True(Row(_bruno, sonda).Played);
+        Assert.True(Row(_bruno, alfa).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D33: the kept state belongs to the user on the title. A copy without IDs merged by hand sat on the removed server, so
+    // the merge loses it, and the copy left on another server still finds the state.
+    [Fact]
+    public async Task TheKeptStateOfAMergedCopyOnTheRemovedServerFindsTheCopyLeft()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
+        await MergeAsync((a, "x", "1"), (c, "y", null));
+        var alfa = FilmItem(a);
+        Watch(_bruno, FilmItem(c));
+
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(c.Id, () => _fixture.Sync.Registry.RemoveAsync(c.Id), CancellationToken.None);
+            // As the settings page does: the merges are kept for the watch state before the copies of the server leave them.
+            Assert.True(await _keeper.KeepMergesAsync(c.Id, _fixture.Merges.Merges, CancellationToken.None));
+            await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, c.Id.ToString("N")), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.True(Row(_bruno, alfa).Played);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // The merges kept for a removed server serve only its own titles: one undone meanwhile joins nothing for another server.
+    [Fact]
+    public async Task TheMergesKeptForARemovedServerServeOnlyItsTitles()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "B", "movies"));
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsC, "C", "movies"));
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("z", "Zeta", 2024) with { ProviderIds = new Dictionary<string, string?>(), RunTimeTicks = NinetyMinutes });
+        _fixture.Sync.Client.Add(TestLibraries.FilmsC, RemoteItemType.Movie, FilmWithoutIds("y"));
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var b = await AddAndMaterializeAsync("B", TestLibraries.FilmsB);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.FilmsC);
+        await MergeAsync((a, "x", "1"), (b, "z", null), (c, "y", null));
+        var alfa = FilmItem(a);
+        await RemoveAsKeptAsync(c);
+        await _fixture.Merges.UpdateAsync(_ => [], CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        Watch(_anna, FilmItem(b));
+
+        await RemoveAsKeptAsync(b);
+
+        Assert.False(Row(_anna, alfa).Played);
+        Assert.Empty(Assert.Single(await _kept.ReadAsync(CancellationToken.None)).Copies);
+    }
+
+    // The manual merges that cannot be read hold the titles of a removed server, which would miss their other copies.
+    [Fact]
+    public async Task WhileTheMergesCannotBeReadTheTitlesOfARemovedServerAreHeld()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, FilmWithoutIds());
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        Watch(_anna, FilmItem(a));
+        var damaged = new Mock<IManualMergeStore>();
+        damaged.Setup(merges => merges.IsDamaged).Returns(true);
+        damaged.Setup(merges => merges.Merges).Returns([]);
+        using var keeper = Keeper(_kept, damaged.Object);
+
+        await RemoveAsync(a, MaterializerWith(keeper));
+
+        Assert.Single(_fixture.Registry.State.Stubs);
+        Assert.Single(keeper.HeldRemovals);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // D33 for a series: its episodes and its favorite find the series left in the merge through its series items.
+    [Fact]
+    public async Task TheKeptStateOfAMergedSeriesOnTheRemovedServerFindsTheSeriesLeft()
+    {
+        _fixture.Sync.Client.Libraries.Add(new RemoteLibrary(TestLibraries.ShowsC, "C", "tvshows"));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s", "Serie Senza ID", 2026) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("ss1", "s", 1));
+        _fixture.Sync.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e", "s", 1, 2, "Serie Senza ID") with { SeasonId = "ss1" });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsC, RemoteItemType.Series, TestItems.Series("t", "Altra Serie", 2025) with { ProviderIds = new Dictionary<string, string?>() });
+        _fixture.Sync.Client.Add(TestLibraries.ShowsC, RemoteItemType.Season, TestItems.Season("ts1", "t", 1));
+        _fixture.Sync.Client.Add(TestLibraries.ShowsC, RemoteItemType.Episode, TestItems.Episode("f", "t", 1, 2, "Altra Serie") with { SeasonId = "ts1" });
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Shows);
+        var c = await AddAndMaterializeAsync("C", TestLibraries.ShowsC);
+        var merge = new ManualMerge
+        {
+            Id = Guid.NewGuid(),
+            CreatedUtc = SyncFixture.Start,
+            Copies =
+            [
+                new MergedCopy { ServerId = a.Id.ToString("N"), ItemId = "s", Kind = ContentKind.Episode },
+                new MergedCopy { ServerId = c.Id.ToString("N"), ItemId = "t", Kind = ContentKind.Episode }
+            ]
+        };
+        await _fixture.Merges.UpdateAsync(_ => [merge], CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+        var (series, episode) = ShowItems(a);
+        var (oldSeries, oldEpisode) = ShowItems(c, "Altra Serie", 2025);
+        Watch(_bruno, oldEpisode);
+        Row(_bruno, oldSeries).IsFavorite = true;
+
+        using (var sync = SyncWith(_materializer))
+        {
+            await sync.RemoveServerAsync(c.Id, () => _fixture.Sync.Registry.RemoveAsync(c.Id), CancellationToken.None);
+            Assert.True(await _keeper.KeepMergesAsync(c.Id, _fixture.Merges.Merges, CancellationToken.None));
+            await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, c.Id.ToString("N")), CancellationToken.None);
+            await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+        }
+
+        Assert.True(Row(_bruno, episode).Played);
+        Assert.True(Row(_bruno, series).IsFavorite);
+        Assert.Empty(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // A suspended database holds the records without an error on every run.
+    [Fact]
+    public async Task WhileTheDatabaseIsSuspendedTheRecordsWaitWithoutAnError()
+    {
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna)], CancellationToken.None);
+        _fixture.Database.Suspended = true;
+
+        await _keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(LogLevel.Error, _logger.Levels);
+        _fixture.Database.Suspended = false;
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Merges that cannot be read could leave out a copy: the records wait for a run that reads them.
+    [Fact]
+    public async Task WhileTheMergesCannotBeReadTheRecordsWait()
+    {
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("x", "Alfa", 2026, "1") with { RunTimeTicks = NinetyMinutes });
+        var a = await AddAndMaterializeAsync("A", TestLibraries.Films);
+        var alfa = FilmItem(a);
+        await _kept.SaveAsync([KeptFilm("Alfa", "1", _anna)], CancellationToken.None);
+        var damaged = new Mock<IManualMergeStore>();
+        damaged.Setup(merges => merges.IsDamaged).Returns(true);
+        damaged.Setup(merges => merges.Merges).Returns([]);
+        using var keeper = Keeper(_kept, damaged.Object);
+
+        await keeper.RestoreAsync(CancellationToken.None);
+
+        Assert.False(Row(_anna, alfa).Played);
+        Assert.Single(await _kept.ReadAsync(CancellationToken.None));
+    }
+
+    // Removes a server as the settings page does: its merges are kept for the watch state before its copies leave them.
+    private async Task RemoveAsKeptAsync(RemoteServerInfo server)
+    {
+        var id = server.Id.ToString("N");
+        using var sync = SyncWith(_materializer);
+        await sync.RemoveServerAsync(server.Id, () => _fixture.Sync.Registry.RemoveAsync(server.Id), CancellationToken.None);
+        Assert.True(await _keeper.KeepMergesAsync(server.Id, _fixture.Merges.Merges.Where(merge => ManualMergeService.HasCopyOn(merge, id)).ToList(), CancellationToken.None));
+        await _fixture.Merges.UpdateAsync(merges => ManualMergeService.WithoutServer(merges, id), CancellationToken.None);
+        await sync.CleanUpAfterRemovalAsync(CancellationToken.None);
+    }
+
+    private async Task MergeAsync(params (RemoteServerInfo Server, string ItemId, string? Tmdb)[] copies)
+    {
+        var merge = new ManualMerge
+        {
+            Id = Guid.NewGuid(),
+            CreatedUtc = SyncFixture.Start,
+            Copies = copies.Select(copy => new MergedCopy { ServerId = copy.Server.Id.ToString("N"), ItemId = copy.ItemId, Kind = ContentKind.Movie, Tmdb = copy.Tmdb }).ToList()
+        };
+        await _fixture.Merges.UpdateAsync(_ => [merge], CancellationToken.None);
+        await _materializer.MaterializeAsync(CancellationToken.None);
+    }
+
+    private static KeptTitle KeptFilm(string title, string? tmdb, User user) => new()
+    {
+        OldItemId = Guid.NewGuid(),
+        Kind = KeptTitleKind.Movie,
+        Title = title,
+        Year = 2026,
+        Ids = new ContentIds(tmdb, null, null),
+        RunTimeTicks = NinetyMinutes,
+        SavedUtc = _watched,
+        Users = [new KeptUserState(user.Id, true, 1, 0, _watched, false, null)]
+    };
+
     // The items a scan makes of the series stub and its one episode.
-    private (Series Series, Episode Episode) ShowItems(RemoteServerInfo server)
+    private (Series Series, Episode Episode) ShowItems(RemoteServerInfo server, string name = "Serie Senza ID", int year = 2026)
     {
         var entry = _fixture.Registry.State.Series.Single(series => series.ServerId == server.Id);
-        var series = new Series { Id = Guid.NewGuid(), Path = FederatedPaths.Resolve(_fixture.Root, entry.RelativePath), Name = "Serie Senza ID", ProductionYear = 2026 };
+        var series = new Series { Id = Guid.NewGuid(), Path = FederatedPaths.Resolve(_fixture.Root, entry.RelativePath), Name = name, ProductionYear = year };
         var episode = new Episode
         {
             Id = Guid.NewGuid(),
             Path = FederatedPaths.Resolve(_fixture.Root, _fixture.Registry.State.Stubs.Single(stub => stub.ServerId == server.Id && stub.Kind != StubKind.Movie).RelativePath),
             Name = "Episode",
             SeriesId = series.Id,
-            SeriesName = "Serie Senza ID",
+            SeriesName = name,
             ParentIndexNumber = 1,
             IndexNumber = 2
         };

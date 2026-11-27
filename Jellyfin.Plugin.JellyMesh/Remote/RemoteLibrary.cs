@@ -8,4 +8,10 @@ namespace Jellyfin.Plugin.JellyMesh.Remote;
 /// <param name="Id">The remote library identifier.</param>
 /// <param name="Name">The name on the remote. Untrusted text.</param>
 /// <param name="CollectionType">The remote collection type.</param>
-public sealed record RemoteLibrary(string Id, string Name, string CollectionType);
+public sealed record RemoteLibrary(string Id, string Name, string CollectionType)
+{
+    /// <summary>
+    /// Gets a value indicating whether the view is no library of its own, so it may stand for several grouped in one.
+    /// </summary>
+    public bool MayCombine { get; init; }
+}

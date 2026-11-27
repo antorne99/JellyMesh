@@ -27,8 +27,8 @@ public static class PlaybackLimits
     public const int RequestsPerSession = 8;
 
     /// <summary>
-    /// The most sessions of one user. Over it the least recently used ones not in use are closed, and if all are in use
-    /// the new playback is refused. Well above the devices of an account shared by a family.
+    /// The most sessions and running File or Download reads of one user. Over it the least recently used sessions not in use
+    /// are closed, and if all are in use the new playback or read is refused. Well above the devices of a family account.
     /// </summary>
     public const int SessionsPerUser = 16;
 

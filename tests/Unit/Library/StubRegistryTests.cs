@@ -2,9 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -14,18 +18,24 @@ public sealed class StubRegistryTests : IDisposable
     private readonly string _folder = Path.Combine(Path.GetTempPath(), "jellymesh-tests-" + Guid.NewGuid().ToString("N"));
     private readonly InMemoryConfigurationStore _store = new();
     private readonly CapturingLogger<StubRegistry> _logger = new();
+    private readonly TestDatabase _database;
 
-    public StubRegistryTests() => _store.Configuration.FederatedFolderPath = "/federata";
+    public StubRegistryTests()
+    {
+        _store.Configuration.FederatedFolderPath = "/federata";
+        _database = new TestDatabase(_folder);
+    }
 
     public void Dispose()
     {
+        _database.Dispose();
         if (Directory.Exists(_folder))
         {
             Directory.Delete(_folder, true);
         }
     }
 
-    private StubRegistry Create() => new(_folder, _store, _logger);
+    private StubRegistry Create() => new(_database, _store, _logger);
 
     private static StubEntry Entry(string id, string path) => new()
     {
@@ -69,6 +79,17 @@ public sealed class StubRegistryTests : IDisposable
         Assert.Null(registry.FindByPath("/federata/S/Film/A/A - Casa.strm"));
     }
 
+    // Every new item of every library is looked up here, so the lookup must not fail while the settings cannot be read.
+    [Fact]
+    public async Task WhileTheSettingsCannotBeReadNoPathFindsAStub()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "S/Film/A/A - Mare.strm")] });
+        _store.Unavailable = true;
+
+        Assert.Null(registry.FindByPath("/federata/S/Film/A/A - Mare.strm"));
+    }
+
     [Fact]
     public async Task ACurrentPathWinsOverTheOldPathOfAnotherStub()
     {
@@ -81,20 +102,6 @@ public sealed class StubRegistryTests : IDisposable
 
         Assert.Equal("def", registry.FindByPath("/federata/S/Film/A/A - Casa.strm")?.Id);
         Assert.Null(registry.FindByPath("/federata/S/Film/B/B - Casa.strm"));
-    }
-
-    [Fact]
-    public void ARegistryWrittenBeforeTheLastEpisodeNumberExistedStillLoads()
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(
-            Path.Combine(_folder, StubRegistry.FileName),
-            "{\"Version\":1,\"Stubs\":[{\"Id\":\"abc\",\"Kind\":\"Episode\",\"RelativePath\":\"Serie/S/S.strm\",\"IdentityKey\":\"key\",\"EpisodeNumber\":1,\"Sources\":[]}],\"Series\":[]}");
-
-        using var registry = Create();
-
-        Assert.Equal(1, registry.Find("abc")?.EpisodeNumber);
-        Assert.Null(registry.Find("abc")?.EpisodeNumberEnd);
     }
 
     [Fact]
@@ -264,6 +271,97 @@ public sealed class StubRegistryTests : IDisposable
         Assert.False(registry.HasTitlesOf(without));
     }
 
+    [Fact]
+    public async Task TheTypeFoldersOfAServerAreKnownOnlyOnceTheRegistryIsRead()
+    {
+        var server = Guid.NewGuid();
+        var films = FederatedPaths.TypeFolderOf(server, TestLibraries.Films, TypeFolder.Movies);
+        _database.Suspended = true;
+        using var registry = Create();
+        Assert.Null(registry.TypeFoldersOf(server, TypeFolder.Movies));
+
+        _database.Suspended = false;
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", FederatedPaths.MovieStubIn(films, "A", "Casa")) with { ServerId = server }] });
+
+        Assert.Equal([films], registry.TypeFoldersOf(server, TypeFolder.Movies));
+        Assert.Equal([], registry.TypeFoldersOf(server, TypeFolder.Series)!);
+        _database.Reopen();
+        Assert.Null(registry.TypeFoldersOf(server, TypeFolder.Movies));
+    }
+
+    [Fact]
+    public async Task TheLayoutInUseIsKnownOnlyOnceTheRegistryIsRead()
+    {
+        var server = Guid.NewGuid();
+        var films = FederatedPaths.TypeFolderOf(server, TestLibraries.Films, TypeFolder.Movies);
+        _database.Suspended = true;
+        using var registry = Create();
+        Assert.Null(registry.UsesOlderLayout());
+
+        _database.Suspended = false;
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", FederatedPaths.MovieStubIn(films, "A", "Casa")) with { ServerId = server }] });
+        var current = registry.UsesOlderLayout();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("abc", FederatedPaths.MovieFolder(server, "A (2020)") + "/A.strm") with { ServerId = server }] });
+
+        Assert.Equal((false, true), (current, registry.UsesOlderLayout()));
+        _database.Reopen();
+        Assert.Null(registry.UsesOlderLayout());
+    }
+
+    // A removed server's libraries wait for its titles (decision 278), so a registry that cannot tell says it has some.
+    [Fact]
+    public async Task ARegistryNotReadOrReopenedCannotTellThatAServerHasNoTitles()
+    {
+        var server = Guid.NewGuid();
+        _database.Suspended = true;
+        using var registry = Create();
+        Assert.True(registry.HasTitlesOf(server));
+
+        _database.Suspended = false;
+        await registry.EnterAsync(CancellationToken.None);
+        registry.Exit();
+        Assert.False(registry.HasTitlesOf(server));
+
+        _database.Reopen();
+        Assert.True(registry.HasTitlesOf(server));
+    }
+
+    [Fact]
+    public async Task AfterRowsThatDoNotReadOnlyAFullMaterializationTellsThatAServerHasNoTitles()
+    {
+        var server = Guid.NewGuid();
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE stub_entries SET kind = 'Unknown' WHERE id = 'abc';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+
+        using var damaged = Create();
+        Assert.True(damaged.HasTitlesOf(server));
+
+        await SeedAsync(damaged, damaged.State with { RemovedServers = [server] });
+        Assert.True(damaged.HasTitlesOf(server));
+
+        await damaged.EnterAsync(CancellationToken.None);
+        try
+        {
+            await damaged.SaveMaterializedAsync(damaged.State, CancellationToken.None);
+        }
+        finally
+        {
+            damaged.Exit();
+        }
+
+        Assert.False(damaged.HasTitlesOf(server));
+    }
+
     // The sync tells whether anyone saved the registry since its last run by this number (Q386).
     [Fact]
     public async Task EachSaveRaisesTheGenerationAndAFailedOneDoesNot()
@@ -275,10 +373,8 @@ public sealed class StubRegistryTests : IDisposable
         await registry.SaveAsync(registry.State, CancellationToken.None);
         Assert.Equal(start + 2, registry.Generation);
 
-        Directory.Delete(_folder, true);
-        await File.WriteAllTextAsync(_folder, string.Empty);
+        _database.InterruptNextWrite();
         await Assert.ThrowsAnyAsync<IOException>(() => registry.SaveAsync(new StubState(), CancellationToken.None));
-        File.Delete(_folder);
         Assert.Equal(start + 2, registry.Generation);
     }
 
@@ -310,18 +406,6 @@ public sealed class StubRegistryTests : IDisposable
     }
 
     [Fact]
-    public void ADamagedFileGivesAnEmptyRegistryAndALogLine()
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(Path.Combine(_folder, StubRegistry.FileName), "{ not json");
-
-        using var registry = Create();
-
-        Assert.Empty(registry.State.Stubs);
-        Assert.Contains(_logger.Lines, line => line.Contains("stub registry", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public async Task NoFolderMeansNoStubs()
     {
         _store.Configuration.FederatedFolderPath = string.Empty;
@@ -329,34 +413,6 @@ public sealed class StubRegistryTests : IDisposable
         await registry.SaveAsync(new StubState { Stubs = [Entry("abc", "Film/A/A.strm")] }, CancellationToken.None);
 
         Assert.Null(registry.FindByPath("/federata/Film/A/A.strm"));
-    }
-
-    [Fact]
-    public void ARegistryOfTheFlatLayoutLoadsAsTheCurrentVersionWithNoServerAndNoGroup()
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(
-            Path.Combine(_folder, StubRegistry.FileName),
-            "{\"Version\":1,\"Stubs\":[{\"Id\":\"abc\",\"Kind\":\"Movie\",\"RelativePath\":\"Film/A/A.strm\",\"IdentityKey\":\"key\",\"Sources\":[]}],\"Series\":[{\"Id\":\"s\",\"RelativePath\":\"Serie/S\",\"WorkKey\":\"w\"}]}");
-
-        using var registry = Create();
-
-        Assert.Equal(2, registry.State.Version);
-        Assert.Null(registry.Find("abc")!.ServerId);
-        Assert.Null(Assert.Single(registry.State.Series).ServerId);
-        Assert.Empty(registry.State.Groups);
-    }
-
-    [Fact]
-    public void ARegistryOfAnUnknownVersionIsNotRead()
-    {
-        Directory.CreateDirectory(_folder);
-        File.WriteAllText(Path.Combine(_folder, StubRegistry.FileName), "{\"Version\":99,\"Stubs\":[],\"Series\":[]}");
-
-        using var registry = Create();
-
-        Assert.Empty(registry.State.Stubs);
-        Assert.Contains(_logger.Lines, line => line.Contains("unsupported format", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -413,5 +469,389 @@ public sealed class StubRegistryTests : IDisposable
         await SeedAsync(registry, new StubState { Stubs = [Entry("abc", "x/Film/A/A.strm")], Groups = [first, second] });
 
         Assert.Equal("g1", registry.FindGroup("abc")?.Id);
+    }
+
+    // Every part of the state, with something in each list.
+    private static StubState FullState()
+    {
+        var server = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var other = Guid.Parse("66666666-7777-8888-9999-000000000000");
+        var source = new StubSource(server, "item", "version") { LibraryId = "library" };
+        return new StubState
+        {
+            Stubs =
+            [
+                Entry("abc", "x/Film/A/A.strm") with
+                {
+                    ServerId = server,
+                    Sources = [source, new StubSource(other, "other", "other version")],
+                    ContentHash = "content",
+                    ImageTag = "image",
+                    TechnicalTag = "technical",
+                    UrlTag = "url",
+                    StrmWrittenUtc = new DateTime(2026, 11, 18, 10, 30, 15, 123, DateTimeKind.Utc).AddTicks(4567)
+                },
+                Entry("def", "x/Serie/S/Season 01/S - S01E01-E02.strm") with
+                {
+                    Kind = StubKind.Episode,
+                    Sources = [source],
+                    SeriesStubId = "s",
+                    SeasonNumber = 1,
+                    EpisodeNumber = 1,
+                    EpisodeNumberEnd = 2
+                }
+            ],
+            Series =
+            [
+                new SeriesStub
+                {
+                    Id = "s",
+                    ServerId = server,
+                    RelativePath = "x/Serie/S",
+                    WorkKey = "work",
+                    Sources = [source],
+                    ContentHash = "series content",
+                    ImageTag = "series image",
+                    NeedsRefresh = true,
+                    Seasons = [new SeasonStub { RelativePath = "x/Serie/S/Season 01", ContentHash = "season", ImageTag = "season image" }, new SeasonStub { RelativePath = "x/Serie/S/Specials" }]
+                }
+            ],
+            Groups = [new VersionGroup { Id = "g", IdentityKey = "key", StubIds = ["abc", "def"], LocalItemIds = [other], PrimaryStubId = "abc" }],
+            Labels = new Dictionary<Guid, string> { [server] = "Casa", [other] = "Ufficio" },
+            RemovedServers = [other],
+            ServerNames = new Dictionary<Guid, string> { [server] = "Server A" },
+            Renames = [new StubRename("abc", "x/Film/A/Old.strm") { RemovedItemId = other, Forgets = true }, new StubRename("def", "x/Serie/S/Old.strm")]
+        };
+    }
+
+    private static string Json(StubState state) => JsonSerializer.Serialize(state);
+
+    [Fact]
+    public async Task EveryPartOfTheStateComesBackWholeAfterARestart()
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        using var restarted = Create();
+
+        Assert.Equal(Json(FullState()), Json(restarted.State));
+        Assert.Equal(FullState().Stubs[0].StrmWrittenUtc, restarted.Find("abc")!.StrmWrittenUtc);
+    }
+
+    [Fact]
+    public async Task ChangesKeepTheOrderAndDropWhatIsGoneAcrossARestart()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        var state = registry.State;
+        var changed = state with
+        {
+            Stubs = [Entry("new", "x/Film/N/N.strm"), state.Stubs[1] with { ContentHash = "changed" }],
+            Series = [],
+            Groups = [],
+            Labels = new Dictionary<Guid, string>(),
+            RemovedServers = [],
+            ServerNames = new Dictionary<Guid, string>(),
+            Renames = []
+        };
+
+        await SeedAsync(registry, changed);
+
+        using var restarted = Create();
+        Assert.Equal(Json(changed), Json(restarted.State));
+        Assert.Null(restarted.Find("abc"));
+    }
+
+    [Fact]
+    public async Task ASaveOfTheSameStateWritesNothingButStillCounts()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        var writes = _database.Writes;
+        var generation = registry.Generation;
+
+        await SeedAsync(registry, FullState());
+        await SeedAsync(registry, registry.State with { });
+
+        Assert.Equal(writes, _database.Writes);
+        Assert.Equal(generation + 2, registry.Generation);
+    }
+
+    [Fact]
+    public async Task ASaveInterruptedHalfwayLeavesThePreviousState()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        _database.InterruptNextWrite();
+
+        await Assert.ThrowsAsync<IOException>(() => SeedAsync(registry, new StubState { Stubs = [Entry("new", "x/Film/N/N.strm")] }));
+
+        Assert.Equal(Json(FullState()), Json(registry.State));
+        using var restarted = Create();
+        Assert.Equal(Json(FullState()), Json(restarted.State));
+
+        // The next save starts from what the tables still hold.
+        await SeedAsync(registry, registry.State with { Renames = [] });
+        using var again = Create();
+        Assert.Equal(Json(FullState() with { Renames = [] }), Json(again.State));
+    }
+
+    [Fact]
+    public async Task ASuspendedStoreGivesAnEmptyRegistryThatSavesNothingUntilItIsReadAgain()
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.Suspended = true;
+        using var suspended = Create();
+        Assert.Empty(suspended.State.Stubs);
+        Assert.Null(suspended.Find("abc"));
+        Assert.Contains(_logger.Lines, line => line.Contains("stub registry", StringComparison.Ordinal));
+        await Assert.ThrowsAsync<IOException>(() => suspended.SaveAsync(new StubState(), CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => suspended.EnterAsync(CancellationToken.None));
+        var generation = suspended.Generation;
+
+        _database.Suspended = false;
+        await suspended.EnterAsync(CancellationToken.None);
+        suspended.Exit();
+
+        Assert.Equal(Json(FullState()), Json(suspended.State));
+        Assert.Equal(generation + 1, suspended.Generation);
+        await SeedAsync(suspended, suspended.State with { Renames = [] });
+        using var restarted = Create();
+        Assert.Equal("abc", restarted.Find("abc")?.Id);
+    }
+
+    [Fact]
+    public async Task AReopenedDatabaseIsReadAgainAtTheNextLock()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, new StubState { Stubs = [Entry("x", "x/Film/X/X.strm"), Entry("y", "x/Film/Y/Y.strm")] });
+
+        // The copy the database came back from does not hold the last stub.
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM stub_entries WHERE id = 'y';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+        _database.Reopen();
+
+        await registry.EnterAsync(CancellationToken.None);
+        StubState saved;
+        try
+        {
+            saved = registry.State with { Stubs = [.. registry.State.Stubs, Entry("z", "x/Film/Z/Z.strm")] };
+            await registry.SaveAsync(saved, CancellationToken.None);
+        }
+        finally
+        {
+            registry.Exit();
+        }
+
+        using var restarted = Create();
+        Assert.Equal(saved.Stubs.Select(stub => stub.Id), restarted.State.Stubs.Select(stub => stub.Id));
+        Assert.Equal(["x", "z"], restarted.State.Stubs.Select(stub => stub.Id));
+    }
+
+    // A suspended start leaves the registry empty; no sync has to run for it to know its stubs again.
+    [Theory]
+    [InlineData(nameof(IStubRegistry.Find))]
+    [InlineData(nameof(IStubRegistry.FindByPath))]
+    [InlineData(nameof(IStubRegistry.FindGroup))]
+    [InlineData(nameof(IStubRegistry.FindGroupOfLocal))]
+    public async Task ADatabaseThatTurnsHealthyIsReadAgainAtTheNextLookup(string lookup)
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.Suspended = true;
+        using var suspended = Create();
+        _database.Suspended = false;
+        _database.Reopen();
+        Assert.True(suspended.IsUnread);
+
+        Look(suspended, lookup);
+
+        await Until(() => !suspended.IsUnread);
+        Assert.Equal(Json(FullState()), Json(suspended.State));
+    }
+
+    private static void Look(StubRegistry registry, string lookup) => _ = lookup switch
+    {
+        nameof(IStubRegistry.Find) => (object?)registry.Find("abc"),
+        nameof(IStubRegistry.FindByPath) => registry.FindByPath("/federata/x"),
+        nameof(IStubRegistry.FindGroup) => registry.FindGroup("abc"),
+        _ => registry.FindGroupOfLocal(Guid.NewGuid())
+    };
+
+    private static async Task Until(Func<bool> reached)
+    {
+        for (var wait = 0; wait < 500 && !reached(); wait++)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(reached());
+    }
+
+    [Fact]
+    public async Task AReloadReadsTheRegistryOnceAndLeavesAReadOneAlone()
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.Suspended = true;
+        using var suspended = Create();
+        _database.Suspended = false;
+        _database.Reopen();
+        var generation = suspended.Generation;
+
+        await Task.WhenAll(suspended.ReloadAsync(CancellationToken.None), suspended.ReloadAsync(CancellationToken.None));
+        await suspended.ReloadAsync(CancellationToken.None);
+
+        Assert.Equal(generation + 1, suspended.Generation);
+        Assert.Equal("abc", suspended.Find("abc")?.Id);
+        Assert.False(suspended.IsUnread);
+    }
+
+    [Fact]
+    public async Task AReloadOfASuspendedDatabaseLeavesWhatIsInMemory()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        _database.Reopen();
+        _database.Suspended = true;
+
+        await registry.ReloadAsync(CancellationToken.None);
+
+        Assert.True(registry.IsUnread);
+        Assert.Equal("abc", registry.Find("abc")?.Id);
+    }
+
+    // Every request looks a stub up, so a database that stays unreadable is tried once for each time it was opened.
+    [Fact]
+    public async Task LookupsOfADatabaseThatCannotBeReadTryOnce()
+    {
+        _database.Suspended = true;
+        using var registry = Create();
+        _database.Reopen();
+
+        for (var look = 0; look < 200; look++)
+        {
+            Assert.Null(registry.Find("abc"));
+        }
+
+        await Until(() => Failures() == 2);
+        await Task.Delay(100);
+        registry.Find("abc");
+        await Task.Delay(100);
+        Assert.Equal(2, Failures());
+    }
+
+    private int Failures() => _logger.Lines.Count(line => line.Contains("Cannot read the stub registry", StringComparison.Ordinal));
+
+    [Fact]
+    public async Task LookupsDoNotWaitForTheReload()
+    {
+        using var registry = Create();
+        await SeedAsync(registry, FullState());
+        await registry.EnterAsync(CancellationToken.None);
+        _database.Reopen();
+
+        Assert.Equal("abc", registry.Find("abc")?.Id);
+        using var limit = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.ReloadAsync(limit.Token));
+        Assert.True(registry.IsUnread);
+
+        registry.Exit();
+        await Until(() => !registry.IsUnread);
+    }
+
+    // The same with the real database: what Retry opens is read without a sync.
+    [Fact]
+    public async Task WhatRetryOpensIsReadWithoutALock()
+    {
+        var folder = Path.Combine(_folder, "real");
+        Directory.CreateDirectory(folder);
+        using (var seeded = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1))
+        using (var registry = new StubRegistry(seeded, _store, _logger))
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        var file = Directory.GetFiles(folder, "*.db").Single();
+        File.Move(file, file + ".aside");
+        Directory.CreateDirectory(file);
+        using var database = new PluginDatabase(folder, new CapturingLogger<PluginDatabase>(), KeyFileGuards.ForThisSystem(), SchemaMigrations.All, 1);
+        using var suspended = new StubRegistry(database, _store, _logger);
+        Assert.True(database.Health.Suspended);
+        Assert.Null(suspended.Find("abc"));
+        Assert.True(suspended.IsUnread);
+
+        Directory.Delete(file);
+        File.Move(file + ".aside", file);
+        Assert.Equal(StoreHealth.Healthy, database.Retry());
+        suspended.Find("abc");
+
+        await Until(() => suspended.Find("abc") is not null);
+        Assert.False(suspended.IsUnread);
+    }
+
+    public static TheoryData<Exception> ConversionFailures() => new()
+    {
+        new InvalidOperationException("null value"),
+        new OverflowException("too large"),
+    };
+
+    [Theory]
+    [MemberData(nameof(ConversionFailures))]
+    public async Task ARowThatDoesNotConvertGivesAnEmptyRegistry(Exception failure)
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        _database.FailNextRead(failure);
+        using var damaged = Create();
+
+        Assert.Empty(damaged.State.Stubs);
+        Assert.Contains(_logger.Lines, line => line.Contains("damaged", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RowsThatDoNotReadGiveAnEmptyRegistryWrittenWholeAtTheNextSave()
+    {
+        using (var registry = Create())
+        {
+            await SeedAsync(registry, FullState());
+        }
+
+        await _database.WriteAsync((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE stub_entries SET kind = 'Unknown' WHERE id = 'abc';";
+            command.ExecuteNonQuery();
+        }, CancellationToken.None);
+
+        using var damaged = Create();
+        Assert.Empty(damaged.State.Stubs);
+        Assert.Contains(_logger.Lines, line => line.Contains("damaged", StringComparison.Ordinal));
+
+        await SeedAsync(damaged, new StubState { Stubs = [Entry("new", "x/Film/N/N.strm")] });
+        using var restarted = Create();
+        Assert.Equal("new", Assert.Single(restarted.State.Stubs).Id);
+        Assert.Empty(restarted.State.Series);
     }
 }

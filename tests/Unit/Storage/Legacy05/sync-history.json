@@ -1,0 +1,51 @@
+{
+  "Version": 1,
+  "Runs": [
+    {
+      "StartedUtc": "2026-11-18T07:47:37.8708041+00:00",
+      "DurationMilliseconds": 266,
+      "Kind": "Reconciliation",
+      "Outcome": "Succeeded",
+      "Servers": [
+        {
+          "ServerId": "8a4800ba-4770-4936-b019-94e846e237bb",
+          "ServerName": "remote",
+          "Read": 20,
+          "Created": 0,
+          "Updated": 0,
+          "Removed": 0,
+          "Failed": 0
+        }
+      ],
+      "Created": 0,
+      "Updated": 0,
+      "Removed": 0,
+      "Failed": 0,
+      "IndexSaveFailed": false,
+      "MaterializationFailed": false
+    },
+    {
+      "StartedUtc": "2026-11-18T07:47:33.4456606+00:00",
+      "DurationMilliseconds": 1037,
+      "Kind": "Reconciliation",
+      "Outcome": "Succeeded",
+      "Servers": [
+        {
+          "ServerId": "8a4800ba-4770-4936-b019-94e846e237bb",
+          "ServerName": "remote",
+          "Read": 20,
+          "Created": 16,
+          "Updated": 0,
+          "Removed": 0,
+          "Failed": 0
+        }
+      ],
+      "Created": 16,
+      "Updated": 0,
+      "Removed": 0,
+      "Failed": 0,
+      "IndexSaveFailed": false,
+      "MaterializationFailed": false
+    }
+  ]
+}

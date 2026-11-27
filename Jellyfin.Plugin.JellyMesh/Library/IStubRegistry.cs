@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
@@ -8,6 +11,19 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// </summary>
 public interface IStubRegistry
 {
+    /// <summary>
+    /// Gets a value indicating whether the registry in memory may not be what the database holds: not read yet, or read
+    /// before the database was opened again. A stub it does not find may then still exist.
+    /// </summary>
+    bool IsUnread { get; }
+
+    /// <summary>
+    /// Reads the registry again if it is unread. A database that cannot be read leaves it as it is.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task ReloadAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// Finds a stub by ID, the last segment of the URL in its <c>.strm</c>.
     /// </summary>
@@ -37,9 +53,23 @@ public interface IStubRegistry
     VersionGroup? FindGroupOfLocal(Guid itemId);
 
     /// <summary>
-    /// Tells whether a stub or a stub series of a server is still in the registry.
+    /// Tells whether a stub or a stub series of a server may still be in the registry. True while the registry cannot tell:
+    /// not read, read before the database was opened again, or emptied by rows that did not read until a full materialization.
     /// </summary>
     /// <param name="serverId">The server.</param>
-    /// <returns>Whether the server still has titles in the federated folder.</returns>
+    /// <returns>Whether the server may still have titles in the federated folder.</returns>
     bool HasTitlesOf(Guid serverId);
+
+    /// <summary>Gives the relative type folders of a server that hold its titles of one type, in the remote library layout.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="type">The type folder.</param>
+    /// <returns>The folders, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
+    IReadOnlyList<string>? TypeFoldersOf(Guid serverId, TypeFolder type);
+
+    /// <summary>
+    /// Tells whether any title is still in the flat or the 0.5 server folder layout, or whether the registry is empty while the
+    /// federated folder holds stub files of those layouts, as after a damage (§10 row 444).
+    /// </summary>
+    /// <returns>The answer, or null while the registry cannot tell, as for <see cref="HasTitlesOf"/>.</returns>
+    bool? UsesOlderLayout();
 }

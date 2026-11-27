@@ -35,12 +35,13 @@ wait_ready local
 login local
 login alice alice
 login bob bob
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
-library local Serie tvshows "$(server_folder "$id")/Serie"
-library local Film movies "$(server_folder "$id")/Film"
 import_all local "$id"
 sync_now local
+library local Serie tvshows "$(type_folder "$id" Serie)"
+library local Film movies "$(type_folder "$id" Film)"
 scan local
 
 # episodes: the federated episodes as "<series> SxxEyy<TAB>id<TAB>path", sorted.
@@ -97,10 +98,14 @@ named_episodes
 echo "--- before removal"
 episodes | tee "$WORK/episodes-before"
 series_rows | tee "$WORK/series-before"
-check "both series are federated" 2 "$(wc -l <"$WORK/series-before" | tr -d ' ')"
-check "all five episodes are federated" 5 "$(wc -l <"$WORK/episodes-before" | tr -d ' ')"
+# remote_count <type>: how many items of a type the remote has, nothing for none.
+remote_count() { get remote "/Items?Recursive=true&IncludeItemTypes=$1&Limit=0" | jq '.TotalRecordCount | select(. > 0)'; }
+series_count=$(remote_count Series)
+episode_count=$(remote_count Episode)
+check_some "every series is federated" "$series_count" "$(wc -l <"$WORK/series-before" | tr -d ' ')"
+check_some "every episode is federated" "$episode_count" "$(wc -l <"$WORK/episodes-before" | tr -d ' ')"
 echo "runtime of the episodes in seconds: $(get local '/Items?Recursive=true&IncludeItemTypes=Episode' | jq -c '[.Items[].RunTimeTicks / 10000000 | floor]')"
-docker exec "$PREFIX-local" find "$(server_folder "$id")/Serie" -name '*.nfo' -exec sh -c 'echo "$1: $(grep -o "<uniqueid[^<]*</uniqueid>" "$1" | tr "\n" " ")"' _ {} \;
+docker exec "$PREFIX-local" find "$(type_folder "$id" Serie)" -name '*.nfo' -exec sh -c 'echo "$1: $(grep -o "<uniqueid[^<]*</uniqueid>" "$1" | tr "\n" " ")"' _ {} \;
 
 d3=$(ep_id "JM Serie Divisa S1E3")
 d4=$(ep_id "JM Serie Divisa S1E4")
@@ -142,10 +147,10 @@ echo "--- removal"
 req local DELETE "/JellyMesh/Admin/Servers/$id" >/dev/null
 check "the server is removed" 204 "$(status)"
 for _ in $(seq 1 120); do
-  [ "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')" = 0 ] && break
+  [ "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/*/Serie -name "*.strm" | wc -l')" = 0 ] && break
   sleep 1
 done
-check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/Serie -name "*.strm" | wc -l')"
+check "its stubs left the federated folder" 0 "$(docker exec "$PREFIX-local" sh -c 'find /federata/*/*/Serie -name "*.strm" | wc -l')"
 # F19: the folder of the server goes once its stubs are gone, while the library keeps its path.
 for _ in $(seq 1 60); do
   docker exec "$PREFIX-local" test -e "$(server_folder "$id")" || break
@@ -163,32 +168,15 @@ if command -v sqlite3 >/dev/null; then
   sqlite3 -header "$WORK/db/jellyfin.db" 'SELECT CustomDataKey, ItemId, Played, PlayCount, PlaybackPositionTicks, IsFavorite, RetentionDate FROM UserData ORDER BY CustomDataKey;' || true
 fi
 
-# Row 412: the plugin keeps the watch state of the removed titles by content, keyed by local user, in its own SQLite file.
-kept_db=$(docker exec "$PREFIX-local" sh -c 'find /config -name watch-state.db | head -1')
-check "the watch state of the removed titles is kept in the plugin data folder" 1 "$([ -n "$kept_db" ] && echo 1 || echo 0)"
-# kept_copy: a copy of the kept file, in $WORK/kept.
-kept_copy() {
-  rm -rf "$WORK/kept" && mkdir -p "$WORK/kept"
-  docker exec "$PREFIX-local" sh -c "ls '$kept_db'*" | while read -r f; do docker cp "$PREFIX-local:$f" "$WORK/kept/" >/dev/null; done
-}
-kept_copy
-check "the kept file holds no remote address" 0 "$(grep -ac -e host.docker.internal -e :// "$WORK/kept/watch-state.db" || true)"
-if command -v sqlite3 >/dev/null; then
-  sqlite3 -header "$WORK/kept/watch-state.db" 'SELECT Kind, Title, Year, Tmdb, Imdb, Tvdb, SeasonNumber, EpisodeNumber,
-    (SELECT COUNT(*) FROM UserStates WHERE TitleId = Titles.Id) AS Users FROM Titles ORDER BY Title, SeasonNumber, EpisodeNumber;'
-  check "the film without IDs is kept" 1 "$(sqlite3 "$WORK/kept/watch-state.db" "SELECT COUNT(*) FROM Titles WHERE Title LIKE 'Sonda Senza ID%';")"
-  check "the series without IDs is kept with its episode" 2 "$(sqlite3 "$WORK/kept/watch-state.db" "SELECT COUNT(*) FROM Titles WHERE Title = 'Serie Senza ID';")"
-  check "the kept rows are those of the local users" "$(printf '%s\n' "$(user_id local alice)" "$(user_id local bob)" | tr -d - | tr 'A-F' 'a-f' | sort)" \
-    "$(sqlite3 "$WORK/kept/watch-state.db" 'SELECT DISTINCT UserId FROM UserStates;' | sort)"
-  # The tokens the remote gave the plugin, read from a copy of its database.
-  rm -rf "$WORK/rdb" && mkdir -p "$WORK/rdb"
-  docker exec "$PREFIX-remote" sh -c 'ls /config/data/jellyfin.db*' | while read -r f; do docker cp "$PREFIX-remote:$f" "$WORK/rdb/" >/dev/null; done
-  leaks=0
-  for token in $(sqlite3 "$WORK/rdb/jellyfin.db" 'SELECT AccessToken FROM Devices;'); do
-    grep -aqF "$token" "$WORK/kept/watch-state.db" && leaks=$((leaks + 1))
-  done
-  check "the kept file holds no remote token" 0 "$leaks"
-fi
+# Row 412: the plugin keeps the watch state of the removed titles by content, keyed by local user, in its database.
+kept() { db_query local "$1"; }
+check "the watch state of the removed titles is kept in the plugin database" 1 "$([ "$(kept 'SELECT COUNT(*) FROM kept_titles;')" -gt 0 ] && echo 1 || echo 0)"
+kept 'SELECT kind, title, year, tmdb, imdb, tvdb, season_number, episode_number,
+  (SELECT COUNT(*) FROM kept_user_states WHERE title_id = kept_titles.id) FROM kept_titles ORDER BY title, season_number, episode_number;'
+check "the film without IDs is kept" 1 "$(kept "SELECT COUNT(*) FROM kept_titles WHERE title LIKE 'Sonda Senza ID%';")"
+check "the series without IDs is kept with its episode" 2 "$(kept "SELECT COUNT(*) FROM kept_titles WHERE title = 'Serie Senza ID';")"
+check "the kept rows are those of the local users" "$(printf '%s\n' "$(user_id local alice)" "$(user_id local bob)" | tr -d - | tr 'A-F' 'a-f' | sort)" \
+  "$(kept "SELECT DISTINCT lower(replace(user_id, '-', '')) FROM kept_user_states;" | sort)"
 
 # Jellyfin 12.4 schedules no run of its user data cleanup, which drops what stayed detached 90 days. A run now keeps it.
 task=$(get local /ScheduledTasks | jq -r '.[] | select(.Key == "CleanupUserDataTask") | .Id')
@@ -206,15 +194,15 @@ id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jel
 # A server added back is a new server, so in a folder of its own: the admin adds it to the library (decision 408).
 check "the server comes back as a new server" 1 "$([ -n "$id" ] && [ "$id" != null ] && [ "$id" != "$old_id" ] && echo 1 || echo 0)"
 check "the add recognizes no removed server" null "$(jq -r .RecognizedAs "$WORK/body")"
-check "the new folder joins the library" 204 "$(link_folder local Serie "$(server_folder "$id")/Serie")"
-check "the new film folder joins the library" 204 "$(link_folder local Film "$(server_folder "$id")/Film")"
 # A remote already configured is refused under any name (decision 120).
 post local /JellyMesh/Admin/Servers "$(jq -n --arg u "http://host.docker.internal:$(port_of remote)" '{Name:"twice",Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" >/dev/null
 check "adding it a second time is refused" 409 "$(status)"
 check "the refusal names the server" "AlreadyConfigured remote" "$(jq -r '"\(.Failure) \(.ServerName)"' "$WORK/body")"
 import_all local "$id"
 sync_now local
-check "its folder is written again" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$id")/Serie/.jellymesh"; echo $?)"
+check "its folder is written again" 0 "$(docker exec "$PREFIX-local" test -f "$(type_folder "$id" Serie)/.jellymesh"; echo $?)"
+check "the new folder joins the library" 204 "$(link_folder local Serie "$(type_folder "$id" Serie)")"
+check "the new film folder joins the library" 204 "$(link_folder local Film "$(type_folder "$id" Film)")"
 scan local
 named_episodes
 episodes | tee "$WORK/episodes-after"
@@ -223,8 +211,8 @@ series_rows | tee "$WORK/series-after"
 in_folder() { sed -E 's#/federata/[0-9a-f-]{36}/#/federata/<server>/#'; }
 check "the same episodes come back at the same paths in the folder" "$(cut -f1,3 "$WORK/episodes-before" | in_folder)" "$(cut -f1,3 "$WORK/episodes-after" | in_folder)"
 check "the same series come back at the same paths in the folder" "$(cut -f1,3 "$WORK/series-before" | in_folder)" "$(cut -f1,3 "$WORK/series-after" | in_folder)"
-check "the episodes come back in the new folder" 5 "$(grep -cF "$(server_folder "$id")/" "$WORK/episodes-after" || true)"
-echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of 5, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of 2"
+check_some "the episodes come back in the new folder" "$episode_count" "$(grep -cF "$(server_folder "$id")/" "$WORK/episodes-after" || true)"
+echo "item ids changed: episodes $(cut -f2 "$WORK/episodes-before" | grep -cvxFf <(cut -f2 "$WORK/episodes-after") || true) of $episode_count, series $(cut -f2 "$WORK/series-before" | grep -cvxFf <(cut -f2 "$WORK/series-after") || true) of $series_count"
 
 # Every title gets its state back, the series without IDs too: the plugin puts it back after the scan (row 412).
 for _ in $(seq 1 30); do
@@ -241,10 +229,24 @@ check "bob's resume point without IDs is back" 1 "$(grep -Ec '^bob Serie Senza I
 check "alice's film without IDs is played again" 1 "$(grep -c '^alice film Sonda Senza ID[^:]*: played=true' "$WORK/state-after" || true)"
 check "bob's resume point and favorite on the film without IDs are back" 1 "$(grep -Ec '^bob film Sonda Senza ID[^:]*: played=false count=0 pos=[1-9].* fav=true' "$WORK/state-after" || true)"
 check "bob's favorite series without IDs is back" 1 "$(grep -c '^bob Serie Senza ID series: .* fav=true' "$WORK/state-after" || true)"
-if command -v sqlite3 >/dev/null; then
-  kept_copy
-  check "the kept records are forgotten once put back" 0 "$(sqlite3 "$WORK/kept/watch-state.db" 'SELECT COUNT(*) FROM Titles;')"
-fi
+check "the kept records are forgotten once put back" 0 "$(kept 'SELECT COUNT(*) FROM kept_titles;')"
+
+# The remote address and the tokens it gave never reach the stubs, the log or what a client reads (invariants).
+remote_address="host.docker.internal:$(port_of remote)"
+rm -rf "$WORK/rdb" && mkdir -p "$WORK/rdb"
+docker exec "$PREFIX-remote" sh -c 'ls /config/data/jellyfin.db*' | while read -r f; do docker cp "$PREFIX-remote:$f" "$WORK/rdb/" >/dev/null; done
+docker exec "$PREFIX-local" sh -c 'find /federata -name "*.strm" -exec cat {} +' >"$WORK/stubs"
+docker logs "$PREFIX-local" >"$WORK/local.log" 2>&1
+req alice GET "/Users/$(user_id local alice)/Items?Recursive=true&IncludeItemTypes=Episode,Movie&Fields=Path,MediaSources" >"$WORK/client-items"
+check "the stubs are there to read" 1 "$([ -s "$WORK/stubs" ] && echo 1 || echo 0)"
+for file in stubs local.log client-items; do
+  check "$file holds no remote address" 0 "$(grep -acF "$remote_address" "$WORK/$file" || true)"
+  leaks=0
+  for token in $(docker run --rm -v "$WORK/rdb:/db:ro" "$PW_IMAGE" python3 -c 'import sqlite3; [print(r[0]) for r in sqlite3.connect("/db/jellyfin.db").execute("SELECT AccessToken FROM Devices")]'); do
+    grep -aqF "$token" "$WORK/$file" && leaks=$((leaks + 1))
+  done
+  check "$file holds no remote token" 0 "$leaks"
+done
 
 # Row 414: the SQLite the server ships loads in the plugin.
 check "the plugin is active" Active "$(get local /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Status')"

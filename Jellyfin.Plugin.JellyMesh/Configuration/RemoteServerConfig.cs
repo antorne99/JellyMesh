@@ -5,7 +5,7 @@ using Jellyfin.Plugin.JellyMesh.Remote;
 namespace Jellyfin.Plugin.JellyMesh.Configuration;
 
 /// <summary>
-/// A remote server as persisted in the plugin XML. A mutable class because XmlSerializer requires it.
+/// A remote server as kept in the servers table of the plugin database.
 /// </summary>
 public class RemoteServerConfig
 {
@@ -25,12 +25,13 @@ public class RemoteServerConfig
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the normalized tailnet base URL.
+    /// Gets or sets the normalized base URL of the remote.
     /// </summary>
     public string Url { get; set; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the credentials as encrypted by <see cref="Security.ICredentialVault"/>.
+    /// Gets or sets the user and password as encrypted by <see cref="Security.ICredentialVault"/>, bound to <see cref="Id"/>,
+    /// with the key file of the data folder, which never enters the database.
     /// </summary>
     public string EncryptedCredentials { get; set; } = string.Empty;
 
@@ -50,9 +51,51 @@ public class RemoteServerConfig
     public Collection<string> ImportedLibraryIds { get; } = [];
 
     /// <summary>
-    /// Gets or sets a value indicating whether the plugin keeps a Film and a Serie library for this server.
+    /// Gets the imported remote libraries as last read, with their names and types.
     /// </summary>
-    public bool AutomaticLibraries { get; set; }
+    public Collection<RemoteLibraryConfig> RemoteLibraries { get; } = [];
+
+    /// <summary>
+    /// Gets the libraries imported after the server was linked, which the automatic migration has not placed yet (D57).
+    /// </summary>
+    public Collection<string> LibrariesToPlace { get; } = [];
+
+    /// <summary>
+    /// Gets the folders the automatic migration added to libraries of the admin while placing this server is not finished,
+    /// so that one the admin removes meanwhile is not added again (§10 row 496).
+    /// </summary>
+    public Collection<PlacedFolderConfig> PlacedFolders { get; } = [];
+
+    /// <summary>
+    /// Gets the imported libraries one correct answer of the remote did not list: a second one in a row drops them (§10 row 436).
+    /// </summary>
+    public Collection<string> AbsentLibraryIds { get; } = [];
+
+    /// <summary>
+    /// Gets the libraries that left the imported ones because the remote no longer listed them, until imported again.
+    /// </summary>
+    public Collection<VanishedLibraryConfig> VanishedLibraries { get; } = [];
+
+    /// <summary>
+    /// Gets the users who lost titles in the last change of library mode, by library, until the next change (§10 row 438).
+    /// </summary>
+    public Collection<LostAccessConfig> LostAccess { get; } = [];
+
+    /// <summary>
+    /// Gets or sets which local libraries hold the type folders of this server. None for a server kept from before the
+    /// modes; one added later takes <see cref="PluginConfiguration.NewServerLibraryMode"/>.
+    /// </summary>
+    public LibraryMode LibraryMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the plugin keeps libraries for this server: setting it on keeps a mode
+    /// already chosen, or chooses one per type; setting it off chooses none.
+    /// </summary>
+    public bool AutomaticLibraries
+    {
+        get => LibraryMode != LibraryMode.None;
+        set => LibraryMode = !value ? LibraryMode.None : LibraryMode == LibraryMode.None ? LibraryMode.ByType : LibraryMode;
+    }
 
     /// <summary>
     /// Gets the libraries the plugin created for this server and still manages.
@@ -82,6 +125,17 @@ public class RemoteServerConfig
     /// after a restart too (§10 row 289).
     /// </summary>
     public bool RenameUnfinished { get; set; }
+
+    /// <summary>
+    /// Gets the keys of the libraries the plugin created for this server since its libraries were last turned on: a library
+    /// the admin deleted is not made again.
+    /// </summary>
+    public Collection<string> CreatedLibraryKeys { get; } = [];
+
+    /// <summary>
+    /// Gets the libraries asked of the server and not recorded yet: only these are taken as made by the plugin after a crash.
+    /// </summary>
+    public Collection<PendingLibraryConfig> PendingLibraries { get; } = [];
 
     /// <summary>
     /// Gets the names of the libraries left to the admin because their path or type changed, or they are gone.

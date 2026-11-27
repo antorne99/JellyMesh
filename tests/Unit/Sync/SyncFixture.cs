@@ -3,10 +3,12 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Index;
+using Jellyfin.Plugin.JellyMesh.Tests.Activity;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -18,16 +20,16 @@ internal sealed class SyncFixture : IDisposable
 
     private readonly string _folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jellymesh-tests-" + Guid.NewGuid().ToString("N"));
 
-    public SyncFixture(string? key = TestValues.Key, string? stubFolder = null)
+    public SyncFixture(string? key = TestValues.Key)
     {
         KeySource = new FixedKeySource(key);
         Vault = new CredentialVault(KeySource, Store);
         Registry = new RemoteServerRegistry(Store, Vault, Client, new CapturingLogger<RemoteServerRegistry>());
-        Reader = new RemoteCatalogReader(Registry, Client, ReaderLogger);
-        File = new IndexFile(_folder, new CapturingLogger<IndexFile>());
-        Index = new FederationIndex(File, new CapturingLogger<FederationIndex>());
-        Stubs = new StubRegistry(stubFolder ?? System.IO.Path.Combine(_folder, "plugin"), Store, new CapturingLogger<StubRegistry>());
-        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs, store: Store);
+        Reader = new RemoteCatalogReader(Registry, Client, Store, ReaderLogger, Activity);
+        Database = new TestDatabase(_folder);
+        Index = new FederationIndex(Database, new CapturingLogger<FederationIndex>());
+        Stubs = new StubRegistry(Database, Store, new CapturingLogger<StubRegistry>());
+        Sync = new CatalogSyncService(Registry, Reader, Index, Vault, Clock, Logger, stubs: Stubs, store: Store, database: Database);
     }
 
     public string Folder => _folder;
@@ -44,9 +46,11 @@ internal sealed class SyncFixture : IDisposable
 
     public CapturingLogger<RemoteCatalogReader> ReaderLogger { get; } = new();
 
+    public RecordingActivityWriter Activity { get; } = new();
+
     public RemoteCatalogReader Reader { get; }
 
-    public IndexFile File { get; }
+    public TestDatabase Database { get; }
 
     public FederationIndex Index { get; }
 
@@ -72,6 +76,7 @@ internal sealed class SyncFixture : IDisposable
         Stubs.Dispose();
         Index.Dispose();
         Registry.Dispose();
+        Database.Dispose();
         if (System.IO.Directory.Exists(_folder))
         {
             System.IO.Directory.Delete(_folder, recursive: true);

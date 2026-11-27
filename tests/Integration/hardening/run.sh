@@ -19,7 +19,7 @@ FAKE_URL=http://host.docker.internal:$FAKE
 ACCEPT='Accept: application/json; profile="PascalCase"'
 AUTH='MediaBrowser Client="JellyMeshHard", Device="hard", DeviceId="jm-hard-admin", Version="0.1"'
 U=http://127.0.0.1:$PORT
-PLUGIN=/Plugins/28c43ea1-fb5a-4b3a-8e6e-30aa3245c653/Configuration
+SETTINGS=/JellyMesh/Admin/Settings
 PROFILE_DIRECT='{"DeviceProfile":{"MaxStreamingBitrate":120000000,"DirectPlayProfiles":[{"Type":"Video","Container":"mp4,mkv","VideoCodec":"h264","AudioCodec":"aac"}],"TranscodingProfiles":[{"Type":"Video","Protocol":"hls","Container":"ts","VideoCodec":"h264","AudioCodec":"aac","Context":"Streaming"}]}}'
 FAILED=0
 mkdir -p "$WORK"
@@ -135,21 +135,21 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready
 login
-cfg=$(get "$PLUGIN" | jq '.FederatedFolderPath = "/federata" | .PlaybackIdleSeconds = 30')
-post "$PLUGIN" "$cfg" >/dev/null
+req PUT "$SETTINGS" '{"FederatedFolderPath":"/federata","NewServerLibraryMode":"None","PlaybackIdleSeconds":30}' >/dev/null
 check "plugin loaded" JellyMesh "$(get /Plugins | jq -r '.[] | select(.Name == "JellyMesh") | .Name')"
 
 echo "--- a remote that behaves, first"
 set_mode normal
 server=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "$FAKE_URL" --arg p "$REMOTE_PASSWORD" '{Name:"ostile",Url:$u,Username:"jm",Password:$p}')" | jq -r .Id)
 check "server added" 200 "$(status)"
-libraries=$(get "/JellyMesh/Admin/Servers/$server/Libraries" | jq -c '{LibraryIds: map(.Id)}')
-post "/JellyMesh/Admin/Servers/$server/Libraries" "$libraries" >/dev/null
+form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$server" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+libraries=$(post "/JellyMesh/Admin/Servers/$server/Edit/Check" "$form" | jq -c '{LibraryIds: [.Libraries[].Id]}')
+req PUT "/JellyMesh/Admin/Servers/$server" "$(jq -c --argjson l "$libraries" '. + $l' <<<"$form")" >/dev/null
 sync_now
 check "sync" null "$(last_failure)"
-# Stubs go to the folder of the server, which an admin adds to the library.
+# Stubs go to the type folder of the remote library, which an admin adds to the library.
 id=${server//-/}
-folder="/federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}/Film"
+folder=$(docker exec "$NAME" sh -c "ls -d /federata/${id:0:8}-${id:8:4}-${id:12:4}-${id:16:4}-${id:20:12}/*/Film | head -1")
 post "/Library/VirtualFolders/Paths?refreshLibrary=false" "$(jq -n --arg p "$folder" '{Name: "Film", PathInfo: {Path: $p}}')" >/dev/null
 check "the folder of the server is linked" 204 "$(status)"
 scan
@@ -224,6 +224,13 @@ set_mode catalog-error
 sync_now
 check "a catalog error with a huge body" ServerError "$(last_failure)"
 at_most "seconds of that sync" 12 "$(cat "$WORK/sync-seconds")"
+
+echo "--- a library listed twice"
+set_mode views-repeat
+sync_now
+check "catalog read with the imported library listed twice" null "$(last_failure)"
+check "plugin alive after it" yes "$(alive)"
+set_mode normal
 
 echo "--- bodies that stall"
 set_mode catalog-stall
@@ -345,6 +352,12 @@ done
 activity=$(get '/System/ActivityLog/Entries?limit=1000')
 check "the activity log was read" true "$(jq '.TotalRecordCount > 0' <<<"$activity")"
 check "the activity log names nothing of the remote" 0 "$(grep -c -E "host\.docker\.internal|$FAKE|$THIRD|$REMOTE_TOKEN|$REMOTE_PASSWORD" <<<"$activity")"
-check "plugin configuration holds no token or password" 0 "$(docker exec "$NAME" sh -c 'cat /config/plugins/configurations/*JellyMesh*.xml' | grep -c -F -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD")"
+# Everything the plugin keeps on disk, the database and its journal included. The first two checks show that it is read.
+DATA=/config/plugins/Jellyfin.Plugin.JellyMesh
+holding() { docker exec "$NAME" sh -c 'd=$1; shift; find "$d" /config/plugins/configurations /federata -type f -exec grep -laF "$@" {} + 2>/dev/null | wc -l' sh "$DATA" "$@" | tr -d ' '; }
+check "the plugin database is there" yes "$(docker exec "$NAME" test -s "$DATA/jellymesh.db" && echo yes || echo no)"
+check "the plugin database holds the address of the server" true "$([ "$(docker exec "$NAME" sh -c 'cat "$1"/jellymesh.db*' sh "$DATA" | grep -caF "$FAKE_URL")" -gt 0 ] && echo true || echo false)"
+check "the federated folder holds no address of the server" 0 "$(docker exec "$NAME" grep -rlaF "$FAKE_URL" /federata | wc -l | tr -d ' ')"
+check "what the plugin keeps holds no token or password" 0 "$(holding -e "$REMOTE_TOKEN" -e "$REMOTE_PASSWORD")"
 
 exit "$FAILED"

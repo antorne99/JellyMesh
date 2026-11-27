@@ -13,7 +13,7 @@ public sealed class PlaybackSessionStore
 {
     private readonly ConcurrentDictionary<string, PlaybackSession> _sessions = new(StringComparer.Ordinal);
     private readonly PlaySessionOwners _localOwners;
-    private readonly ConcurrentDictionary<string, Guid> _localSources = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (Guid ServerId, string? StubId)> _localSources = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackSessionStore"/> class.
@@ -81,10 +81,22 @@ public sealed class PlaybackSessionStore
     /// </summary>
     /// <param name="playSessionId">The play session, recorded with <see cref="RecordLocal"/>.</param>
     /// <param name="serverId">The server of the file.</param>
-    public void RecordLocalSource(string playSessionId, Guid serverId)
+    /// <param name="stubId">The stub whose <c>.strm</c> it reads, null if not known.</param>
+    public void RecordLocalSource(string playSessionId, Guid serverId, string? stubId = null)
     {
         ArgumentNullException.ThrowIfNull(playSessionId);
-        _localSources[playSessionId] = serverId;
+        _localSources[playSessionId] = (serverId, stubId);
+    }
+
+    /// <summary>
+    /// Tells whether the local transcode of a play session still open reads the <c>.strm</c> of a stub.
+    /// </summary>
+    /// <param name="stubId">The stub.</param>
+    /// <returns>Whether one reads it.</returns>
+    public bool IsReadLocally(string stubId)
+    {
+        ForgetEndedSources();
+        return _localSources.Values.Any(source => string.Equals(source.StubId, stubId, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -95,7 +107,7 @@ public sealed class PlaybackSessionStore
     public IReadOnlyList<string> LocalSessionsReading(Guid serverId)
     {
         ForgetEndedSources();
-        return _localSources.Where(pair => pair.Value == serverId).Select(pair => pair.Key).ToList();
+        return _localSources.Where(pair => pair.Value.ServerId == serverId).Select(pair => pair.Key).ToList();
     }
 
     /// <summary>
@@ -163,25 +175,31 @@ public sealed class PlaybackSessionStore
     }
 
     /// <summary>
-    /// Finds the session the same client has on the same title. A new <c>PlaybackInfo</c> replaces it: that is how a
-    /// client changes the audio track, and the old transcode keeps running until it is closed.
+    /// Finds the session the same client has on the same title, leaving out those already replaced. A new
+    /// <c>PlaybackInfo</c> replaces it: that is how a client changes the audio track.
     /// </summary>
     /// <param name="identity">Who plays what.</param>
     /// <returns>The session, null if there is none.</returns>
     public PlaybackSession? FindSameStream(PlaybackIdentity identity)
     {
-        return _sessions.Values.FirstOrDefault(session => session.Identity == identity);
+        return _sessions.Values.FirstOrDefault(session => session.Identity == identity && session.ReplacedBy is null);
     }
 
     /// <summary>
-    /// Takes a session out, so that no later request can reach it. A segment arriving after the close would restart
-    /// ffmpeg on the remote.
+    /// Takes a session out and closes it, so that no later request can reach it, also from a handler that found it
+    /// before. A segment arriving after the close would restart ffmpeg on the remote.
     /// </summary>
     /// <param name="sessionId">The session.</param>
     /// <returns>The session, null if it was gone.</returns>
     public PlaybackSession? Remove(string sessionId)
     {
-        return _sessions.TryRemove(sessionId, out var session) ? session : null;
+        if (!_sessions.TryRemove(sessionId, out var session))
+        {
+            return null;
+        }
+
+        session.Close();
+        return session;
     }
 
     // Forgets the file servers of play sessions no longer recorded.

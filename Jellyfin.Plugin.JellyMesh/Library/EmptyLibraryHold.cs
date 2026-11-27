@@ -49,7 +49,7 @@ internal static class EmptyLibraryHold
                 continue;
             }
 
-            if (!snapshot.Find(source.ServerId)!.Items.Any(item => string.Equals(item.LibraryId, library, StringComparison.Ordinal)))
+            if (!snapshot.Find(source.ServerId)!.Items.Any(item => item.LibraryIds.Contains(library, StringComparer.Ordinal)))
             {
                 empty.Add((source.ServerId, library));
             }

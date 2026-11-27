@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Emby.Naming.Common;
+using Emby.Naming.TV;
 using System.Linq;
 using System.Text;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -136,6 +138,32 @@ public class FederatedPathsTests
     }
 
     [Fact]
+    public void AnEpisodeStubWithAnIdKeepsTheLabelLast()
+    {
+        var series = FederatedPaths.SeriesFolderOf("Show (2020)");
+
+        Assert.EndsWith("Show S01E02 [1a2b3c4d].strm", FederatedPaths.EpisodeStub(series, "Show", 1, 2, id: "1a2b3c4d5e6f"), StringComparison.Ordinal);
+        Assert.EndsWith("Show S01E02-E03 [1a2b3c4d] - Casa.strm", FederatedPaths.EpisodeStub(series, "Show", 1, 2, 3, "Casa", "1a2b3c4d5e6f"), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(null, 3)]
+    [InlineData("Casa", null)]
+    [InlineData("Casa", 3)]
+    public void AnEpisodeStubWithAnIdIsReadWithItsNumbers(string? label, int? last)
+    {
+        foreach (var id in new[] { "12345678", "00000000", "e01e0200", "00e01e09", "0e123456", "20240102", "ep1e0505", "-e04abcd" })
+        {
+            var path = "/" + FederatedPaths.EpisodeStub(FederatedPaths.SeriesFolderOf("Show (2020)"), "Show", 1, 2, last, label, id);
+
+            var read = new EpisodeResolver(new NamingOptions()).Resolve(path, false);
+
+            Assert.Equal((1, 2, last), (read?.SeasonNumber, read?.EpisodeNumber, read?.EndingEpisodeNumber));
+        }
+    }
+
+    [Fact]
     public void AServerStubResolvesInsideTheFolder()
     {
         var path = FederatedPaths.Resolve("/federata", FederatedPaths.MovieStub(_server, FederatedPaths.TitleFolder("../../x", 2020), "Casa"));
@@ -163,10 +191,55 @@ public class FederatedPathsTests
         Assert.Equal("1a2b3c4d", Label("trailer 3d"));
     }
 
-    [Fact]
-    public void ALongLabelIsCut()
+    // Row 556: the label is cut in UTF-8 bytes, as the title is.
+    [Theory]
+    [InlineData("x", 40)]
+    [InlineData("Ж", 20)]
+    [InlineData("漢", 13)]
+    public void ALongLabelIsCutAtItsBytes(string character, int characters)
     {
-        Assert.True(Label(new string('x', 500)).Length <= 40);
+        Assert.Equal(string.Concat(Enumerable.Repeat(character, characters)), Label(string.Concat(Enumerable.Repeat(character, 500))));
+    }
+
+    // Row 564: a saved label over 40 bytes is renamed, the start of the GUID it may end with left out.
+    [Theory]
+    [InlineData("x", 40, false)]
+    [InlineData("x", 41, true)]
+    [InlineData("Ж", 20, false)]
+    [InlineData("Ж", 21, true)]
+    [InlineData("漢", 13, false)]
+    [InlineData("漢", 14, true)]
+    public void ASavedLabelIsOverTheLimitPastFortyBytes(string character, int characters, bool over)
+    {
+        var label = string.Concat(Enumerable.Repeat(character, characters));
+
+        Assert.Equal(over, FederatedPaths.IsLabelOverLimit(_server, label));
+        Assert.Equal(over, FederatedPaths.IsLabelOverLimit(_server, label + " " + FederatedPaths.GuidStart(_server)));
+    }
+
+    [Fact]
+    public void TheGuidOfAnotherServerCountsInTheLabel()
+    {
+        Assert.True(FederatedPaths.IsLabelOverLimit(_server, new string('x', 40) + " " + FederatedPaths.GuidStart(_other)));
+    }
+
+    [Fact]
+    public void ALabelCutAtItsBytesIsNotOverTheLimit()
+    {
+        Assert.False(FederatedPaths.IsLabelOverLimit(_server, Label(new string('Ж', 500))));
+    }
+
+    [Fact]
+    public void TheLongestNamesOfALongLabelFitInAFileName()
+    {
+        var name = new string('漢', 500);
+        var label = FederatedPaths.Labels([(_other, name), (_server, name)], new Dictionary<Guid, string>())[_server];
+        var episode = FederatedPaths.EpisodeStub("Serie", name, 2024, 1000, 1001, label, "0123456789abcdef");
+        var film = FederatedPaths.MovieStub(_server, FederatedPaths.TitleFolder(name, 2020) + " [01234567]", label);
+
+        Assert.EndsWith(" " + FederatedPaths.GuidStart(_server), label, StringComparison.Ordinal);
+        Assert.InRange(Encoding.UTF8.GetByteCount(Path.GetFileNameWithoutExtension(episode) + "-thumb.webp"), 1, 255);
+        Assert.InRange(Encoding.UTF8.GetByteCount(Path.GetFileName(film)), 1, 255);
     }
 
     [Fact]

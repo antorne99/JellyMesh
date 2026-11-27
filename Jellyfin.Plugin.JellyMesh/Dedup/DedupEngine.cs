@@ -57,26 +57,28 @@ public static class DedupEngine
 
     /// <summary>
     /// Pairs saved copies with current copies of the same content, by the identity <see cref="Resolve"/> gives (plan
-    /// §4.1): films and episodes by their identity, series by their work. A copy with no identity pairs with nothing, and
-    /// no manual merge applies.
+    /// §4.1): films and episodes by their identity, series by their work, with the manual merges joining works (D21). A
+    /// copy with no identity pairs with nothing.
     /// </summary>
     /// <param name="saved">The saved films and episodes.</param>
     /// <param name="savedSeries">The saved series, each as an episode with no numbers that carries the series' data.</param>
     /// <param name="current">The current films and episodes.</param>
     /// <param name="currentSeries">The current series, in the same form.</param>
+    /// <param name="merges">The manual merges, none when null.</param>
     /// <returns>Each saved copy with every current copy of its content.</returns>
     public static IReadOnlyList<ContentPair> Pair(
         IReadOnlyCollection<CatalogItem> saved,
         IReadOnlyCollection<CatalogItem> savedSeries,
         IReadOnlyCollection<CatalogItem> current,
-        IReadOnlyCollection<CatalogItem> currentSeries)
+        IReadOnlyCollection<CatalogItem> currentSeries,
+        IReadOnlyList<ManualMerge>? merges = null)
     {
         ArgumentNullException.ThrowIfNull(saved);
         ArgumentNullException.ThrowIfNull(savedSeries);
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(currentSeries);
 
-        var works = WorkResolver.Create([.. saved, .. savedSeries, .. current, .. currentSeries], []);
+        var works = WorkResolver.Create([.. saved, .. savedSeries, .. current, .. currentSeries], merges ?? []);
         var currentByKey = current
             .SelectMany(item => Identify(item, works).Select(identity => (identity.Key, Item: item)))
             .ToLookup(entry => entry.Key, entry => entry.Item, StringComparer.Ordinal);
@@ -184,6 +186,12 @@ public static class DedupEngine
     private static List<ContentIdentity> IdentifyRemote(CatalogItem item, WorkResolver works)
     {
         var identities = Identify(item, works);
+        if (identities.Count == 0 && item.Kind == ContentKind.Episode && !string.IsNullOrWhiteSpace(item.SeriesId) && works.Find(item) is null)
+        {
+            // Keeps the episodes of a series without a work together, as a series of their server.
+            identities = IdentifyEpisodes(item, new WorkResolver.Work(WorkResolver.KeyOfAlone(item), MatchKind.ItemOnly));
+        }
+
         return identities.Count > 0 ? identities : IdentifyAlone(item, works);
     }
 
@@ -199,6 +207,11 @@ public static class DedupEngine
             return [new ContentIdentity(work.Key, work.Key, ContentKind.Movie, work.Match)];
         }
 
+        return IdentifyEpisodes(item, work);
+    }
+
+    private static List<ContentIdentity> IdentifyEpisodes(CatalogItem item, WorkResolver.Work work)
+    {
         if (item.SeasonNumber is not { } season)
         {
             return [];

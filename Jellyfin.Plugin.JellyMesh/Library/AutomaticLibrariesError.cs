@@ -24,5 +24,8 @@ public enum AutomaticLibrariesError
     RenameFailed,
 
     /// <summary>Something else failed, such as saving the configuration.</summary>
-    Failed
+    Failed,
+
+    /// <summary>A shared library was made or renamed after the switch-off was confirmed, so the option stayed on.</summary>
+    Unconfirmed
 }

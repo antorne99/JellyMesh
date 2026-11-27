@@ -23,16 +23,16 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     private Task<RemoteResult<System.Collections.Generic.IReadOnlyDictionary<string, IndexedBoxSet>>> ReadCollectionsAsync(RemoteServerInfo server, params string[] filmIds)
         => _fixture.Reader.ReadCollectionsAsync(
             server,
-            ["films"],
+            [TestLibraries.Films],
             (filmIds.Length > 0 ? filmIds : _fixture.Client.Collections.SelectMany(entry => entry.Films)).ToHashSet(StringComparer.Ordinal),
             CancellationToken.None);
 
     [Fact]
     public async Task EachFilmOfACollectionGetsItsNameAndTmdbId()
     {
-        _fixture.Client.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = "10" } }, ["m1", "m2"]));
+        _fixture.Client.Collections.Add((TestLibraries.Films, new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = "10" } }, ["m1", "m2"]));
         _fixture.Client.AddCollection("other", "elsewhere", "Not read", "m9");
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -47,8 +47,8 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [InlineData("1\" tmdb=\"2")]
     public async Task ATmdbIdThatIsNotDigitsIsLeftOut(string tmdb)
     {
-        _fixture.Client.Collections.Add(("films", new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = tmdb } }, ["m1"]));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Collections.Add((TestLibraries.Films, new RemoteItem { Id = "box", Name = "Saga", ProviderIds = new System.Collections.Generic.Dictionary<string, string?> { ["Tmdb"] = tmdb } }, ["m1"]));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -58,9 +58,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AFilmInTwoCollectionsGetsTheFirstByName()
     {
-        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
-        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.AddCollection(TestLibraries.Films, "b", "Saga B", "m1");
+        _fixture.Client.AddCollection(TestLibraries.Films, "a", "Saga A", "m1");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -70,9 +70,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AFilmInTwoCollectionsGetsTheFirstByTrimmedName()
     {
-        _fixture.Client.AddCollection("films", "a", "  Saga B", "m1");
-        _fixture.Client.AddCollection("films", "b", "Saga A ", "m1");
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.AddCollection(TestLibraries.Films, "a", "  Saga B", "m1");
+        _fixture.Client.AddCollection(TestLibraries.Films, "b", "Saga A ", "m1");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -82,8 +82,8 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ACollectionWithoutANameIsLeftOut()
     {
-        _fixture.Client.AddCollection("films", "a", " ", "m1");
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.AddCollection(TestLibraries.Films, "a", " ", "m1");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -93,9 +93,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ACollectionWithANameLongerThan256CharactersIsLeftOut()
     {
-        _fixture.Client.AddCollection("films", "long", new string('x', 257), "m1");
-        _fixture.Client.AddCollection("films", "edge", " " + new string('y', 256) + " ", "m2");
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.AddCollection(TestLibraries.Films, "long", new string('x', 257), "m1");
+        _fixture.Client.AddCollection(TestLibraries.Films, "edge", " " + new string('y', 256) + " ", "m2");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -106,9 +106,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AMemberThatIsNotAFilmOfTheCatalogIsLeftOut()
     {
-        _fixture.Client.AddCollection("films", "box", "Saga", "m1", "ghost1", "ghost2");
-        _fixture.Client.AddCollection("films", "other", "Zeta", "ghost3");
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.AddCollection(TestLibraries.Films, "box", "Saga", "m1", "ghost1", "ghost2");
+        _fixture.Client.AddCollection(TestLibraries.Films, "other", "Zeta", "ghost3");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server, "m1");
 
@@ -118,9 +118,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task NoMoreCollectionsAreReadOnceEveryFilmOfTheCatalogHasOne()
     {
-        _fixture.Client.AddCollection("films", "a", "Saga A", "m1");
-        _fixture.Client.AddCollection("films", "b", "Saga B", "m1");
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.AddCollection(TestLibraries.Films, "a", "Saga A", "m1");
+        _fixture.Client.AddCollection(TestLibraries.Films, "b", "Saga B", "m1");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server, "m1");
 
@@ -134,25 +134,25 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     {
         for (var index = 0; index < RemoteCatalogReader.PageSize + 1; index++)
         {
-            _fixture.Client.AddCollection("films", "box" + index, "Saga " + index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture), "m" + index);
+            _fixture.Client.AddCollection(TestLibraries.Films, "box" + index, "Saga " + index.ToString("D3", System.Globalization.CultureInfo.InvariantCulture), "m" + index);
         }
 
         _fixture.Client.Collections[0].Films.AddRange(Enumerable.Range(1000, RemoteCatalogReader.PageSize).Select(index => "m" + index));
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
         Assert.Equal((2 * RemoteCatalogReader.PageSize) + 1, result.Value!.Count);
-        Assert.Contains("films@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
+        Assert.Contains(TestLibraries.Films + "@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
         Assert.Contains("box0@" + RemoteCatalogReader.PageSize, _fixture.Client.CollectionReads);
     }
 
     [Fact]
     public async Task AFailedCollectionReadIsAFailure()
     {
-        _fixture.Client.AddCollection("films", "a", "Saga", "m1");
+        _fixture.Client.AddCollection(TestLibraries.Films, "a", "Saga", "m1");
         _fixture.Client.CollectionFailure = RemoteFailure.Unreachable;
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadCollectionsAsync(server);
 
@@ -162,12 +162,12 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     private async Task<RemoteServerInfo> PeerAsync(int protocolVersion = ProviderProtocol.CollectionsVersion)
     {
         _fixture.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, protocolVersion);
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         Assert.Equal(RemoteMode.JellyMesh, server.Mode);
         return server;
     }
 
-    private void AddShared(string film, string? name, string? tmdb = null, string library = "films")
+    private void AddShared(string film, string? name, string? tmdb = null, string library = TestLibraries.Films)
         => _fixture.Client.SharedCollections.Add((library, new RemoteCollectionEntry(film, name, tmdb)));
 
     [Fact]
@@ -176,14 +176,14 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         var server = await PeerAsync();
         AddShared("m1", " Saga ", "10");
         AddShared("m2", "Saga", "1\" tmdb=\"2");
-        _fixture.Client.AddCollection("films", "box", "Stock", "m3");
+        _fixture.Client.AddCollection(TestLibraries.Films, "box", "Stock", "m3");
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
 
         Assert.Equal(new IndexedBoxSet("Saga", "10"), result.Value!["m1"]);
         Assert.Equal(new IndexedBoxSet("Saga", null), result.Value["m2"]);
         Assert.Equal(2, result.Value.Count);
-        Assert.Equal(["peer:films@0"], _fixture.Client.CollectionReads);
+        Assert.Equal([$"peer:{TestLibraries.Films}@0"], _fixture.Client.CollectionReads);
     }
 
     [Fact]
@@ -191,9 +191,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     {
         var server = await PeerAsync(ProviderProtocol.CollectionsVersion - 1);
         AddShared("m1", "Saga");
-        _fixture.Client.AddCollection("films", "box", "Stock", "m1");
+        _fixture.Client.AddCollection(TestLibraries.Films, "box", "Stock", "m1");
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Empty(result.Value!);
@@ -210,7 +210,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         AddShared(null!, "Saga");
         AddShared("m3", "Saga");
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1", "m2", "m3" }, CancellationToken.None);
 
         Assert.Equal(["m3"], result.Value!.Keys);
     }
@@ -225,12 +225,12 @@ public sealed class RemoteCatalogReaderTests : IDisposable
             AddShared(film, "Saga");
         }
 
-        AddShared("s1", "Other", library: "shows");
+        AddShared("s1", "Other", library: TestLibraries.Shows);
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films", "shows"], films.Append("s1").ToHashSet(StringComparer.Ordinal), CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films, TestLibraries.Shows], films.Append("s1").ToHashSet(StringComparer.Ordinal), CancellationToken.None);
 
         Assert.Equal(films.Count + 1, result.Value!.Count);
-        Assert.Equal(["peer:films@0", "peer:films@" + ProviderProtocol.MaxItemsPerPage, "peer:shows@0"], _fixture.Client.CollectionReads);
+        Assert.Equal([$"peer:{TestLibraries.Films}@0", $"peer:{TestLibraries.Films}@" + ProviderProtocol.MaxItemsPerPage, $"peer:{TestLibraries.Shows}@0"], _fixture.Client.CollectionReads);
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         AddShared("m1", "Saga");
         _fixture.Client.RewriteSharedCollections = page => page with { TotalRecordCount = RemoteCatalogReader.MaxItemsPerQuery + 1 };
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
     }
@@ -252,7 +252,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         AddShared("m1", "Saga");
         _fixture.Client.RewriteSharedCollections = page => page with { Items = [] };
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.CatalogChanged, result.Failure);
     }
@@ -264,7 +264,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         AddShared("m1", "Saga");
         _fixture.Client.RewriteSharedCollections = page => page with { ByteCount = RemoteCatalogReader.MaxBytesPerRead + 1 };
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.ResponseTooLarge, result.Failure);
     }
@@ -276,7 +276,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
         AddShared("m1", "Saga");
         _fixture.Client.CollectionFailure = RemoteFailure.ServerError;
 
-        var result = await _fixture.Reader.ReadCollectionsAsync(server, ["films"], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
+        var result = await _fixture.Reader.ReadCollectionsAsync(server, [TestLibraries.Films], new System.Collections.Generic.HashSet<string> { "m1" }, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.ServerError, result.Failure);
     }
@@ -284,8 +284,8 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ReadsEveryPageInOrder()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies((2 * RemoteCatalogReader.PageSize) + 3));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies((2 * RemoteCatalogReader.PageSize) + 3));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -297,7 +297,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AnEmptyLibraryIsOneRequest()
     {
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -308,9 +308,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ATooLargePageIsAskedAgainWithALowerLimit()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(70));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(70));
         _fixture.Client.OnPage = (query, _) => query.Limit > 50 ? RemoteFailure.ResponseTooLarge : RemoteFailure.None;
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -322,9 +322,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ASingleItemOverTheLimitFailsTheRead()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
         _fixture.Client.OnPage = (_, _) => RemoteFailure.ResponseTooLarge;
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -336,17 +336,17 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     public async Task AnItemRemovedDuringTheReadRestartsIt()
     {
         var movies = TestItems.Movies(RemoteCatalogReader.PageSize + 10);
-        _fixture.Client.Add("films", RemoteItemType.Movie, movies);
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, movies);
         _fixture.Client.OnPage = (_, call) =>
         {
             if (call == 2)
             {
-                _fixture.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+                _fixture.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
             }
 
             return RemoteFailure.None;
         };
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -357,10 +357,10 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ACatalogThatNeverHoldsStillFailsInsteadOfGivingAPartialRead()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 10));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 10));
         var total = 0;
         _fixture.Client.Rewrite = (_, page) => page with { TotalRecordCount = page.TotalRecordCount + total++ };
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -372,11 +372,11 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     public async Task AnItemSeenTwiceAcrossPagesCountsOnceAndFailsTheCount()
     {
         var movies = TestItems.Movies(RemoteCatalogReader.PageSize + 1);
-        _fixture.Client.Add("films", RemoteItemType.Movie, movies);
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, movies);
         _fixture.Client.Rewrite = (query, page) => query.StartIndex == RemoteCatalogReader.PageSize
             ? page with { Items = [movies[0]] }
             : page;
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -386,9 +386,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AnEmptyPageBeforeTheTotalStopsTheRead()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
         _fixture.Client.Rewrite = (_, page) => new RemoteItemPage([], 5);
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -399,9 +399,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AnAbsurdTotalIsRefused()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(1));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(1));
         _fixture.Client.Rewrite = (_, page) => page with { TotalRecordCount = RemoteCatalogReader.MaxItemsPerQuery + 1 };
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -411,10 +411,10 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ASeriesLibraryReadsSeriesSeasonsAndEpisodes()
     {
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        _fixture.Client.Add("shows", RemoteItemType.Season, TestItems.Season("s1", "s", 1));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
-        var server = await _fixture.AddServerAsync("A", "shows");
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Season, TestItems.Season("s1", "s", 1));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "s", 1, 1));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Shows);
 
         var result = await ReadAsync(server);
 
@@ -429,27 +429,27 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ASeriesRowThatItemsCollapsesIsLookedUpById()
     {
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("listed"));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "collapsed", 1, 1));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("listed"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "collapsed", 1, 1));
         _fixture.Client.ItemsById.Add(TestItems.Series("collapsed"));
-        var server = await _fixture.AddServerAsync("A", "shows");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Shows);
 
         var result = await ReadAsync(server);
 
         var series = result.Value!.Single(item => item.ItemId == "collapsed");
         Assert.Equal(IndexedItemKind.Series, series.Kind);
-        Assert.Equal("shows", series.LibraryId);
+        Assert.Equal(TestLibraries.Shows, series.LibraryId);
         Assert.Equal("71", series.ProviderIds["Tvdb"]);
     }
 
     [Fact]
     public async Task ALookupAnsweredByTheRepresentativeRowIsKeptUnderTheRowAskedFor()
     {
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("listed"));
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "hidden", 1, 1));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("listed"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "hidden", 1, 1));
         _fixture.Client.ItemsById.Add(TestItems.Series("listed"));
         _fixture.Client.RepresentedBy["hidden"] = "listed";
-        var server = await _fixture.AddServerAsync("Friend", "shows");
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Shows);
 
         var result = await ReadAsync(server);
 
@@ -461,8 +461,8 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AnEpisodeWhoseSeriesCannotBeFoundIsKeptAndLogged()
     {
-        _fixture.Client.Add("shows", RemoteItemType.Episode, TestItems.Episode("e1", "gone", 1, 1));
-        var server = await _fixture.AddServerAsync("Friend", "shows");
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Episode, TestItems.Episode("e1", "gone", 1, 1));
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Shows);
 
         var result = await ReadAsync(server);
 
@@ -471,9 +471,66 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task AReadRemembersTheNameAndTypeOfEachImportedLibrary()
+    {
+        _fixture.Client.Libraries.Add(new RemoteLibrary("other", "Musica", "music"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Shows, TestLibraries.Films);
+
+        await ReadAsync(server);
+
+        Assert.Equal(
+            [(TestLibraries.Films, "Film", "movies"), (TestLibraries.Shows, "Serie", "tvshows")],
+            _fixture.Store.Configuration.Servers.Single().RemoteLibraries.Select(library => (library.Id, library.Name, library.CollectionType)));
+    }
+
+    [Fact]
+    public async Task ALibraryRenamedOnTheRemoteIsRememberedWithItsNewNameAndAReadWithoutChangesSavesNothing()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        await ReadAsync(server);
+        var saves = _fixture.Store.Saves;
+        await ReadAsync(server);
+        var unchanged = _fixture.Store.Saves;
+        _fixture.Client.Libraries[0] = new RemoteLibrary(TestLibraries.Films, "Film 4K", "movies");
+
+        await ReadAsync(server);
+
+        Assert.Equal(saves, unchanged);
+        Assert.Equal("Film 4K", Assert.Single(_fixture.Store.Configuration.Servers.Single().RemoteLibraries).Name);
+    }
+
+    [Fact]
+    public async Task ARemoteThatRepeatsOneImportedLibraryInPlaceOfAnotherHasItsReadRefused()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, TestLibraries.Shows);
+        await ReadAsync(server);
+        _fixture.Client.Libraries.Clear();
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Films, "Film", "movies"));
+        _fixture.Client.Libraries.Add(new RemoteLibrary(TestLibraries.Films, "Film bis", "movies"));
+
+        await ReadAsync(server);
+
+        Assert.Equal(
+            [TestLibraries.Films, TestLibraries.Shows],
+            _fixture.Store.Configuration.Servers.Single().RemoteLibraries.Select(library => library.Id));
+    }
+
+    [Fact]
+    public async Task AFailedReadOfTheLibrariesKeepsTheOnesRemembered()
+    {
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
+        await ReadAsync(server);
+        _fixture.Client.Libraries.Clear();
+
+        await ReadAsync(server);
+
+        Assert.Equal(TestLibraries.Films, Assert.Single(_fixture.Store.Configuration.Servers.Single().RemoteLibraries).Id);
+    }
+
+    [Fact]
     public async Task AChosenLibraryThatIsGoneFailsTheRead()
     {
-        var server = await _fixture.AddServerAsync("A", "films", "deleted");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, "deleted");
 
         var result = await ReadAsync(server);
 
@@ -484,13 +541,43 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task OnlyChosenLibrariesAreRead()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("m"));
-        _fixture.Client.Add("shows", RemoteItemType.Series, TestItems.Series("s"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Add(TestLibraries.Shows, RemoteItemType.Series, TestItems.Series("s"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
         Assert.Equal("m", Assert.Single(result.Value!).ItemId);
+    }
+
+    [Fact]
+    public async Task AnItemInTwoChosenLibrariesKeepsBothInIdOrder()
+    {
+        _fixture.Client.Libraries.Add(new("films4k", "Film 4K", "movies"));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("m"));
+        _fixture.Client.Add("films4k", RemoteItemType.Movie, TestItems.Movie("m"), TestItems.Movie("k"));
+        var server = await _fixture.AddServerAsync("A", "films4k", TestLibraries.Films);
+
+        var result = await ReadAsync(server);
+
+        var both = Assert.Single(result.Value!, item => item.ItemId == "m");
+        Assert.Equal(TestLibraries.Films, both.LibraryId);
+        Assert.Equal(["films4k"], both.OtherLibraryIds);
+        Assert.Equal([TestLibraries.Films, "films4k"], both.LibraryIds);
+        Assert.Equal(["films4k"], Assert.Single(result.Value!, item => item.ItemId == "k").LibraryIds);
+    }
+
+    [Fact]
+    public async Task AChangedItemKeepsEveryChosenLibraryTheFeedNames()
+    {
+        _fixture.Client.Libraries.Add(new("films4k", "Film 4K", "movies"));
+        _fixture.Client.ItemsById.Add(TestItems.Movie("m"));
+        _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-1", false, [new RemoteChange("m", "Movie", ["films4k", "other", TestLibraries.Films])]));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films, "films4k");
+
+        var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
+
+        Assert.Equal([TestLibraries.Films, "films4k"], Assert.Single(result.Value!.Items).LibraryIds);
     }
 
     [Fact]
@@ -507,9 +594,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ARefusedTokenIsRenewedInTheMiddleOfARead()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize + 1));
         _fixture.Client.OnPage = (_, call) => call == 2 ? RemoteFailure.AuthenticationFailed : RemoteFailure.None;
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         var logins = _fixture.Client.Logins;
 
         var result = await ReadAsync(server);
@@ -521,7 +608,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ALostKeyStopsTheReadBeforeAnyRequest()
     {
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.KeySource.Key = null;
 
         var result = await ReadAsync(server);
@@ -533,9 +620,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ACatalogHeavierThanTheBudgetIsRefusedHoweverSmallItsPages()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize * 3));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize * 3));
         _fixture.Client.Rewrite = (_, page) => page with { ByteCount = (RemoteCatalogReader.MaxBytesPerRead / 2) + 1 };
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -546,9 +633,9 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ACatalogUnderTheBudgetReadsNormally()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize * 2));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(RemoteCatalogReader.PageSize * 2));
         _fixture.Client.Rewrite = (_, page) => page with { ByteCount = RemoteCatalogReader.MaxBytesPerRead / 2 };
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -558,14 +645,14 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task ASecondAttemptDoesNotPayForTheFirst()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movies(3));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movies(3));
         var reads = 0;
         _fixture.Client.Rewrite = (_, page) =>
         {
             var weighed = page with { ByteCount = (RemoteCatalogReader.MaxBytesPerRead * 3) / 4 };
             return ++reads == 1 ? weighed with { Items = [] } : weighed;
         };
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await ReadAsync(server);
 
@@ -575,10 +662,10 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     [Fact]
     public async Task AFeedThatNeverEndsIsRefusedAndHasNoMoreThanItsPages()
     {
-        var change = new RemoteChange("item", "Movie", ["films"]);
+        var change = new RemoteChange("item", "Movie", [TestLibraries.Films]);
         var cursor = 0;
         _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-" + ++cursor, true, [change]));
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
 
@@ -591,7 +678,7 @@ public sealed class RemoteCatalogReaderTests : IDisposable
     {
         var cursor = 0;
         _fixture.Client.Feed = _ => RemoteResult.Success(new RemoteChangePage(false, "cursor-" + ++cursor, true, []) { ByteCount = RemoteCatalogReader.MaxBytesPerRead / 2 });
-        var server = await _fixture.AddServerAsync("A", "films");
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
 
         var result = await _fixture.Reader.ReadFeedAsync(server, "start", new System.Collections.Generic.HashSet<string>(), SyncFixture.Start, CancellationToken.None);
 

@@ -43,9 +43,9 @@ docker cp "$MEDIA/remoto-jellymesh/film/$RES (2026)/." "$PREFIX-local:/media/pri
 docker exec "$PREFIX-local" sh -c 'chmod -R a+rwX /media/privato'
 post local "/Library/VirtualFolders?name=Privato&collectionType=movies&refreshLibrary=false&paths=/media/privato" \
   '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
-folder_b=$(server_folder "$B")
-check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$folder_b/Film")"
-post local "/Library/VirtualFolders?name=Film%20Peer&collectionType=movies&refreshLibrary=false&paths=$folder_b/Film" \
+film_b=$(type_folder "$B" Film)
+check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$film_b")"
+post local "/Library/VirtualFolders?name=Film%20Peer&collectionType=movies&refreshLibrary=false&paths=$film_b" \
   '{"LibraryOptions":{"EnableInternetProviders":false}}' >/dev/null
 # The test films last a minute: stock keeps no position on anything shorter than its minimum.
 post local /System/Configuration "$(get local /System/Configuration | jq -c '.MinResumeDurationSeconds = 0')" >/dev/null

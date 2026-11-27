@@ -67,7 +67,7 @@ public sealed class ProviderCatalog
 
     /// <summary>
     /// Tells whether an item is one this server federates itself. §4.4: such an item never leaves it. The URL covers
-    /// films and episodes wherever they are, and the path, with its links resolved, covers the series and seasons, which have no URL.
+    /// video stubs wherever they are; the path, links resolved, covers all under the federated folder in every layout, placeholders included.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is a stub.</returns>

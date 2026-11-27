@@ -1,18 +1,20 @@
 # Scenario helpers on top of env.sh. Source this file.
 source "$(dirname "${BASH_SOURCE[0]}")"/env.sh
 USER_ID=$(get /Users/Me 2>/dev/null | jq -r .Id || true)
-PID=$(get /Plugins 2>/dev/null | jq -r '.[] | select(.Name=="JellyMesh") | .Id' || true)
 set_folder() {
-  local cfg
-  cfg=$(get "/Plugins/$PID/Configuration" | jq -c --argjson p "${1:-true}" '.FederatedFolderPath="/federata" | .MetadataProtection=$p')
-  post "/Plugins/$PID/Configuration" "$cfg" >/dev/null
+  put /JellyMesh/Admin/Settings "$(jq -nc --argjson p "${1:-true}" '{FederatedFolderPath: "/federata", MetadataProtection: $p}')" >/dev/null
 }
 add_server() { # <name> <url> [user] -> prints id
-  local id libs
+  local id
   id=$(post /JellyMesh/Admin/Servers "$(jq -n --arg n "$1" --arg u "$2" --arg us "${3:-jellymesh}" '{Name:$n,Url:$u,Username:$us,Password:"jellymesh-test"}')" | jq -r .Id)
-  libs=$(get "/JellyMesh/Admin/Servers/$id/Libraries" | jq -c '{LibraryIds:[.[] | .Id]}')
-  post "/JellyMesh/Admin/Servers/$id/Libraries" "$libs" >/dev/null
+  choose_libraries "$id" '[.Libraries[].Id]'
   echo "$id"
+}
+choose_libraries() { # <server id> <jq filter of the edit check that gives the library ids>: saved with the edit form
+  local form ids
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  ids=$(post "/JellyMesh/Admin/Servers/$1/Edit/Check" "$form" | jq -c "$2")
+  put "/JellyMesh/Admin/Servers/$1" "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" >/dev/null
 }
 sync_and_scan() { sync_full; sleep 4; scan_settle; sleep 3; }
 items() { # <type>

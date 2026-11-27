@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +22,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public sealed class LocalTitleLinker : ILocalTitleLinker
 {
     private readonly StubRegistry _registry;
+    private readonly ErrorLogLimits _errorLogs;
     private readonly IFederationResolver _resolver;
     private readonly IFederationIndex _index;
     private readonly IRemoteServerRegistry _servers;
@@ -40,6 +42,7 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
     /// <param name="library">The library manager.</param>
     /// <param name="linker">What links the versions.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="errorLogs">The limits of the errors in the log.</param>
     public LocalTitleLinker(
         StubRegistry registry,
         IFederationResolver resolver,
@@ -48,8 +51,10 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
         IPluginConfigurationStore store,
         ILibraryManager library,
         IVersionLinker linker,
-        ILogger<LocalTitleLinker> logger)
+        ILogger<LocalTitleLinker> logger,
+        ErrorLogLimits? errorLogs = null)
     {
+        _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
         _resolver = resolver;
         _index = index;
@@ -141,15 +146,34 @@ public sealed class LocalTitleLinker : ILocalTitleLinker
             .ToList();
     }
 
+    // Null when the libraries cannot be read: the title waits for the next sync.
+    private LibraryPlacement? ReadPlacement()
+    {
+        try
+        {
+            return LibraryPlacement.Read(_library, _store);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot read the libraries to link a new local title: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            return null;
+        }
+    }
+
     // Returns whether a group holds a local copy of the title. Only the planned groups of the title are saved; the stubs,
     // their files and the other groups wait for the next sync.
     private async Task<bool> SaveGroupsAsync(IReadOnlyCollection<Guid> local, CancellationToken cancellationToken)
     {
+        if (ReadPlacement() is not { } placement)
+        {
+            return false;
+        }
+
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
         var state = _registry.State;
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, false, _ => string.Empty, _ => null));
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, false, _ => string.Empty, _ => null) { PlacementOf = placement.KeyOf });
 
         var planned = plan.State.Groups.Where(group => group.LocalItemIds.Any(local.Contains)).ToList();
         if (planned.Count == 0)

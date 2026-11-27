@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -23,8 +24,8 @@ internal static class TestValues
     public const string Username = "dedicated-user";
     public const string Password = "pa55-w0rd-sentinel";
     public const string Token = "tok3n0123456789sentinel";
-    public const string Host = "friend.tailnet.ts.net";
-    public const string Url = "http://friend.tailnet.ts.net:8096";
+    public const string Host = "remote.invalid";
+    public const string Url = "http://remote.invalid:8096";
 
     public static readonly RemoteCredentials Credentials = new() { Username = Username, Password = Password };
 
@@ -69,6 +70,8 @@ internal sealed class FixedFederatedRootSource(string? root) : IFederatedRootSou
 
 internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 {
+    private readonly object _lock = new();
+
     public PluginConfiguration Configuration { get; } = new();
 
     public int Saves { get; private set; }
@@ -79,30 +82,45 @@ internal sealed class InMemoryConfigurationStore : IPluginConfigurationStore
 
     public void RaiseSettingsChanged() => SettingsChanged?.Invoke(this, EventArgs.Empty);
 
-    public T Read<T>(Func<PluginConfiguration, T> read) => read(Configuration);
+    // Like a store whose database was never read: nothing is handed out and nothing is changed.
+    public bool Unavailable { get; set; }
+
+    public T Read<T>(Func<PluginConfiguration, T> read)
+        => Unavailable ? throw new StoreSuspendedException("The configuration was never read.") : read(Configuration);
 
     public void Update(Action<PluginConfiguration> update)
     {
-        // Like the plugin, the change is made in memory before the save that may fail.
-        update(Configuration);
-        if (SaveFailure is not null)
+        if (Unavailable)
         {
-            throw SaveFailure;
+            throw new StoreSuspendedException("The configuration was never read.");
         }
 
-        Saves++;
+        // Like the plugin, one change at a time, made in memory before the save that may fail.
+        lock (_lock)
+        {
+            update(Configuration);
+            if (SaveFailure is not null)
+            {
+                throw SaveFailure;
+            }
+
+            Saves++;
+        }
     }
 
     public void Update(Action<PluginConfiguration> update, Action<PluginConfiguration> rollback)
     {
-        try
+        lock (_lock)
         {
-            Update(update);
-        }
-        catch
-        {
-            rollback(Configuration);
-            throw;
+            try
+            {
+                Update(update);
+            }
+            catch
+            {
+                rollback(Configuration);
+                throw;
+            }
         }
     }
 }
@@ -226,12 +244,41 @@ internal sealed class RegistryFixture : IDisposable
 
     public RemoteServerRegistry Registry { get; }
 
-    public async Task<RemoteServerInfo> AddServerAsync()
+    public async Task<RemoteServerInfo> AddServerAsync(string name = "Friend")
     {
-        var result = await Registry.AddAsync("Friend", TestValues.Url, TestValues.Credentials, CancellationToken.None);
+        var result = await Registry.AddAsync(name, TestValues.Url, TestValues.Credentials, CancellationToken.None);
         Assert.True(result.IsSuccess, result.Failure.ToString());
         return result.Value!;
     }
 
     public void Dispose() => Registry.Dispose();
+}
+
+// Answers as the given remote, except a logout, which never answers.
+internal sealed class HeldLogoutHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+{
+    private readonly TaskCompletionSource _logout = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _logoutEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task LogoutStarted => _logout.Task;
+
+    public Task LogoutEnded => _logoutEnded.Task;
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri!.AbsolutePath == "/Sessions/Logout")
+        {
+            _logout.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            finally
+            {
+                _logoutEnded.TrySetResult();
+            }
+        }
+
+        return respond(request);
+    }
 }

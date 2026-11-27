@@ -19,6 +19,11 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 [AdminErrors]
 public class FederationSyncController : ControllerBase
 {
+    /// <summary>
+    /// What a sync asked for while the plugin database cannot be used is refused with.
+    /// </summary>
+    internal const string DatabaseSuspendedMessage = "Remote servers are suspended until the plugin database can be used again.";
+
     private readonly ICatalogSyncService _sync;
     private readonly IFederationResolver _resolver;
     private readonly ISyncHistory _history;
@@ -49,6 +54,7 @@ public class FederationSyncController : ControllerBase
         {
             SyncStartResult.Started => Accepted(_sync.GetStatus()),
             SyncStartResult.AlreadyRunning => Conflict(new FailureResponse(RemoteFailure.None, "A sync is already running.")),
+            SyncStartResult.DatabaseSuspended => Conflict(new FailureResponse(RemoteFailure.Suspended, DatabaseSuspendedMessage)),
             _ => Conflict(new FailureResponse(RemoteFailure.Suspended, FederationAdminController.FailureMessage(RemoteFailure.Suspended)))
         };
     }

@@ -19,6 +19,7 @@ public sealed partial class LayoutMigrationTests
     [Fact]
     public async Task TheAutomaticMigrationSyncsThenScansThenCarries()
     {
+        BothServersImport();
         var (_, oldItem) = OldFilm("Dune", (_serverA, "a1"));
         var a = NewFilm(_serverA, "a1");
         var newStub = _stubs.Single(stub => stub.ServerId is not null);
@@ -106,7 +107,7 @@ public sealed partial class LayoutMigrationTests
         // The sync runs its hook at its end, so the carry from a hook must not start another.
         OldFilm("Dune", (_serverA, "a1"));
         NewFilm(_serverA, "a1");
-        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, ServerFilms(_serverA), ServerFilms(_serverB)));
+        _libraries.Add(Library("Film", CollectionTypeOptions.movies, OldFilms, NewFilms(_serverA), NewFilms(_serverB)));
         _store.Configuration.LayoutMigration.Mode = LayoutMigrationMode.Automatic;
         _store.Configuration.LayoutMigration.Step = AutomaticMigrationStep.Carry;
         var migration = await MigrationAsync();

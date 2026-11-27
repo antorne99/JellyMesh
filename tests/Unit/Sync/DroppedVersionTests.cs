@@ -32,15 +32,15 @@ public sealed class DroppedVersionTests : IDisposable
     private async Task<RemoteServerInfo> SyncAsync(RemoteItem film)
     {
         _fixture.Sync.Client.Capabilities = new RemoteCapabilities(RemoteMode.JellyMesh, 1);
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film, TestItems.Movie("other", "Other", 2021, "2"));
-        var server = await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film, TestItems.Movie("other", "Other", 2021, "2"));
+        var server = await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         return server;
     }
 
     private async Task SendAsync(RemoteItem film)
     {
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = film;
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = film;
         await _fixture.SyncAndMaterializeAsync();
         Assert.All(_fixture.Sync.Client.Queries, query => Assert.True(query.ViaProvider));
     }

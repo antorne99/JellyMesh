@@ -185,7 +185,7 @@ public sealed class StubSegments
         return failure switch
         {
             RemoteFailure.Unreachable or RemoteFailure.Timeout or RemoteFailure.Suspended or RemoteFailure.AuthenticationFailed
-                or RemoteFailure.ServerError or RemoteFailure.InvalidResponse => true,
+                or RemoteFailure.ServerError or RemoteFailure.InvalidResponse or RemoteFailure.OtherServer => true,
             RemoteFailure.Forbidden => !IsOlderPeer(serverId),
             _ => false
         };

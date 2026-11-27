@@ -94,6 +94,12 @@ public enum RemoteFailure
     Busy,
 
     /// <summary>
+    /// The call was dropped here before it was sent, because what it was for ended meanwhile. Says nothing about the
+    /// remote, so it is neither recorded nor logged as a failure of the server.
+    /// </summary>
+    Withdrawn,
+
+    /// <summary>
     /// Removing a server could not be saved. The server stays, with its titles, and nothing was stopped.
     /// </summary>
     RemovalFailed,
@@ -111,5 +117,44 @@ public enum RemoteFailure
     /// <summary>
     /// The remote gave the Server Id of a server already configured here, so adding it again would show every title twice.
     /// </summary>
-    AlreadyConfigured
+    AlreadyConfigured,
+
+    /// <summary>
+    /// The remote gave a Server Id other than the one saved for this server: another server answers at its address, so
+    /// the login is refused and ended (row 433).
+    /// </summary>
+    OtherServer,
+
+    /// <summary>
+    /// The server is being removed, so an edit of it is refused (row 434).
+    /// </summary>
+    BeingRemoved,
+
+    /// <summary>
+    /// Another configured server already has the name an edit gives (row 434).
+    /// </summary>
+    NameTaken,
+
+    /// <summary>
+    /// A rename of the server has not finished, so an edit cannot change its name yet (row 434).
+    /// </summary>
+    RenameUnfinished,
+
+    /// <summary>
+    /// Titles are still in the older folder layouts, so an edit cannot change the name of a server until the folder
+    /// migration ends (row 566).
+    /// </summary>
+    MigrationUnfinished,
+
+    /// <summary>
+    /// Whether titles are still in the older folder layouts cannot be read yet, so an edit cannot rename the server now
+    /// (rows 566, 567).
+    /// </summary>
+    MigrationUnknown,
+
+    /// <summary>
+    /// Titles are still in the older folder layouts, so a save of the same name does not resume a failed rename until
+    /// the folder migration ends (row 567).
+    /// </summary>
+    RenameWaitsForMigration
 }

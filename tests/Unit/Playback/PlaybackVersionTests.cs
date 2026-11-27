@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Segments;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Segments;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -243,6 +244,25 @@ public class PlaybackVersionTests
         Assert.Equal(N(_localItem), source.Id);
         Assert.Null(source.Path);
         Assert.Equal(_localItem, _fixture.Sessions.LocalItemOf("local-session"));
+    }
+
+    // The store filter answers 503: neither a remote nor stock plays a stub on settings it cannot read.
+    [Fact]
+    public async Task While_the_settings_cannot_be_read_a_stub_reaches_neither_a_remote_nor_stock()
+    {
+        Hidden(_localItem);
+        _store.Unavailable = true;
+        _fixture.Store.Unavailable = true;
+        var passed = false;
+
+        await Assert.ThrowsAsync<StoreSuspendedException>(() => Filter().OnActionExecutionAsync(Context(_aItem), () =>
+        {
+            passed = true;
+            return Task.FromResult(new ActionExecutedContext(Context(_aItem), [], new object()));
+        }));
+
+        Assert.False(passed);
+        Assert.Empty(_fixture.Client.Requests);
     }
 
     [Fact]

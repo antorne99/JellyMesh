@@ -82,6 +82,14 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         "MediaSegments"
     };
 
+    private static readonly HashSet<string> _streamControllers = new(StringComparer.Ordinal)
+    {
+        "Videos",
+        "DynamicHls",
+        "Audio",
+        "UniversalAudio"
+    };
+
     private readonly StubLookup _stubs;
     private readonly IAuthorizationContext _authorization;
     private readonly PlaybackCoordinator _coordinator;
@@ -260,6 +268,16 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 return;
             }
 
+            // Stock would start reading the .strm. The stub the named local play session plays goes on.
+            var isSuspended = _coordinator.IsSuspended;
+            if (_streamControllers.Contains(controller)
+                && stubs.Any(entry => (isSuspended || entry.Value is null) && !named.Any(playSessionId => _sessions.LocalItemOf(playSessionId) == entry.Key)))
+            {
+                _logger.LogWarning("{Controller}.{Action} of a federated title is refused: database suspended {Suspended}, unknown stub {Unknown}", controller, action, isSuspended, stubs.ContainsValue(null));
+                context.Result = _refusal.Refuse(context.HttpContext, authorization.DeviceId ?? string.Empty, isSuspended ? PlaybackRefusal.Text : PlaybackRefusal.FailedText);
+                return;
+            }
+
             foreach (var playSessionId in named)
             {
                 _sessions.UseLocal(user.Id, playSessionId);
@@ -283,7 +301,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
                 await _transcodes.KillTranscodingJobs(authorization.DeviceId ?? string.Empty, PlaySessionOf(context), _ => true).ConfigureAwait(false);
             }
 
-            if (executed.Exception is not null && !executed.ExceptionHandled && stubs.Values.Any(stub => _coordinator.TakeFileRefusal(stub.Id)))
+            if (executed.Exception is not null && !executed.ExceptionHandled && stubs.Values.OfType<StubEntry>().Any(stub => _coordinator.TakeFileRefusal(stub.Id)))
             {
                 _logger.LogWarning("The local transcode of a federated title failed because every source was at its stream limit");
                 executed.Exception = null;
@@ -326,7 +344,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
     }
 
     // Serves Download and File of a stub from its remote file, as a static stream of the stub reads it. File wants a user who
-    // sees the stub, Download also the download permission, as on stock; a file no source gives is a bare 503.
+    // sees the stub, Download also the download permission, as on stock; no source or no room for the user is a bare 503.
     private async Task<IActionResult> FileResultAsync(ActionExecutingContext context, string action, Guid itemId)
     {
         var authorization = await _authorization.GetAuthorizationInfo(context.HttpContext).ConfigureAwait(false);
@@ -351,6 +369,20 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         if (_stubs.Find(itemId) is not { } stub)
         {
             _logger.LogWarning("{Action} of a federated title whose stub is gone: 503", action);
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // Before a place is taken, which could close an older session of the user.
+        if (_coordinator.IsSuspended)
+        {
+            _logger.LogWarning("{Action} of stub {StubId} is refused: the JellyMesh database cannot be used: 503", action, stub.Id);
+            return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        using var read = await _coordinator.TryBeginFileReadAsync(user.Id).ConfigureAwait(false);
+        if (read is null)
+        {
+            _logger.LogInformation("{Action} of stub {StubId}: the user has {Count} sessions and file reads running, the most allowed: 503", action, stub.Id, PlaybackLimits.SessionsPerUser);
             return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -531,11 +563,11 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
         return playSessionIds.Any(id => _transcodes.GetTranscodingJob(id) is { } job && string.IsNullOrWhiteSpace(job.DeviceId));
     }
 
-    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub. The
-    // play session counts even when its stub no longer resolves.
-    private Dictionary<Guid, StubEntry> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded)
+    // Finds every stub the action names: as the entity, as the version, or through the local play session of a stub, null
+    // for one the registry does not hold. The play session counts even when its stub no longer resolves.
+    private Dictionary<Guid, StubEntry?> StubsOf(ActionExecutingContext context, IReadOnlyList<string> sessions, out bool recorded)
     {
-        var stubs = new Dictionary<Guid, StubEntry>();
+        var stubs = new Dictionary<Guid, StubEntry?>();
         var named = StubLookup.NamedItemIdsOf(context).ToList();
         var played = sessions.Select(_sessions.LocalItemOf).OfType<Guid>().ToList();
         recorded = played.Count > 0;
@@ -543,7 +575,7 @@ public sealed class StockRouteGuardFilter : IAsyncActionFilter
 
         foreach (var id in named)
         {
-            if (_stubs.Find(id) is { } stub)
+            if (_stubs.Resolve(id, out var isUnknown) is var stub && (stub is not null || isUnknown))
             {
                 stubs[id] = stub;
             }

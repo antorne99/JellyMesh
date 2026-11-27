@@ -27,6 +27,32 @@ public sealed record StubPlanInput(
     /// <summary>Gets a value indicating whether films carry the collection of their remote.</summary>
     public bool WritesCollections { get; init; }
 
+    /// <summary>
+    /// Gets a value indicating whether the folder still holds stubs of an older layout that the registry does not know, as
+    /// after a damaged registry: the stubs then follow the 0.5 layout, so that the migration carries from their items.
+    /// </summary>
+    public bool KeepsOlderLayout { get; init; }
+
+    /// <summary>Gets the time of the plan.</summary>
+    public DateTime Now { get; init; }
+
+    /// <summary>
+    /// Gets the local library a type folder of a remote library goes to, as a key: folders with one key hold one stub per
+    /// title. By default one local library per server and type.
+    /// </summary>
+    public Func<Guid, string, TypeFolder, string> PlacementOf { get; init; } = DefaultPlacement;
+
     /// <summary>Gets the check for a relative path on the disk. Without it, no path that is kept changes.</summary>
     public Func<string, bool> IsOnDisk { get; init; } = _ => true;
+
+    /// <summary>Gives the default placement: one local library per server and type.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryId">The remote library.</param>
+    /// <param name="type">The type folder.</param>
+    /// <returns>The key.</returns>
+    public static string DefaultPlacement(Guid serverId, string libraryId, TypeFolder type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return type.Name;
+    }
 }

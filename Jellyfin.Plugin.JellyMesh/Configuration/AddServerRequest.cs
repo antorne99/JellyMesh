@@ -20,7 +20,7 @@ public sealed class AddServerRequest
     public string Name { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets the tailnet base URL.
+    /// Gets the base URL of the remote, as the administrator entered it.
     /// </summary>
     [Required]
     public string Url { get; init; } = string.Empty;
@@ -35,4 +35,9 @@ public sealed class AddServerRequest
     /// Gets the dedicated user password. May be empty on a remote, it is never echoed back.
     /// </summary>
     public string Password { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets the library mode of the server, or null for the setting of new servers.
+    /// </summary>
+    public LibraryMode? LibraryMode { get; init; }
 }

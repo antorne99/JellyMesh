@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Activity;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
@@ -50,19 +53,26 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
 
     private readonly IRemoteServerRegistry _registry;
     private readonly IJellyfinRemoteClient _client;
+    private readonly IPluginConfigurationStore _store;
     private readonly ILogger<RemoteCatalogReader> _logger;
+    private readonly IActivityWriter? _activity;
+    private readonly ConcurrentDictionary<Guid, IReadOnlyList<string>> _vanished = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="RemoteCatalogReader"/> class.
     /// </summary>
     /// <param name="registry">The server registry.</param>
     /// <param name="client">The remote client.</param>
+    /// <param name="store">The configuration, which keeps the imported libraries as last read.</param>
     /// <param name="logger">The logger.</param>
-    public RemoteCatalogReader(IRemoteServerRegistry registry, IJellyfinRemoteClient client, ILogger<RemoteCatalogReader> logger)
+    /// <param name="activity">The activity log, told when an imported library is gone from the remote.</param>
+    public RemoteCatalogReader(IRemoteServerRegistry registry, IJellyfinRemoteClient client, IPluginConfigurationStore store, ILogger<RemoteCatalogReader> logger, IActivityWriter? activity = null)
     {
         _registry = registry;
         _client = client;
+        _store = store;
         _logger = logger;
+        _activity = activity;
     }
 
     /// <inheritdoc />
@@ -286,12 +296,21 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         return RemoteResult.Success<IReadOnlyDictionary<string, IndexedBoxSet>>(films);
     }
 
+    // An entry already read from another imported library gains this one, kept in id order as the feed does.
     private static void Add(Dictionary<string, IndexedItem> entries, IEnumerable<RemoteItem> items, RemoteItemType type, string libraryId, DateTimeOffset seenUtc)
     {
         foreach (var item in items)
         {
-            entries[item.Id] = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc);
+            var entry = RemoteItemMapper.ToIndexedItem(item, type, libraryId, seenUtc);
+            entries[item.Id] = entries.TryGetValue(item.Id, out var known) ? WithLibraries(entry, [.. known.LibraryIds, libraryId]) : entry;
         }
+    }
+
+    // Sets the libraries of an entry in ordinal id order, so that both reads give the same first library.
+    private static IndexedItem WithLibraries(IndexedItem entry, IEnumerable<string> libraryIds)
+    {
+        var ordered = libraryIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return entry with { LibraryId = ordered[0], OtherLibraryIds = ordered[1..] };
     }
 
     private static bool ViaProvider(RemoteServerInfo server) => server.Mode == RemoteMode.JellyMesh;
@@ -315,8 +334,9 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         CancellationToken cancellationToken)
     {
         var wanted = changes
-            .Select(change => (change.Id, Library: change.LibraryIds.FirstOrDefault(server.ImportedLibraryIds.Contains), Known: Enum.TryParse<RemoteItemType>(change.Type, out var type), Type: type))
-            .Where(change => change.Library is not null && change.Known)
+            .Select(change => (change.Id, Libraries: change.LibraryIds.Where(server.ImportedLibraryIds.Contains).Distinct(StringComparer.Ordinal).ToList(), Known: Enum.TryParse<RemoteItemType>(change.Type, out var type), Type: type))
+            .Where(change => change.Libraries.Count > 0 && change.Known)
+            .Select(change => (change.Id, Library: change.Libraries.Min(StringComparer.Ordinal)!, Libraries: change.Libraries, change.Type))
             .ToList();
 
         foreach (var group in wanted.GroupBy(change => (change.Library, change.Type)))
@@ -338,11 +358,19 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                     return RemoteResult.Fail<bool>(RemoteFailure.ResponseTooLarge);
                 }
 
-                Add(entries, page.Value.Items, group.Key.Type, group.Key.Library!, seenUtc);
+                Add(entries, page.Value.Items, group.Key.Type, group.Key.Library, seenUtc);
             }
         }
 
-        foreach (var library in wanted.Select(change => change.Library!).Distinct(StringComparer.Ordinal))
+        foreach (var change in wanted.Where(change => change.Libraries.Count > 1))
+        {
+            if (entries.TryGetValue(change.Id, out var entry))
+            {
+                entries[change.Id] = WithLibraries(entry, change.Libraries);
+            }
+        }
+
+        foreach (var library in wanted.Select(change => change.Library).Distinct(StringComparer.Ordinal))
         {
             var missing = await AddMissingSeriesAsync(server, library, knownItemIds, entries, budget, seenUtc, cancellationToken).ConfigureAwait(false);
             if (!missing.IsSuccess)
@@ -352,6 +380,106 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         }
 
         return RemoteResult.Success(true);
+    }
+
+    // Keeps the name and type of each imported library, which its local libraries follow; a read that finds them unchanged writes nothing.
+    // Counts the imported libraries a correct answer did not list: the second absence in a row drops them from the imported
+    // ones and records them as vanished (§10 row 436). Returns the ids dropped now.
+    private IReadOnlyList<string> TrackAbsence(RemoteServerInfo server, IReadOnlyList<string> missing, IReadOnlyList<RemoteLibrary> answer)
+    {
+        // A view of the same type that is no library of its own nor one known may be the library grouped with others.
+        static bool MayBeGrouped(RemoteServerConfig kept, string id, IReadOnlyList<RemoteLibrary> answer)
+        {
+            var type = kept.RemoteLibraries.FirstOrDefault(library => library.Id == id)?.CollectionType;
+            return answer.Any(view => view.MayCombine
+                && !kept.ImportedLibraryIds.Contains(view.Id)
+                && !kept.RemoteLibraries.Any(library => library.Id == view.Id)
+                && !kept.VanishedLibraries.Any(library => library.Id == view.Id)
+                && (type is null || string.Equals(view.CollectionType, type, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        static bool Unchanged(RemoteServerConfig kept, IReadOnlyList<string> missing)
+            => missing.Count == 0 && kept.AbsentLibraryIds.Count == 0 && !kept.VanishedLibraries.Any(library => kept.ImportedLibraryIds.Contains(library.Id));
+
+        if (_store.Read(config => config.Servers.FirstOrDefault(entry => entry.Id == server.Id) is not { } kept || Unchanged(kept, missing)))
+        {
+            return [];
+        }
+
+        var vanished = new List<VanishedLibraryConfig>();
+        _store.Update(config =>
+        {
+            vanished.Clear();
+            if (config.Servers.FirstOrDefault(entry => entry.Id == server.Id) is not { } kept)
+            {
+                return;
+            }
+
+            var uncertain = missing.Where(id => kept.ImportedLibraryIds.Contains(id) && MayBeGrouped(kept, id, answer)).ToList();
+            var imported = missing.Where(id => kept.ImportedLibraryIds.Contains(id) && !uncertain.Contains(id)).ToList();
+            vanished.AddRange(imported.Where(kept.AbsentLibraryIds.Contains).Select(id => new VanishedLibraryConfig
+            {
+                Id = id,
+                Name = kept.RemoteLibraries.FirstOrDefault(library => library.Id == id)?.Name ?? string.Empty
+            }));
+            Replace(kept.ImportedLibraryIds, kept.ImportedLibraryIds.Where(id => !vanished.Any(gone => gone.Id == id)).ToList());
+            Replace(kept.AbsentLibraryIds, imported.Where(kept.ImportedLibraryIds.Contains).Concat(uncertain.Where(kept.AbsentLibraryIds.Contains)).ToList());
+            var records = kept.VanishedLibraries.Where(library => !kept.ImportedLibraryIds.Contains(library.Id) && !vanished.Any(gone => gone.Id == library.Id)).Concat(vanished).ToList();
+            Replace(kept.VanishedLibraries, records);
+        });
+
+        if (vanished.Count > 0)
+        {
+            var names = vanished.Select(library => library.Name.Length > 0 ? library.Name : library.Id).ToList();
+            _vanished.AddOrUpdate(server.Id, names, (_, kept) => [.. kept, .. names]);
+        }
+
+        foreach (var library in vanished)
+        {
+            var name = LogText.Clean(library.Name.Length > 0 ? library.Name : library.Id) ?? library.Id;
+            _logger.LogWarning("Library {LibraryName} is gone from remote server {ServerName}: it left the imported libraries", name, LogText.Clean(server.Name));
+            _activity?.Write(ActivityEntries.LibraryVanished(LogText.Clean(server.Name) ?? string.Empty, name));
+        }
+
+        return vanished.Select(library => library.Id).ToList();
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> TakeVanishedLibraries(Guid serverId)
+        => _vanished.TryRemove(serverId, out var names) ? names : [];
+
+    private static void Replace<T>(System.Collections.ObjectModel.Collection<T> target, IReadOnlyList<T> values)
+    {
+        target.Clear();
+        foreach (var value in values)
+        {
+            target.Add(value);
+        }
+    }
+
+    private void RememberLibraries(Guid serverId, IReadOnlyList<RemoteLibrary> libraries)
+    {
+        static bool Same(IEnumerable<RemoteLibraryConfig> kept, IReadOnlyList<RemoteLibrary> read)
+            => kept.Select(library => (library.Id, library.Name, library.CollectionType)).SequenceEqual(read.Select(library => (library.Id, library.Name, library.CollectionType)));
+
+        if (_store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId) is not { } server || Same(server.RemoteLibraries, libraries)))
+        {
+            return;
+        }
+
+        _store.Update(config =>
+        {
+            if (config.Servers.FirstOrDefault(server => server.Id == serverId) is not { } server || Same(server.RemoteLibraries, libraries))
+            {
+                return;
+            }
+
+            server.RemoteLibraries.Clear();
+            foreach (var library in libraries)
+            {
+                server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = library.Id, Name = library.Name, CollectionType = library.CollectionType });
+            }
+        });
     }
 
     private async Task<RemoteResult<IReadOnlyList<IndexedItem>>> ReadEntriesAsync(
@@ -374,12 +502,16 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
             return libraries.FailAs<IReadOnlyList<IndexedItem>>();
         }
 
-        var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).ToList();
-        if (chosen.Count != server.ImportedLibraryIds.Count)
+        // Each library once, so a remote that repeats one in place of another fails the count.
+        var chosen = libraries.Value!.Where(library => server.ImportedLibraryIds.Contains(library.Id)).DistinctBy(library => library.Id).ToList();
+        var missing = server.ImportedLibraryIds.Distinct().Where(id => !chosen.Any(library => library.Id == id)).ToList();
+        // An answer with no views at all is no correct answer, so it never counts as an absence; views of other types make it one.
+        if (RemoteLibraryList.ViewCountOf(libraries.Value!) == 0 || TrackAbsence(server, missing, libraries.Value!).Count < missing.Count)
         {
             return RemoteResult.Fail<IReadOnlyList<IndexedItem>>(RemoteFailure.LibraryUnavailable);
         }
 
+        RememberLibraries(server.Id, chosen);
         var entries = new Dictionary<string, IndexedItem>(StringComparer.Ordinal);
         var budget = new ReadBudget();
         foreach (var library in chosen)

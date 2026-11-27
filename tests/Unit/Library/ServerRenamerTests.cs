@@ -18,7 +18,6 @@ public sealed class ServerRenamerTests : IDisposable
     private readonly Mock<IRemoteServerRegistry> _registry = new();
     private readonly Mock<IServerStubRenamer> _stubs = new();
     private readonly Mock<IServerLibraryManager> _libraries = new();
-    private readonly Mock<ILibraryScans> _scans = new();
     private readonly Mock<IVersionLinker> _linker = new();
     private readonly Mock<IFederatedFolderLinkChecker> _links = new();
     private readonly RetiredLibraryIds _retired = new();
@@ -48,7 +47,7 @@ public sealed class ServerRenamerTests : IDisposable
             [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Casa - Film"), new AutomaticLibraryStatus(ServerLibraryKind.Series, "Casa - Serie")],
             [],
             AutomaticLibrariesError.None));
-        _scans.Setup(scans => scans.QueueAndWaitAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("scan")).Returns(Task.CompletedTask);
+        _libraries.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("scan")).ReturnsAsync(true);
         _linker.Setup(linker => linker.LinkAsync(false, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("link")).Returns(Task.CompletedTask);
         _stubs.Setup(stubs => stubs.CancelAsync(_server, It.IsAny<CancellationToken>())).Callback(() => _steps.Add("cancel")).ReturnsAsync(true);
         _links.Setup(links => links.Check(It.IsAny<string>(), It.IsAny<IReadOnlyList<Guid>>())).Returns(Report(FederatedPathLink.Linked, FederatedPathLink.NotLinked));
@@ -67,7 +66,7 @@ public sealed class ServerRenamerTests : IDisposable
     // A renamer over the same saved configuration, as after a restart.
     private ServerRenamer NewRenamer()
     {
-        var renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _scans.Object, _linker.Object, _retired, _links.Object, _store, _logger);
+        var renamer = new ServerRenamer(_registry.Object, _stubs.Object, _libraries.Object, _linker.Object, _retired, _links.Object, _store, _logger);
         _made.Add(renamer);
         return renamer;
     }
@@ -103,6 +102,21 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
+    public void AnAdoptedLibraryIsNotListedAmongThoseToRename()
+    {
+        _libraries.Setup(libraries => libraries.GetState(_server)).Returns(new AutomaticLibrariesState(
+            true,
+            false,
+            [new AutomaticLibraryStatus(ServerLibraryKind.Movies, "Film di casa") { Adopted = true }, new AutomaticLibraryStatus(ServerLibraryKind.Series, "Casa - Serie")],
+            [],
+            AutomaticLibrariesError.None));
+
+        var answer = _renamer.Rename(_server, "Mare", false);
+
+        Assert.Equal(["Casa - Serie"], answer.Libraries);
+    }
+
+    [Fact]
     public void WhileStubsOfTheServerWaitForAScan_ARenameIsRefused()
     {
         _pending = true;
@@ -111,6 +125,63 @@ public sealed class ServerRenamerTests : IDisposable
 
         Assert.Equal(ServerRenameOutcome.Busy, answer.Outcome);
         Assert.True(_renamer.GetState(_server).Pending);
+        Assert.Empty(_steps);
+    }
+
+    // Row 564: a saved label over 40 bytes is renamed at start under the name the server already has.
+    [Fact]
+    public async Task AServerWithALabelOverTheLimitIsRenamedUnderItsOwnName()
+    {
+        _stubs.SetupSequence(stubs => stubs.LongLabels()).Returns([_server]).Returns([]);
+        _libraries.Setup(libraries => libraries.WaitReadyAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("ready")).Returns(Task.CompletedTask);
+
+        Assert.Equal(1, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Equal(["ready", "name Casa", "stubs Casa"], _steps.GetRange(0, 3));
+        Assert.Contains("scan", _steps);
+        Assert.False(_renamer.GetState(_server).Busy);
+    }
+
+    [Fact]
+    public async Task WithNoLabelOverTheLimitNothingIsRenamedAndTheLibrariesAreNotAwaited()
+    {
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Empty(_steps);
+        _libraries.Verify(libraries => libraries.WaitReadyAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ARenameThatLeavesTheLabelOverTheLimitIsNotCounted()
+    {
+        _registry.Setup(registry => registry.Rename(_server, It.IsAny<string>())).Returns(false);
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([_server]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.False(_renamer.GetState(_server).Busy);
+    }
+
+    [Fact]
+    public async Task ALongLabelOfAServerNoLongerSavedIsLeft()
+    {
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([Guid.NewGuid()]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
+        Assert.Empty(_steps);
+    }
+
+    [Fact]
+    public async Task AServerWhoseStubsWaitForAScanIsLeftForTheNextStart()
+    {
+        _pending = true;
+        _stubs.Setup(stubs => stubs.LongLabels()).Returns([_server]);
+
+        Assert.Equal(0, await _renamer.RenameLongLabelsAsync(CancellationToken.None));
+
         Assert.Empty(_steps);
     }
 
@@ -135,6 +206,21 @@ public sealed class ServerRenamerTests : IDisposable
         Assert.Equal(new ServerRenameState(false, false, false), _renamer.GetState(_server));
     }
 
+    // Row 434: an edit saves the name first, then renames; the stubs and libraries still move.
+    [Fact]
+    public async Task AfterAnEditSavedTheName_TheStubsAndLibrariesStillMove()
+    {
+        _store.Configuration.Servers[0].Name = "Mare";
+        _registry.Setup(registry => registry.GetServers()).Returns([new RemoteServerInfo(_server, "Mare", "http://casa", RemoteMode.Standard, 0, [], null, null)]);
+
+        var answer = _renamer.Rename(_server, "Mare", true);
+        await answer.Job;
+
+        Assert.Equal(ServerRenameOutcome.Started, answer.Outcome);
+        Assert.Equal(["name Mare", "stubs Mare", "libraries", "scan", "finish", "link"], _steps);
+        Assert.False(_renamer.GetState(_server).Failed);
+    }
+
     [Fact]
     public async Task WhileTheOldItemsAreStillThere_ASecondScanRemovesThem_AndNoThirdRuns()
     {
@@ -148,6 +234,17 @@ public sealed class ServerRenamerTests : IDisposable
 
         Assert.Equal(["name Mare", "stubs Mare", "libraries", "scan", "finish", "link", "scan", "finish", "link"], _steps);
         Assert.True(_renamer.GetState(_server).Pending);
+    }
+
+    [Fact]
+    public async Task AScanHeldBackForASharedLibraryLeavesTheStubsToTheScanItOwes()
+    {
+        _libraries.Setup(libraries => libraries.ScanAsync(It.IsAny<CancellationToken>())).Callback(() => _steps.Add("held scan")).ReturnsAsync(false);
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Equal(["name Mare", "stubs Mare", "libraries", "held scan"], _steps);
+        Assert.False(_renamer.GetState(_server).Failed);
     }
 
     [Fact]
@@ -340,6 +437,19 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     [Fact]
+    public async Task WithNoFolderListedForTheServer_TheStubsMove()
+    {
+        _store.Configuration.FederatedFolderPath = "/federated";
+        var report = Report(FederatedPathLink.NotLinked, FederatedPathLink.NotLinked);
+        _links.Setup(links => links.Check("/federated", new[] { _server }))
+            .Returns(report with { Servers = [report.Servers[0] with { Folders = [] }] });
+
+        await _renamer.Rename(_server, "Mare", true).Job;
+
+        Assert.Contains("stubs Mare", _steps);
+    }
+
+    [Fact]
     public async Task WithALibraryOverTheFederatedFolder_TheStubsMove()
     {
         _store.Configuration.FederatedFolderPath = "/federated";
@@ -425,7 +535,14 @@ public sealed class ServerRenamerTests : IDisposable
     }
 
     private static FederatedFolderLinkReport Report(FederatedPathLink movies, FederatedPathLink series) => new(
-        [new ServerFolderLink(_server, "/m", "/s", new FederatedPathStatus(movies, []), new FederatedPathStatus(series, []), [], [], [])],
+        [new ServerFolderLink(
+            _server,
+            [new TypeFolderLink("/m", "movies", "Film", new FederatedPathStatus(movies, [])), new TypeFolderLink("/s", "tvshows", "Serie", new FederatedPathStatus(series, []))],
+            new FederatedPathStatus(movies, []),
+            new FederatedPathStatus(series, []),
+            [],
+            [],
+            [])],
         [],
         false);
 }

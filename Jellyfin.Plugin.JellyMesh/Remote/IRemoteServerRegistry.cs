@@ -32,14 +32,45 @@ public interface IRemoteServerRegistry
     Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Replaces the dedicated user of a server, once the login with it succeeded. On failure nothing is saved. Works with a
-    /// wrong key too, because entering each password again is how a lost key file is fixed.
+    /// Checks an edit of a server without saving anything (row 432): logs in with the new data on a device of its own, so
+    /// the kept login stays, accepts only the saved Server Id (row 433), reads the libraries the user sees, then ends that
+    /// login within a short time. A refusal names the field it is about and, for another server, the name it gives itself.
     /// </summary>
-    /// <param name="serverId">The server to update.</param>
-    /// <param name="credentials">The dedicated user.</param>
+    /// <param name="serverId">The server.</param>
+    /// <param name="edit">The fields of the form.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The server with its new credentials.</returns>
-    Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken);
+    /// <returns>What the edit changes and what the remote offers, or why it is refused.</returns>
+    Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Saves an edit of a server all or nothing (row 432): checks it as <see cref="CheckEditAsync"/> does, then saves name,
+    /// address, credentials, imported libraries and capabilities in one write. A new user or password logs in on the kept
+    /// device and keeps that login; otherwise the kept login stays. Only a new name needs no remote. After the save of a new
+    /// user, runs <paramref name="stopStreams"/>, then ends the login of the old user within a short time (row 434).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="edit">The fields of the form.</param>
+    /// <param name="stopStreams">What stops the streams of the server when its user changes, or null.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What the edit changed, or why it is refused.</returns>
+    Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, Func<Task>? stopStreams, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Enters the edit of a server, so that its checks and saves run one at a time and the last save wins (row 434).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What leaves the edit when disposed, or null while the server is being removed.</returns>
+    Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Marks a server as being removed, so that edits entered from now on are refused, then waits for the edit in progress
+    /// to end (row 434).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>What takes the mark away when disposed, once the removal ended.</returns>
+    Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Removes a server. Possible in any key state: it uses no credential, and it is how to
@@ -84,14 +115,6 @@ public interface IRemoteServerRegistry
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The libraries.</returns>
     Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Sets the libraries to import from a server.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="libraryIds">The remote library identifiers.</param>
-    /// <returns>Whether the server exists.</returns>
-    bool SetImportedLibraries(Guid serverId, IEnumerable<string> libraryIds);
 
     /// <summary>
     /// Runs a call with an authenticated session, logging in again once if the token was refused.

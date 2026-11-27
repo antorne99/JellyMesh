@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,8 +26,8 @@ public sealed class IndexLeakTests : IDisposable
           "Chapters": [{ "Name": "Uno", "StartPositionTicks": 0, "ImagePath": "/secret/path/chapter.jpg" }],
           "MediaSources": [{
             "Id": "source",
-            "Path": "http://friend.tailnet.ts.net:8096/Videos/1/stream?api_key=tok3n0123456789sentinel",
-            "DirectStreamUrl": "http://friend.tailnet.ts.net:8096/stream?api_key=tok3n0123456789sentinel",
+            "Path": "http://remote.invalid:8096/Videos/1/stream?api_key=tok3n0123456789sentinel",
+            "DirectStreamUrl": "http://remote.invalid:8096/stream?api_key=tok3n0123456789sentinel",
             "TranscodingUrl": "/transcode?ApiKey=tok3n0123456789sentinel",
             "RequiredHttpHeaders": { "Authorization": "tok3n0123456789sentinel" },
             "MediaStreams": [
@@ -41,15 +40,15 @@ public sealed class IndexLeakTests : IDisposable
         """;
 
     [Fact]
-    public async Task TheIndexFileHoldsNoTokenNoAddressAndNoPath()
+    public async Task TheIndexTablesHoldNoTokenNoAddressAndNoPath()
     {
         var item = JsonSerializer.Deserialize<RemoteItem>(HostileItem, _options)!;
-        _fixture.Client.Add("films", RemoteItemType.Movie, item);
-        await _fixture.AddServerAsync("Friend", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, item);
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
 
         await _fixture.Sync.RunAsync(CancellationToken.None);
 
-        var content = await File.ReadAllTextAsync(Path.Combine(_fixture.Folder, IndexFile.FileName));
+        var content = await _fixture.Database.DumpAsync("index_");
         Assert.Contains("\"source\"", content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Token, content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Password, content, StringComparison.Ordinal);

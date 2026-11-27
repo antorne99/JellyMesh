@@ -23,17 +23,19 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready peer
 login peer
-settings peer '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings peer '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 
 titles() { get peer /JellyMesh/Admin/Index/Decisions | jq -c '[.Contents[].Winner.Title] | sort'; }
 leaks() { docker exec -i "$PREFIX-peer" sh -c 'grep -rlFf /dev/stdin /config/plugins/Jellyfin.Plugin.JellyMesh /federata /config/log 2>/dev/null | wc -l' <"$WORK/local-signatures"; }
 
 echo "--- standard mode: local has not connected this server yet"
 id=$(add_remote peer local "http://host.docker.internal:$PORT" reader)
-library peer Film movies "$(server_folder "$id")/Film"
 check "the mode is standard" Standard "$(get peer /JellyMesh/Admin/Status | jq -r --arg i "$id" '.Servers[] | select(.Id == $i) | .Mode')"
 import_all peer "$id"
 sync_now peer
+library peer Film movies "$(type_folder "$id" Film peer)"
+scan peer
 echo "imported: $(titles)"
 check "only the real copies are imported" "$copies" "$(get peer /JellyMesh/Admin/Index/Decisions | jq '.Contents | length')"
 check "no signature of local is kept or logged" 0 "$(leaks)"
@@ -44,11 +46,12 @@ req local PUT "/JellyMesh/Admin/Peers/$reader" "$share" >/dev/null
 check "the share is saved" 204 "$(status)"
 req peer DELETE "/JellyMesh/Admin/Servers/$id" >/dev/null
 id=$(add_remote peer local "http://host.docker.internal:$PORT" reader)
-# A server added back is a new server, in a new folder that the admin adds to the library (decision 408).
-check "the folder of the server joins the library" 204 "$(link_folder peer Film "$(server_folder "$id")/Film")"
 check "the mode is JellyMesh" JellyMesh "$(get peer /JellyMesh/Admin/Status | jq -r --arg i "$id" '.Servers[] | select(.Id == $i) | .Mode')"
 import_all peer "$id"
 sync_now peer
+# A server added back is a new server, in a new folder that the admin adds to the library (decision 408).
+check "the folder of the server joins the library" 204 "$(link_folder peer Film "$(type_folder "$id" Film peer)")"
+scan peer
 echo "imported: $(titles)"
 check "the provider leaves the stubs out" "$in_film" "$(get peer /JellyMesh/Admin/Index/Decisions | jq '.Contents | length')"
 check "no signature of local is kept or logged" 0 "$(leaks)"

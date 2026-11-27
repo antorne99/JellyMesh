@@ -11,6 +11,8 @@ RES="JM Confronto Risoluzione"   # remote and peer: the stub of peer is the prim
 COD="JM Confronto Codec"         # local, remote and peer: the local copy is the primary
 SIN="Sintel"                     # local and peer
 folder_b=$(server_folder "$B")
+film_b=$(type_folder "$B" Film)
+serie_b=$(type_folder "$B" Serie)
 
 auto_names() { get local /JellyMesh/Admin/Status | jq -c --arg id "$B" '[.Servers[] | select(.Id == $id) | .AutomaticLibraries.Libraries[]?.Name]'; }
 auto_busy() { get local /JellyMesh/Admin/Status | jq -r --arg id "$B" '.Servers[] | select(.Id == $id) | .AutomaticLibraries.Busy'; }
@@ -33,10 +35,10 @@ settled() {
 echo "--- setup: local copies, the folders of peer in its automatic libraries only"
 put_film "locale/film/$SIN (2010)" "$SIN (2010)"
 put_film "remoto-standard/film/$COD (2026)" "$COD (2026)"
-check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$folder_b/Film")"
-check "the Serie folder of peer leaves Serie" 204 "$(unlink_folder local Serie "$folder_b/Serie")"
-post local "/JellyMesh/Admin/Servers/$B/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-check "the automatic libraries of peer are switched on" 202 "$(status)"
+check "the Film folder of peer leaves Film" 204 "$(unlink_folder local Film "$film_b")"
+check "the Serie folder of peer leaves Serie" 204 "$(unlink_folder local Serie "$serie_b")"
+save_server local "$B" '{"LibraryMode":"ByType"}' >/dev/null
+check "the automatic libraries of peer are switched on" 200 "$(status)"
 for _ in $(seq 1 120); do [ "$(auto_busy)" = false ] && break; sleep 1; done
 names=$(auto_names)
 echo "automatic libraries of peer: $names"
@@ -89,7 +91,7 @@ check "Resolution: the stub of remote is visible" 1 "$(visible "$ra")"
 check "the local media files are untouched" "$media_before" "$(sums "! -name '*.nfo'")"
 # A stub leaves its group before it is deleted, so Jellyfin hands no group over and its NFO saver rewrites nothing (Q276).
 check "the .nfo of the local copies are untouched" "" "$(diff <(echo "$nfo_before") <(sums "-name '*.nfo'") || true)"
-check "the folder of remote stays" 0 "$(docker exec "$PREFIX-local" test -f "$(server_folder "$A")/Film/.jellymesh"; echo $?)"
+check "the folder of remote stays" 0 "$(docker exec "$PREFIX-local" test -f "$(type_folder "$A" Film)/.jellymesh"; echo $?)"
 
 echo "--- peer back as a new server in the shared libraries Film and Serie, then removed again: a dead path next to live ones"
 B2=$(add_remote local peer "http://host.docker.internal:$(port_of peer)" jellymesh)
@@ -99,8 +101,10 @@ B=$B2
 folder_b=$(server_folder "$B")
 import_all local "$B"
 sync_now local
-check "the Film folder of peer is linked to Film" 204 "$(link_folder local Film "$folder_b/Film")"
-check "the Serie folder of peer is linked to Serie" 204 "$(link_folder local Serie "$folder_b/Serie")"
+film_b=$(type_folder "$B" Film)
+serie_b=$(type_folder "$B" Serie)
+check "the Film folder of peer is linked to Film" 204 "$(link_folder local Film "$film_b")"
+check "the Serie folder of peer is linked to Serie" 204 "$(link_folder local Serie "$serie_b")"
 scan local
 sync_now local
 check "the stubs of peer are back" 1 "$([ -n "$(stub_of "$B" "$RES")" ] && echo 1 || echo 0)"
@@ -108,10 +112,10 @@ req local DELETE "/JellyMesh/Admin/Servers/$B" >/dev/null
 check "peer is removed again" 204 "$(status)"
 for _ in $(seq 1 180); do docker exec "$PREFIX-local" test -e "$folder_b" || break; sleep 1; done
 check "the folder of peer is deleted again" gone "$(docker exec "$PREFIX-local" test -e "$folder_b" && echo kept || echo gone)"
-check "Film keeps the dead path of peer" 1 "$(get local /Library/VirtualFolders | jq --arg p "$folder_b/Film" '[.[] | select(.Name == "Film") | .Locations[] | select(. == $p)] | length')"
+check "Film keeps the dead path of peer" 1 "$(get local /Library/VirtualFolders | jq --arg p "$film_b" '[.[] | select(.Name == "Film") | .Locations[] | select(. == $p)] | length')"
 check "a scan ends with the dead path" ended "$(scan local && echo ended || echo stuck)"
 # Jellyfin keeps a Folder row for each location of a library, even a missing one, so only what was inside counts.
-check "no item of peer is left after the scan" 0 "$(sql "select count(*) from BaseItems where Path like '$folder_b/%/%';")"
+check "no item of peer is left after the scan" 0 "$(sql "select count(*) from BaseItems where Path like '$folder_b/%/%/%';")"
 ra=$(stub_of "$A" "$RES")
 check "the stub of remote is still in Film" 1 "$(visible "$ra")"
 check "the local copy is still in Film" 1 "$(visible "$(local_of "$SIN")")"

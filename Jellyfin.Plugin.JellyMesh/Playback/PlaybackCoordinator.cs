@@ -13,6 +13,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
@@ -36,6 +37,7 @@ public sealed class PlaybackCoordinator
     private readonly IPluginConfigurationStore _store;
     private readonly ILastServedSourceStore _lastServed;
     private readonly TimeProvider _clock;
+    private readonly IPluginDatabase _database;
     private readonly ILogger<PlaybackCoordinator> _logger;
     private readonly ErrorLogLimits _errorLogs;
     private readonly ITranscodeManager? _transcodes;
@@ -44,6 +46,8 @@ public sealed class PlaybackCoordinator
     private readonly ConcurrentDictionary<Guid, CachedPolicy> _policies = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _callGates = new();
     private readonly ConcurrencyLimit<Guid> _streams = new(PlaybackLimits.StreamsPerServer);
+    private readonly ConcurrencyLimit<Guid> _fileReads = new(PlaybackLimits.SessionsPerUser);
+    private readonly Lock _roomLock = new();
     private readonly SourceFailures _failures = new();
 
     // Fired when a server is being removed: its open streams end and nothing new opens on it (413).
@@ -58,6 +62,7 @@ public sealed class PlaybackCoordinator
     /// <param name="store">The configuration store.</param>
     /// <param name="lastServed">The last server that served each stub to each user.</param>
     /// <param name="clock">The clock.</param>
+    /// <param name="database">The plugin database, whose state suspends new playback.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="transcodes">The transcode manager, which closes the local transcodes of a removed server.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
@@ -68,6 +73,7 @@ public sealed class PlaybackCoordinator
         IPluginConfigurationStore store,
         ILastServedSourceStore lastServed,
         TimeProvider clock,
+        IPluginDatabase database,
         ILogger<PlaybackCoordinator> logger,
         ITranscodeManager? transcodes = null,
         ErrorLogLimits? errorLogs = null)
@@ -79,6 +85,7 @@ public sealed class PlaybackCoordinator
         _store = store;
         _lastServed = lastServed;
         _clock = clock;
+        _database = database;
         _logger = logger;
         _transcodes = transcodes;
     }
@@ -89,6 +96,12 @@ public sealed class PlaybackCoordinator
     /// whose disks are waking up.
     /// </summary>
     public TimeSpan StallLimit => Times.Idle;
+
+    /// <summary>
+    /// Gets a value indicating whether nothing new plays from the remotes because the plugin database cannot be used (row
+    /// 524). What already plays goes on.
+    /// </summary>
+    public bool IsSuspended => _database.Health.Suspended;
 
     /// <summary>
     /// Gets or sets how long closing one session on the remote may take while its server is removed (413).
@@ -107,6 +120,12 @@ public sealed class PlaybackCoordinator
     public async Task<PlaybackOutcome> OpenAsync(PlaybackOpenRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        if (IsSuspended)
+        {
+            _logger.LogWarning("Title {StubId} cannot play from a server: the JellyMesh database cannot be used", request.Stub.Id);
+            return new PlaybackOutcome(PlaybackOutcomeKind.Unavailable);
+        }
 
         // After a fallback the session is under the version that served, which the same client may ask for again.
         var versions = VersionsOf(request).ToList();
@@ -132,45 +151,57 @@ public sealed class PlaybackCoordinator
         var reachable = new List<(PlaybackOpenRequest Version, StubSource Source)>();
         var refused = 0;
         var tried = 0;
-        foreach (var (version, source) in Chain(versions, previous))
+        var slotTaken = false;
+        try
         {
-            tried++;
-            var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
-            if (attempt.Response is not null)
+            foreach (var (version, source) in Chain(versions, previous))
             {
-                Remember(version, source);
-                await ClosePreviousAsync(previous).ConfigureAwait(false);
-                await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
-                await RecordServedAsync(version, source).ConfigureAwait(false);
-                _logger.LogInformation(
-                    "Title {StubId} plays from server {ServerId} as {Kind}, play session {PlaySessionId}, after {Tried} source(s)",
-                    version.Stub.Id,
-                    source.ServerId,
-                    _sessions.Find(attempt.Response.PlaySessionId)?.Kind,
-                    attempt.Response.PlaySessionId,
-                    tried);
-                return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
+                tried++;
+                slotTaken |= ReplacesOf(previous, source) is not null;
+                var attempt = await TryRemoteAsync(version, source, source == told, previous, cancellationToken).ConfigureAwait(false);
+
+                if (attempt.Response is not null)
+                {
+                    Remember(version, source);
+                    await ReplaceAsync(previous, attempt.Response.PlaySessionId, slotTaken).ConfigureAwait(false);
+                    await CloseIfClientLeftAsync(attempt.Response, cancellationToken).ConfigureAwait(false);
+                    await RecordServedAsync(version, source).ConfigureAwait(false);
+                    _logger.LogInformation(
+                        "Title {StubId} plays from server {ServerId} as {Kind}, play session {PlaySessionId}, after {Tried} source(s)",
+                        version.Stub.Id,
+                        source.ServerId,
+                        _sessions.Find(attempt.Response.PlaySessionId)?.Kind,
+                        attempt.Response.PlaySessionId,
+                        tried);
+                    return new PlaybackOutcome(PlaybackOutcomeKind.Remote, attempt.Response, Served: version.Identity);
+                }
+
+                _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
+                if (attempt.Reachable)
+                {
+                    reachable.Add((version, source));
+                }
+
+                refused += attempt.AtLimit ? 1 : 0;
             }
 
-            _logger.LogInformation("Source on server {ServerId} cannot serve, trying the next step. Reachable: {Reachable}", source.ServerId, attempt.Reachable);
-            if (attempt.Reachable)
+            foreach (var (version, source) in reachable)
             {
-                reachable.Add((version, source));
+                if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
+                {
+                    Remember(version, source);
+                    await ClosePreviousAsync(previous).ConfigureAwait(false);
+                    await RecordServedAsync(version, source).ConfigureAwait(false);
+                    _logger.LogInformation("Title {StubId} plays from a local transcode of the file of server {ServerId}", version.Stub.Id, source.ServerId);
+                    return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true, Served: version.Identity);
+                }
             }
-
-            refused += attempt.AtLimit ? 1 : 0;
         }
-
-        foreach (var (version, source) in reachable)
+        catch (Exception) when (slotTaken)
         {
-            if (await CanReadFileAsync(source, cancellationToken).ConfigureAwait(false))
-            {
-                Remember(version, source);
-                await ClosePreviousAsync(previous).ConfigureAwait(false);
-                await RecordServedAsync(version, source).ConfigureAwait(false);
-                _logger.LogInformation("Title {StubId} plays from a local transcode of the file of server {ServerId}", version.Stub.Id, source.ServerId);
-                return new PlaybackOutcome(PlaybackOutcomeKind.LocalTranscode, FileSource: source, AnyReachable: true, Served: version.Identity);
-            }
+            // The remote may have freed the slot of the previous session already, and nothing else would close it.
+            await ClosePreviousAsync(previous).ConfigureAwait(false);
+            throw;
         }
 
         await ClosePreviousAsync(previous).ConfigureAwait(false);
@@ -245,8 +276,37 @@ public sealed class PlaybackCoordinator
     }
 
     /// <summary>
+    /// Counts a File or Download read of a user in the session limit, like a playback: the oldest sessions not in use are
+    /// closed to make room (row 505). Dispose the result when the read ends.
+    /// </summary>
+    /// <param name="userId">The user.</param>
+    /// <returns>The end of the read, null if the user is at the limit.</returns>
+    public async Task<IDisposable?> TryBeginFileReadAsync(Guid userId)
+    {
+        IDisposable? read;
+        IReadOnlyList<PlaybackSession> unused;
+        lock (_roomLock)
+        {
+            read = TakeRoom(userId, null, out unused) ? _fileReads.TryEnter(userId) : null;
+        }
+
+        try
+        {
+            await CloseRemotesAsync(unused).ConfigureAwait(false);
+        }
+        catch
+        {
+            read?.Dispose();
+            throw;
+        }
+
+        return read;
+    }
+
+    /// <summary>
     /// Opens the remote file of a stub for the server's own reader: the local ffmpeg of the fallback. It has no user, so it
-    /// stays on its stub, first the source <c>OpenAsync</c> chose, and a stub of one server never reads another (D22).
+    /// stays on its stub, first the source <c>OpenAsync</c> chose, and a stub of one server never reads another (D22). While
+    /// the plugin database cannot be used, only the stub of a local transcode already open is read (row 524).
     /// </summary>
     /// <param name="stub">The stub.</param>
     /// <param name="method">GET or HEAD.</param>
@@ -256,6 +316,12 @@ public sealed class PlaybackCoordinator
     public async Task<RemoteContent?> OpenFileAsync(StubEntry stub, HttpMethod method, string? range, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(stub);
+
+        if (IsSuspended && !_sessions.IsReadLocally(stub.Id))
+        {
+            _logger.LogWarning("The file of stub {StubId} is not opened: the JellyMesh database cannot be used", stub.Id);
+            return null;
+        }
 
         var chosen = ChosenFor(stub);
         IReadOnlyList<StubSource> sources = stub.ServerId is { } server ? stub.Sources.Where(source => source.ServerId == server).ToList() : stub.Sources;
@@ -304,8 +370,32 @@ public sealed class PlaybackCoordinator
     /// <param name="request">What to open.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The stream.</returns>
-    public async Task<RemoteResult<RemoteContent>> OpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
+    public Task<RemoteResult<RemoteContent>> OpenAsync(Guid serverId, RemoteStreamRequest request, CancellationToken cancellationToken)
     {
+        return OpenStreamAsync(serverId, null, request, cancellationToken);
+    }
+
+    /// <summary>
+    /// Opens a stream of a session, unless the session closed while the call waited for its place.
+    /// </summary>
+    /// <param name="session">The session.</param>
+    /// <param name="request">What to open.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The stream.</returns>
+    public Task<RemoteResult<RemoteContent>> OpenAsync(PlaybackSession session, RemoteStreamRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return OpenStreamAsync(session.Source.ServerId, session, request, cancellationToken);
+    }
+
+    // A session closed while its call waited in the queue sends nothing: the remote stop already went out.
+    private async Task<RemoteResult<RemoteContent>> OpenStreamAsync(Guid serverId, PlaybackSession? owner, RemoteStreamRequest request, CancellationToken cancellationToken)
+    {
+        if (owner is { IsClosed: true })
+        {
+            return RemoteResult.Fail<RemoteContent>(RemoteFailure.Withdrawn);
+        }
+
         var place = _streams.TryEnter(serverId);
         if (place is null)
         {
@@ -316,13 +406,21 @@ public sealed class PlaybackCoordinator
         var handedOver = false;
         try
         {
+            // Taken before the call: a stop and reopen meanwhile replace it, and what opened then belongs to the stop.
+            var end = EndOf(serverId).Token;
             var opened = await GatedAsync(
                 serverId,
                 Times.StreamOpen,
-                (endpoint, session, token) => _client.OpenStreamAsync(endpoint, session, request, token),
+                (endpoint, session, token) => owner is { IsClosed: true } ? Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Withdrawn)) : _client.OpenStreamAsync(endpoint, session, request, token),
                 cancellationToken).ConfigureAwait(false);
+            if (opened.IsSuccess && end.IsCancellationRequested)
+            {
+                opened.Value!.Dispose();
+                return RemoteResult.Fail<RemoteContent>(RemoteFailure.UnknownServer);
+            }
+
             handedOver = opened.IsSuccess;
-            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place).EndsWith(EndOf(serverId).Token)) : opened;
+            return handedOver ? RemoteResult.Success(opened.Value!.HoldUntilDisposed(place).EndsWith(end)) : opened;
         }
         finally
         {
@@ -331,6 +429,28 @@ public sealed class PlaybackCoordinator
                 place.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// Reads a playlist of a session, unless the session closed while the call waited for its place.
+    /// </summary>
+    /// <param name="session">The session.</param>
+    /// <param name="path">The path and query.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The text.</returns>
+    public Task<RemoteResult<string>> ReadPlaylistAsync(PlaybackSession session, string path, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (session.IsClosed)
+        {
+            return Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Withdrawn));
+        }
+
+        return GatedAsync(
+            session.Source.ServerId,
+            Times.StreamOpen,
+            (endpoint, remote, token) => session.IsClosed ? Task.FromResult(RemoteResult.Fail<string>(RemoteFailure.Withdrawn)) : _client.ReadPlaylistAsync(endpoint, remote, path, token),
+            cancellationToken);
     }
 
     /// <summary>
@@ -412,11 +532,12 @@ public sealed class PlaybackCoordinator
     /// </summary>
     /// <param name="playSessionId">The local play session.</param>
     /// <param name="file">The source of the file, null if none.</param>
-    public void RecordLocalTranscode(string? playSessionId, StubSource? file)
+    /// <param name="stubId">The stub whose <c>.strm</c> it reads, null if not known.</param>
+    public void RecordLocalTranscode(string? playSessionId, StubSource? file, string? stubId = null)
     {
         if (!string.IsNullOrEmpty(playSessionId) && file is not null)
         {
-            _sessions.RecordLocalSource(playSessionId, file.ServerId);
+            _sessions.RecordLocalSource(playSessionId, file.ServerId, stubId);
         }
     }
 
@@ -435,6 +556,13 @@ public sealed class PlaybackCoordinator
             .Select(session => CloseForRemovalAsync(session.Id))
             .Append(CloseLocalTranscodesAsync(serverId))).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Counts the playback sessions open on a server, for the consequences of an edit (row 432).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>How many sessions play from it.</returns>
+    public int CountServerSessions(Guid serverId) => _sessions.All.Count(session => session.Source.ServerId == serverId);
 
     /// <summary>
     /// Lets a server play again after its removal failed: it stays.
@@ -472,7 +600,10 @@ public sealed class PlaybackCoordinator
             var idle = now - session.LastRequest;
             if (idle >= times.SessionRetention)
             {
-                await CloseAsync(session.Id).ConfigureAwait(false);
+                if (session.TryCloseIdle())
+                {
+                    await CloseAsync(session.Id).ConfigureAwait(false);
+                }
             }
             else if (idle >= times.Idle && session.TryPark())
             {
@@ -519,6 +650,19 @@ public sealed class PlaybackCoordinator
         {
             _logger.LogInformation("Play session {PlaySessionId} failed: its remote stream is closed", session.Id);
             return CloseRemoteAsync(session);
+        }));
+    }
+
+    /// <summary>
+    /// Closes each replaced session whose client moved to the session that replaced it, or whose replacement ended.
+    /// </summary>
+    /// <returns>A task.</returns>
+    public Task CloseReplacedAsync()
+    {
+        return Task.WhenAll(_sessions.All.Where(session => IsLeftBehind(session) && session.TryCloseIdle()).Select(session =>
+        {
+            _logger.LogDebug("The client of play session {PlaySessionId} moved to the session that replaced it: it is closed", session.Id);
+            return _sessions.Remove(session.Id) is null ? Task.CompletedTask : CloseRemoteAsync(session);
         }));
     }
 
@@ -650,6 +794,31 @@ public sealed class PlaybackCoordinator
         return chosen;
     }
 
+    // Keeps the old session serving until its client moves to the new one, as stock does. A failed session, or one whose
+    // slot a JellyMesh remote was told to free, closes now.
+    private async Task ReplaceAsync(PlaybackSession? previous, string? replacementId, bool slotTaken)
+    {
+        if (previous is null)
+        {
+            return;
+        }
+
+        if (replacementId is null || previous.HasFailed || slotTaken)
+        {
+            await CloseAsync(previous.Id).ConfigureAwait(false);
+            return;
+        }
+
+        previous.MarkReplaced(replacementId);
+        _logger.LogDebug("Play session {PlaySessionId} is replaced by {Replacement} and serves until its client moves", previous.Id, replacementId);
+    }
+
+    // A replaced session whose replacement got a request or ended.
+    private bool IsLeftBehind(PlaybackSession session)
+    {
+        return session.ReplacedBy is { } replacementId && (_sessions.Find(replacementId) is not { } replacement || replacement.WasRequested);
+    }
+
     private async Task ClosePreviousAsync(PlaybackSession? previous)
     {
         if (previous is not null)
@@ -662,33 +831,62 @@ public sealed class PlaybackCoordinator
     // not in use go first, the oldest before the others: a parked one costs a remote nothing.
     private async Task<bool> MakeRoomForAsync(Guid userId, PlaybackSession? replaced)
     {
-        var sessions = _sessions.All.Where(session => session.Identity.UserId == userId && session != replaced).ToList();
-        var excess = sessions.Count - PlaybackLimits.SessionsPerUser + 1;
-        if (excess <= 0)
+        bool room;
+        IReadOnlyList<PlaybackSession> unused;
+        lock (_roomLock)
         {
-            return true;
+            room = TakeRoom(userId, replaced, out unused);
         }
 
-        var unused = sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest).Take(excess).ToList();
-        foreach (var session in unused)
-        {
-            await CloseAsync(session.Id).ConfigureAwait(false);
-        }
-
-        return unused.Count == excess;
+        await CloseRemotesAsync(unused).ConfigureAwait(false);
+        return room;
     }
+
+    // Takes out the oldest sessions not in use over the limit, file reads counted in, and tells whether there is room. Called
+    // under the room lock; the caller closes the remote side of what came out.
+    private bool TakeRoom(Guid userId, PlaybackSession? replaced, out IReadOnlyList<PlaybackSession> unused)
+    {
+        var sessions = _sessions.All.Where(session => session.Identity.UserId == userId && session != replaced).ToList();
+        var excess = sessions.Count + _fileReads.Running(userId) - PlaybackLimits.SessionsPerUser + 1;
+        var chosen = new List<PlaybackSession>();
+        foreach (var session in sessions.Where(session => !session.IsActive).OrderBy(session => session.LastRequest))
+        {
+            if (chosen.Count >= excess)
+            {
+                break;
+            }
+
+            // Closed in one step with the check, so a request that begins meanwhile keeps its session.
+            if (session.TryCloseIdle())
+            {
+                chosen.Add(session);
+            }
+        }
+
+        unused = chosen.Where(session => _sessions.Remove(session.Id) is not null).ToList();
+        return excess <= chosen.Count;
+    }
+
+    // Closes the remote side of sessions already out of the store, every one even if another fails.
+    private Task CloseRemotesAsync(IReadOnlyList<PlaybackSession> sessions) => Task.WhenAll(sessions.Select(CloseRemoteAsync));
 
     private bool IsJellyMesh(Guid serverId)
     {
         return _registry.GetServers().Any(server => server.Id == serverId && server.Mode == RemoteMode.JellyMesh);
     }
 
+    // A new PlaybackInfo on the same JellyMesh server takes over the slot of the stream it replaces: on a full server a
+    // change of audio track would otherwise be refused by its own stream. The provider frees it even if it then refuses.
+    private string? ReplacesOf(PlaybackSession? previous, StubSource source)
+    {
+        return previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
+    }
+
     private async Task<Attempt> TryRemoteAsync(PlaybackOpenRequest request, StubSource source, bool keepIndexes, PlaybackSession? previous, CancellationToken cancellationToken)
     {
-        // A new PlaybackInfo on the same server takes over the slot of the stream it replaces: on a full server a change of
-        // audio track would otherwise be refused by its own stream.
-        var replaces = previous?.Source.ServerId == source.ServerId && IsJellyMesh(source.ServerId) ? previous.RemotePlaySessionId : null;
+        var replaces = ReplacesOf(previous, source);
         var remoteRequest = ToRemote(request, source, keepIndexes, replaces);
+        var end = EndOf(source.ServerId).Token;
         var answer = await GatedAsync(
             source.ServerId,
             Times.RemotePlaybackInfo,
@@ -747,6 +945,13 @@ public sealed class PlaybackCoordinator
             _logger.LogWarning("The answer of server {ServerId} for a {Kind} stream could not be turned into one for the client", source.ServerId, session.Kind);
             await CloseRemoteAsync(session).ConfigureAwait(false);
             return new Attempt(null, true);
+        }
+
+        // The server stopped during the calls: this session belongs to what was stopped.
+        if (end.IsCancellationRequested)
+        {
+            await CloseRemoteAsync(session).ConfigureAwait(false);
+            return new Attempt(null, false);
         }
 
         _sessions.Add(session);

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Model.Tasks;
 using Moq;
@@ -41,7 +42,7 @@ public sealed class SyncScheduleServiceTests : IDisposable
 
     private IncrementalSyncTask IncrementalTask() => new(Mock.Of<ICatalogSyncService>(), _store, new CapturingLogger<IncrementalSyncTask>());
 
-    private ReconciliationTask ReconciliationTask() => new(Mock.Of<ICatalogSyncService>(), _store, new CapturingLogger<ReconciliationTask>());
+    private ReconciliationTask ReconciliationTask() => new(Mock.Of<ICatalogSyncService>(), _store, Mock.Of<IPluginDatabase>(), new CapturingLogger<ReconciliationTask>());
 
     private (Mock<IScheduledTaskWorker> Incremental, Mock<IScheduledTaskWorker> Reconciliation) WithTasks(TaskResult? lastRun)
     {
@@ -159,6 +160,26 @@ public sealed class SyncScheduleServiceTests : IDisposable
         await StartAndSettleAsync();
 
         _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Once);
+    }
+
+    // A database busy at start would otherwise leave the schedule and the first sync to the next restart.
+    [Fact]
+    public async Task SettingsThatCannotBeReadAtStartAreAppliedOnceTheyCan()
+    {
+        var (incremental, _) = WithTasks(null);
+        _store.Configuration.SyncIntervalSeconds = 600;
+        _store.Unavailable = true;
+        _service.StoreRetryDelay = TimeSpan.FromMilliseconds(10);
+        await _service.StartAsync(CancellationToken.None);
+        await Task.Delay(100);
+        Assert.False(_service.ExecuteTask!.IsCompleted);
+
+        _store.Unavailable = false;
+        await _service.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(TimeSpan.FromMinutes(10).Ticks, incremental.Object.Triggers.Single().IntervalTicks);
+        _taskManager.Verify(m => m.QueueScheduledTask<IncrementalSyncTask>(It.IsAny<TaskOptions>()), Times.Once);
+        Assert.DoesNotContain(Microsoft.Extensions.Logging.LogLevel.Error, _logger.Levels);
     }
 
     [Fact]

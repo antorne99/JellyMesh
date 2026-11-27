@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Integration 7 of the per-server spec: the libraries JellyMesh keeps for a server (D6, D7, D16, D20, decisions 131 and 140).
+# The adoption of 0.6 (§10 rows 440-441) is proven on the remote library layout by adoption.sh.
 # Starts a private instance with the plugin and a stock remote, checks, then removes both with their volumes.
 # usage: run.sh   (PREFIX and PORT pick the private containers, KEEP=1 leaves them running)
 set -euo pipefail
@@ -24,13 +25,20 @@ auth_header() {
 }
 get() { curl -fsS -H "$ACCEPT" -H "$(auth_header)" "$BASE$1"; }
 post() { curl -fsS -X POST -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "${2:-}" "$BASE$1"; }
-# Posts and prints the status code, then the body on the next line.
-post_status() {
-  local body
+# Saves the library mode of the server with the edit form, and prints the status code, then the body on the next line.
+set_mode() {
+  local body form
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --arg m "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: "", LibraryMode: $m}')
   body=$(mktemp)
-  curl -sS -o "$body" -w '%{http_code}\n' -X POST -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "${2:-}" "$BASE$1"
+  curl -sS -o "$body" -w '%{http_code}\n' -X PUT -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' -d "$form" "$BASE/JellyMesh/Admin/Servers/$SERVER"
   cat "$body"
   rm -f "$body"
+}
+# What the edit form would list for the mode before saving it.
+mode_change() {
+  local form
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --arg m "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: "", LibraryMode: $m}')
+  post "/JellyMesh/Admin/Servers/$SERVER/Edit/Check" "$form" | jq -c .Consequences.ModeChange
 }
 delete() { curl -fsS -X DELETE -H "$ACCEPT" -H "$(auth_header)" "$BASE$1"; }
 urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
@@ -93,14 +101,35 @@ wait_libraries() {
   echo "the libraries job did not finish" >&2; return 1
 }
 
-sync_full() {
+wait_sync() {
   local i
-  post /JellyMesh/Admin/Sync >/dev/null
   for i in $(seq 1 180); do
     [ "$(get /JellyMesh/Admin/Sync | jq -r .IsRunning)" = false ] && return
     sleep 1
   done
   echo "sync did not finish" >&2; return 1
+}
+
+# Saving a server starts a sync, and a second one is refused while it runs, so it waits for the first.
+sync_full() {
+  wait_sync
+  post /JellyMesh/Admin/Sync >/dev/null
+  wait_sync
+}
+
+# Imports every library of the remote with the edit form, in a mode, and prints the status code.
+import_mode() {
+  local form ids
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" --arg m "$1" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: "", LibraryMode: $m}')
+  ids=$(post "/JellyMesh/Admin/Servers/$SERVER/Edit/Check" "$form" | jq -c '[.Libraries[].Id]')
+  curl -sS -o /dev/null -w '%{http_code}\n' -X PUT -H "$ACCEPT" -H "$(auth_header)" -H 'Content-Type: application/json' \
+    -d "$(jq -c --argjson l "$ids" '. + {LibraryIds: $l}' <<<"$form")" "$BASE/JellyMesh/Admin/Servers/$SERVER"
+}
+# The id of a remote library, as its type folder names it.
+remote_library() {
+  local form
+  form=$(get /JellyMesh/Admin/Status | jq -c --arg id "$SERVER" '.Servers[] | select(.Id == $id) | {Name, Url, Username: "", Password: ""}')
+  post "/JellyMesh/Admin/Servers/$SERVER/Edit/Check" "$form" | jq -r --arg n "$1" '.Libraries[] | select(.Name == $n) | .Id' | tr -d - | tr A-F a-f
 }
 
 scan_idle() {
@@ -134,6 +163,10 @@ only_path() { # <library name> <path> <type>
   folder "$1" | jq -e --arg p "$2" --arg t "$3" '.Locations == [$p] and .CollectionType == $t' >/dev/null
 }
 
+no_paths() { # <library name> <type>
+  folder "$1" | jq -e --arg t "$2" '.Locations == [] and .CollectionType == $t' >/dev/null
+}
+
 echo "== setup: $LOCAL (port $PORT) and $REMOTE"
 cleanup
 docker network create "$NET" >/dev/null
@@ -142,7 +175,7 @@ docker run -d --name "$REMOTE" --network "$NET" -e TZ=Europe/Rome \
 docker run -d --name "$LOCAL" --network "$NET" -p "127.0.0.1:$PORT:8096" -e TZ=Europe/Rome -e JELLYMESH_FEDERATED_ROOT=/federata \
   -v "$LOCAL-config:/config" -v "$LOCAL-cache:/cache" -v "$LOCAL-fed:/federata" "$IMAGE" >/dev/null
 
-# The remote only needs a non-admin user to log in with.
+# The remote needs a non-admin user to log in with, and an empty film and series library to import (§10 row 437).
 for i in $(seq 1 120); do
   docker exec "$REMOTE" curl -fsS http://127.0.0.1:8096/System/Info/Public 2>/dev/null | jq -e .Version >/dev/null 2>&1 && break
   sleep 1
@@ -151,12 +184,15 @@ docker exec "$REMOTE" sh -c '
   h="Accept: application/json; profile=\"PascalCase\""
   a="Authorization: MediaBrowser Client=\"x\", Device=\"x\", DeviceId=\"x\", Version=\"0.1\""
   b=http://127.0.0.1:8096
+  mkdir -p /m/film /m/serie
   curl -fsS -X POST -H "$h" -H "$a" -H "Content-Type: application/json" -d "{\"UICulture\":\"en-US\"}" $b/Startup/Configuration
   curl -fsS -H "$h" -H "$a" $b/Startup/User >/dev/null
   curl -fsS -X POST -H "$h" -H "$a" -H "Content-Type: application/json" -d "{\"Name\":\"admin\",\"Password\":\"jellymesh-test\"}" $b/Startup/User
   curl -fsS -X POST -H "$h" -H "$a" $b/Startup/Complete
   t=$(curl -fsS -X POST -H "$h" -H "$a" -H "Content-Type: application/json" -d "{\"Username\":\"admin\",\"Pw\":\"jellymesh-test\"}" $b/Users/AuthenticateByName | sed -n "s/.*\"AccessToken\":\"\([^\"]*\)\".*/\1/p")
   curl -fsS -X POST -H "$h" -H "$a, Token=\"$t\"" -H "Content-Type: application/json" -d "{\"Name\":\"jellymesh\",\"Password\":\"jellymesh-test\"}" $b/Users/New >/dev/null
+  curl -fsS -X POST -H "$h" -H "$a, Token=\"$t\"" -H "Content-Type: application/json" -d "{\"LibraryOptions\":{}}" "$b/Library/VirtualFolders?name=Film&collectionType=movies&refreshLibrary=false&paths=/m/film"
+  curl -fsS -X POST -H "$h" -H "$a, Token=\"$t\"" -H "Content-Type: application/json" -d "{\"LibraryOptions\":{}}" "$b/Library/VirtualFolders?name=Serie&collectionType=tvshows&refreshLibrary=false&paths=/m/serie"
 '
 
 wait_ready
@@ -170,19 +206,22 @@ check "plugin loaded" plugin_active
 SERVER=$(post /JellyMesh/Admin/Servers "$(jq -n --arg u "http://$REMOTE:8096" '{Name:"NAS: Casa",Url:$u,Username:"jellymesh",Password:"jellymesh-test"}')" | jq -r .Id)
 GUID8=$(echo "$SERVER" | tr -d - | cut -c1-8)
 FOLDER=$(echo "$SERVER" | tr -d - | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')
-FILM_PATH=/federata/$FOLDER/Film
-SERIE_PATH=/federata/$FOLDER/Serie
+# The stubs of 0.6 sit in the type folder of their remote library, {server}/{remote library id}/{type} (§10 row 444).
+FILM_PATH=/federata/$FOLDER/$(remote_library Film)/Film
+SERIE_PATH=/federata/$FOLDER/$(remote_library Serie)/Serie
 echo "   server $SERVER"
-check "switch off by default" [ "$(state | jq -r .Enabled)" = false ]
+wait_sync
+check "by type by default, with no library before an import [row 437]" [ "$(state | jq -r .Mode)/$(registry)" = 'ByType/[]' ]
 
 # A film in the server folder shows that the libraries are scanned after their creation.
 docker exec "$LOCAL" sh -c "mkdir -p '$FILM_PATH/Dummy (2020)' /other && /usr/lib/jellyfin-ffmpeg/ffmpeg -loglevel error -f lavfi -i testsrc=duration=1:size=320x240:rate=10 -c:v mpeg4 -y '$FILM_PATH/Dummy (2020)/Dummy (2020).mkv'"
 # D16: the sanitized Film name is already taken by an admin library.
 post "/Library/VirtualFolders?name=$(urlencode 'NAS  Casa - Film')&collectionType=movies&refreshLibrary=false&paths=/other" '{"LibraryOptions":{}}'
 
-echo "== switch on [D6, D16, D20, name with :]"
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
-check "switching on answers 202" [ "$code" = 202 ]
+echo "== import by type [D6, D16, D20, name with :, row 437]"
+code=$(import_mode ByType)
+check "the import answers 200" [ "$code" = 200 ]
+wait_sync
 wait_libraries
 FILM="NAS  Casa $GUID8 - Film"
 SERIE="NAS  Casa - Serie"
@@ -222,12 +261,10 @@ check "a library with a new path leaves the registry" [ "$(registry)" = '["Serie
 check "and is listed as left to the admin" [ "$(released)" = "$(jq -nc --arg f "$FILM" '[$f]')" ]
 
 echo "== switch off with a confirmation [D6]"
-answer=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false}')
-check "switching off without a confirmation answers 409" [ "$(echo "$answer" | head -1)" = 409 ]
-check "and names only the registry library" [ "$(echo "$answer" | tail -n +2 | jq -c .ToDelete)" = '["Serie di Casa"]' ]
-check "nothing is deleted before the confirmation" exists 'Serie di Casa'
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false,"Confirmed":true}' | head -1)
-check "the confirmed switch off answers 202" [ "$code" = 202 ]
+check "the edit check names only the registry library" [ "$(mode_change None | jq -c .Deleted)" = '["Serie di Casa"]' ]
+check "nothing is deleted by the check" exists 'Serie di Casa'
+code=$(set_mode None | head -1)
+check "the confirmed switch off answers 200" [ "$code" = 200 ]
 wait_libraries
 echo "   libraries: $(folders | jq -c '[.[].Name]')"
 check "the registry library is deleted" missing 'Serie di Casa'
@@ -239,8 +276,8 @@ check "the switch is off" [ "$(state | jq -r .Enabled)" = false ]
 echo "== switch on again while a scan runs"
 delete "/Library/VirtualFolders?name=$(urlencode "$FILM")&refreshLibrary=false"
 post /Library/Refresh
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
-check "switching on during a scan answers 202" [ "$code" = 202 ]
+code=$(set_mode ByType | head -1)
+check "switching on during a scan answers 200" [ "$code" = 200 ]
 wait_libraries
 scan_idle
 FILM_ID=$(folder "$FILM" | jq -r .ItemId)
@@ -248,7 +285,13 @@ check "Film created again" only_path "$FILM" "$FILM_PATH" movies
 check "the film is in it once the scans ended" [ "$(movies_in "$FILM_ID")" = 1 ]
 check "the old notices are cleared" [ "$(state | jq -c .Released)" = '[]' ]
 
-held_none() { ! docker exec "$LOCAL" sh -c 'grep -qs "<RemovedServerLibrariesConfig>" /config/plugins/configurations/*.xml'; }
+# held_none: the plugin database keeps no library of a removed server left to delete, read from a copy.
+held_none() {
+  [ "$(docker run --rm -v "$LOCAL-config:/config:ro" mcr.microsoft.com/playwright/python:v1.48.0-noble python3 -c '
+import glob, shutil, sqlite3
+for f in glob.glob("/config/plugins/Jellyfin.Plugin.JellyMesh/jellymesh.db*"): shutil.copy(f, "/tmp/")
+print(sqlite3.connect("/tmp/jellymesh.db").execute("select count(*) from removed_server_libraries").fetchone()[0])')" = 0 ]
+}
 
 wait_missing() { # <library name>
   local i
@@ -259,28 +302,25 @@ wait_missing() { # <library name>
   echo "$1 was not deleted" >&2; return 1
 }
 
-echo "== an admin library on the server folder before the switch-on is never taken [131]"
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":false,"Confirmed":true}' | head -1)
-check "the confirmed switch off answers 202" [ "$code" = 202 ]
+echo "== an admin library with exactly the paths and type the plugin would give is adopted [131, row 441]"
+code=$(set_mode None | head -1)
+check "the confirmed switch off answers 200" [ "$code" = 200 ]
 wait_libraries
 post "/Library/VirtualFolders?name=$(urlencode 'Mine on the folder')&collectionType=movies&refreshLibrary=false&paths=$(urlencode "$FILM_PATH")" '{"LibraryOptions":{}}'
-code=$(post_status "/JellyMesh/Admin/Servers/$SERVER/AutomaticLibraries" '{"Enabled":true}' | head -1)
-check "switching on answers 202" [ "$code" = 202 ]
+code=$(set_mode ByType | head -1)
+check "switching on answers 200" [ "$code" = 200 ]
 wait_libraries
 scan_idle
-check "Film is created next to the admin library" only_path "$FILM" "$FILM_PATH" movies
-delete "/Library/VirtualFolders?name=$(urlencode "$FILM")&refreshLibrary=false"
-scan_idle
-sync_full
-check "the admin library is not taken for the deleted Film" [ "$(registry)" = "$(jq -nc --arg s "$SERIE" '[$s]')" ]
-check "the deleted Film is listed as gone" [ "$(released)" = "$(jq -nc --arg f "$FILM" '[$f]')" ]
+check "no Film is created next to the admin library" missing "$FILM"
+check "the admin library is adopted" [ "$(registry)" = "$(jq -nc --arg s "$SERIE" '["Mine on the folder",$s]')" ]
+check "and keeps its path and type" only_path 'Mine on the folder' "$FILM_PATH" movies
 
 echo "== removing the server deletes its libraries with no confirmation [140]"
 delete "/JellyMesh/Admin/Servers/$SERVER"
 wait_missing "$SERIE"
 echo "   libraries: $(folders | jq -c '[.[].Name]')"
 check "the registry library is deleted" missing "$SERIE"
-check "the admin library on the server folder stays" only_path 'Mine on the folder' "$FILM_PATH" movies
+check "the adopted library stays, released without the server folder" no_paths 'Mine on the folder' movies
 check "the admin library elsewhere stays" only_path "NAS  Casa - Film" /other movies
 check "nothing is left to delete" held_none
 

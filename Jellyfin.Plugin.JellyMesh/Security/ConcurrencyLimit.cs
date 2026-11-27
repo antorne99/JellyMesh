@@ -45,6 +45,19 @@ internal sealed class ConcurrencyLimit<TKey>
         }
     }
 
+    /// <summary>
+    /// Counts what runs for a key.
+    /// </summary>
+    /// <param name="key">The key.</param>
+    /// <returns>How many places are taken.</returns>
+    public int Running(TKey key)
+    {
+        lock (_lock)
+        {
+            return _running.GetValueOrDefault(key);
+        }
+    }
+
     private void Leave(TKey key)
     {
         lock (_lock)

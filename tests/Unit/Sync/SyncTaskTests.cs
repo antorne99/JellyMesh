@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Model.Tasks;
 using Moq;
@@ -17,6 +20,7 @@ public sealed class SyncTaskTests : IDisposable
     private readonly SyncFixture _fixture = new();
     private readonly CapturingLogger<IncrementalSyncTask> _incrementalLogger = new();
     private readonly CapturingLogger<ReconciliationTask> _reconciliationLogger = new();
+    private readonly Mock<IPluginDatabase> _database = new();
 
     public void Dispose() => _fixture.Dispose();
 
@@ -24,7 +28,7 @@ public sealed class SyncTaskTests : IDisposable
 
     private IncrementalSyncTask Incremental(ICatalogSyncService? sync = null) => new(sync ?? _fixture.Sync, _fixture.Store, _incrementalLogger);
 
-    private ReconciliationTask Reconciliation(ICatalogSyncService? sync = null) => new(sync ?? _fixture.Sync, _fixture.Store, _reconciliationLogger);
+    private ReconciliationTask Reconciliation(ICatalogSyncService? sync = null) => new(sync ?? _fixture.Sync, _fixture.Store, _database.Object, _reconciliationLogger);
 
     [Fact]
     public void TheDefaultTriggersComeFromTheDefaultSettings()
@@ -36,6 +40,17 @@ public sealed class SyncTaskTests : IDisposable
         Assert.Equal(TimeSpan.FromSeconds(900).Ticks, interval.IntervalTicks);
         Assert.Equal(TaskTriggerInfoType.DailyTrigger, daily.Type);
         Assert.Equal(TimeSpan.FromHours(3).Ticks, daily.TimeOfDayTicks);
+    }
+
+    // Jellyfin asks for them while it starts, and a failure there would stop the server.
+    [Fact]
+    public void WhileTheSettingsCannotBeReadTheDefaultTriggersAreTheDefaultOnes()
+    {
+        _fixture.Store.Configuration.SyncIntervalSeconds = 600;
+        _fixture.Store.Unavailable = true;
+
+        Assert.Equal(TimeSpan.FromSeconds(900).Ticks, Assert.Single(Incremental().GetDefaultTriggers()).IntervalTicks);
+        Assert.Equal(TimeSpan.FromHours(3).Ticks, Assert.Single(Reconciliation().GetDefaultTriggers()).TimeOfDayTicks);
     }
 
     [Fact]
@@ -79,11 +94,11 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task TheIncrementalTaskReadsChanges()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         _fixture.Client.Queries.Clear();
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("b"));
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("b"));
         _fixture.Client.SavedUtc["b"] = SyncFixture.Start;
 
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
@@ -95,10 +110,10 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task TheReconciliationTaskRemovesWhatIsGone()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"), TestItems.Movie("b"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"), TestItems.Movie("b"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
-        _fixture.Client.Items[("films", RemoteItemType.Movie)].RemoveAt(0);
+        _fixture.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)].RemoveAt(0);
 
         await Reconciliation().ExecuteAsync(NoProgress, CancellationToken.None);
 
@@ -111,8 +126,8 @@ public sealed class SyncTaskTests : IDisposable
     [InlineData(TestValues.OtherKey)]
     public async Task WithAnUnusableKeyBothTasksAreSuspended(string? key)
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Sync.RunAsync(CancellationToken.None);
         var before = _fixture.Index.Snapshot;
         var logins = _fixture.Client.Logins;
@@ -135,8 +150,8 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task WithTheKeyBackTheTasksResume()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        var server = await _fixture.AddServerAsync("A", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        var server = await _fixture.AddServerAsync("A", TestLibraries.Films);
         _fixture.KeySource.Key = null;
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
         Assert.Null(_fixture.Index.Snapshot.Find(server.Id));
@@ -166,7 +181,7 @@ public sealed class SyncTaskTests : IDisposable
             .ReturnsAsync(SyncStartResult.AlreadyRunning)
             .ReturnsAsync(SyncStartResult.AlreadyRunning)
             .ReturnsAsync(SyncStartResult.Started);
-        var task = new ReconciliationTask(sync.Object, _fixture.Store, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
+        var task = new ReconciliationTask(sync.Object, _fixture.Store, _database.Object, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
 
         await task.ExecuteAsync(NoProgress, CancellationToken.None);
 
@@ -179,7 +194,7 @@ public sealed class SyncTaskTests : IDisposable
         var sync = new Mock<ICatalogSyncService>();
         sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.AlreadyRunning);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
-        var task = new ReconciliationTask(sync.Object, _fixture.Store, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
+        var task = new ReconciliationTask(sync.Object, _fixture.Store, _database.Object, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.ExecuteAsync(NoProgress, cancellation.Token));
     }
@@ -210,8 +225,8 @@ public sealed class SyncTaskTests : IDisposable
     [Fact]
     public async Task TheLogsOfTheTasksHoldNoSecretAndNoAddress()
     {
-        _fixture.Client.Add("films", RemoteItemType.Movie, TestItems.Movie("a"));
-        await _fixture.AddServerAsync("Friend", "films");
+        _fixture.Client.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
         _fixture.Client.ClockFailure = RemoteFailure.Unreachable;
         await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
@@ -226,5 +241,172 @@ public sealed class SyncTaskTests : IDisposable
             Assert.DoesNotContain(TestValues.Password, line, StringComparison.Ordinal);
             Assert.DoesNotContain(TestValues.Host, line, StringComparison.Ordinal);
         });
+    }
+
+    private static readonly StoreBackup Copy = new("/data/jellymesh.db.backup-20261118030000", new DateTimeOffset(2026, 11, 18, 3, 0, 0, TimeSpan.Zero));
+
+    // The copy holds what the reconciliation brought in (row 427).
+    [Fact]
+    public async Task TheReconciliationCopiesTheDatabaseAfterTheSync()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sync")).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("copy")).ReturnsAsync(Copy);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["sync", "copy"], steps);
+    }
+
+    [Fact]
+    public async Task TheIncrementalSyncMakesNoCopy()
+    {
+        await Incremental().ExecuteAsync(NoProgress, CancellationToken.None);
+
+        _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASyncThatFailsStillLeavesACopy()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("broken"));
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None));
+
+        _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    public static TheoryData<Exception> CopyFailures => new() { new StoreSuspendedException("suspended"), new IOException("disk full") };
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task ACopyThatCannotBeMadeIsLoggedAndDoesNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+    }
+
+    // Damaged files past their 30 days go after the copy (D35).
+    [Fact]
+    public async Task TheReconciliationDeletesExpiredDamagedFilesAfterTheCopy()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sync")).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("copy")).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sweep")).Returns(Task.CompletedTask);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["sync", "copy", "sweep"], steps);
+    }
+
+    // A log a busy reader kept full after a credential change, then a crash, is emptied at least each night (§10 row 429).
+    [Fact]
+    public async Task TheReconciliationEmptiesTheDatabaseLogAfterTheCopy()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("copy")).ReturnsAsync(Copy);
+        _database.Setup(d => d.TruncateWalAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("log")).ReturnsAsync(true);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sweep")).Returns(Task.CompletedTask);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["copy", "log", "sweep"], steps);
+    }
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task ALogThatCannotBeEmptiedIsLoggedAndDoesNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.TruncateWalAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+        _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ACopyThatFailsStillLeavesTheSweep()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("disk full"));
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // The files of the older version go after the damaged files, each night, once their 30 days are over (D25).
+    [Fact]
+    public async Task TheReconciliationDeletesTheExpiredFilesOfTheOlderVersionAfterTheSweep()
+    {
+        var steps = new List<string>();
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("sweep")).Returns(Task.CompletedTask);
+        _database.Setup(d => d.DeleteExpiredMigratedAsync(It.IsAny<CancellationToken>())).Callback(() => steps.Add("migrated")).ReturnsAsync(true);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Equal(["sweep", "migrated"], steps);
+    }
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task OldFilesThatCannotBeDeletedAreLoggedAndDoNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredMigratedAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+    }
+
+    [Theory]
+    [MemberData(nameof(CopyFailures))]
+    public async Task ASweepThatCannotRunIsLoggedAndDoesNotFailTheReconciliation(Exception failure)
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.Started);
+        _database.Setup(d => d.BackUpAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Copy);
+        _database.Setup(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>())).ThrowsAsync(failure);
+
+        await Reconciliation(sync.Object).ExecuteAsync(NoProgress, CancellationToken.None);
+
+        Assert.Contains(Microsoft.Extensions.Logging.LogLevel.Warning, _reconciliationLogger.Levels);
+    }
+
+    [Fact]
+    public async Task ACancelledReconciliationMakesNoCopy()
+    {
+        var sync = new Mock<ICatalogSyncService>();
+        sync.Setup(s => s.RunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(SyncStartResult.AlreadyRunning);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
+        var task = new ReconciliationTask(sync.Object, _fixture.Store, _database.Object, _reconciliationLogger) { RetryDelay = TimeSpan.FromMilliseconds(1) };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.ExecuteAsync(NoProgress, cancellation.Token));
+
+        _database.Verify(d => d.BackUpAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _database.Verify(d => d.DeleteExpiredDamagedAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

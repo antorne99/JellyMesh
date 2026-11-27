@@ -37,15 +37,18 @@ check "protocol version" 2 "$(get b /JellyMesh/Admin/Status | jq -r --arg i "$fr
 check "b sees the stock remote in standard mode" Standard "$(get b /JellyMesh/Admin/Status | jq -r --arg i "$from_stock" '.Servers[] | select(.Id == $i) | .Mode')"
 check "a sees b in JellyMesh mode" JellyMesh "$(get a /JellyMesh/Admin/Status | jq -r --arg i "$from_b" '.Servers[] | select(.Id == $i) | .Mode')"
 
-# The folders of a server exist once it is added: the libraries take them, as an admin would.
-link_server b "$from_a"
-link_server b "$from_stock"
-link_server a "$from_b"
 import_all b "$from_a"
 import_all b "$from_stock"
 import_all a "$from_b"
 sync_now b
 sync_now a
+for s in a b; do
+  check "$s has no library made by the plugin" "Film Serie" "$(get "$s" /Library/VirtualFolders | jq -r '[.[].Name] | sort | join(" ")')"
+done
+# The type folders of a server exist after a sync: the libraries take them, as an admin would.
+link_server b "$from_a"
+link_server b "$from_stock"
+link_server a "$from_b"
 scan b
 scan a
 exit ${FAILED:-0}

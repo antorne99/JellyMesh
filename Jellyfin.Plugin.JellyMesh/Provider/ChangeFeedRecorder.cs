@@ -1,6 +1,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
 
@@ -46,9 +48,22 @@ public sealed class ChangeFeedRecorder : IHostedService
 
     private void OnItemChanged(object? sender, ItemChangeEventArgs e)
     {
-        if (ProviderCatalog.IsCatalogItem(e.Item) && !_catalog.IsFederated(e.Item))
+        if (ProviderCatalog.IsCatalogItem(e.Item) && !IsFederated(e.Item))
         {
             _journal.Record(e.Item.Id);
+        }
+    }
+
+    // While the folder is not known the item is recorded: a peer reads it through the catalog, which leaves federated ones out.
+    private bool IsFederated(BaseItem item)
+    {
+        try
+        {
+            return _catalog.IsFederated(item);
+        }
+        catch (StoreSuspendedException)
+        {
+            return false;
         }
     }
 }

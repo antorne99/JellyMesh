@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -19,7 +20,7 @@ public static partial class FederatedPaths
 
     private const int MaxNameBytes = 120;
     private const int MaxFileNameBytes = 255;
-    private const int MaxLabelLength = 40;
+    private const int MaxLabelBytes = 40;
     private const int GuidDigits = 8;
     private const string FallbackName = "Untitled";
     private const string MoviesFolder = "Film";
@@ -127,7 +128,78 @@ public static partial class FederatedPaths
     /// <param name="label">The label of the server, from <see cref="Labels"/>.</param>
     /// <returns>The relative path of the <c>.strm</c>.</returns>
     public static string MovieStub(Guid serverId, string folderName, string label)
-        => Path.Combine(MovieFolder(serverId, folderName), folderName + " - " + label + ".strm");
+        => MovieStubIn(Path.Combine(ServerFolder(serverId), MoviesFolder), folderName, label);
+
+    /// <summary>Tells whether a remote library id can name a folder: only a Jellyfin id, 32 lowercase hexadecimal digits.</summary>
+    /// <param name="libraryId">The id the remote gave.</param>
+    /// <returns>True for an id that is safe as a folder name.</returns>
+    public static bool IsLibraryId([NotNullWhen(true)] string? libraryId)
+        => Guid.TryParseExact(libraryId, "N", out var parsed) && string.Equals(parsed.ToString("N"), libraryId, StringComparison.Ordinal);
+
+    /// <summary>Builds the relative folder of a remote library in the folder of its server.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryId">The id of the library on the remote, checked with <see cref="IsLibraryId"/>.</param>
+    /// <returns>The relative path.</returns>
+    /// <exception cref="ArgumentException">The id is not a Jellyfin id.</exception>
+    public static string LibraryFolder(Guid serverId, string libraryId)
+    {
+        if (!IsLibraryId(libraryId))
+        {
+            throw new ArgumentException("A remote library id is not a Jellyfin id.", nameof(libraryId));
+        }
+
+        return Path.Combine(ServerFolder(serverId), libraryId);
+    }
+
+    /// <summary>Builds the relative type folder of a remote library.</summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="libraryId">The id of the library on the remote.</param>
+    /// <param name="type">The type folder.</param>
+    /// <returns>The relative path.</returns>
+    public static string TypeFolderOf(Guid serverId, string libraryId, TypeFolder type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        return Path.Combine(LibraryFolder(serverId, libraryId), type.Name);
+    }
+
+    /// <summary>Gives the remote library of a relative path in the remote library layout, or null for the older layouts.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The library id, or null.</returns>
+    public static string? RemoteLibraryOf(string relativePath)
+    {
+        ArgumentNullException.ThrowIfNull(relativePath);
+        var parts = relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4);
+        return parts.Length >= 3
+            && Guid.TryParseExact(parts[0], "D", out var server)
+            && string.Equals(parts[0], ServerFolder(server), StringComparison.Ordinal)
+            && IsLibraryId(parts[1])
+            && TypeFolder.All.Any(type => string.Equals(type.Name, parts[2], StringComparison.Ordinal))
+            ? parts[1]
+            : null;
+    }
+
+    /// <summary>Gives the relative type folder that holds a path of the remote library layout, or null for the older layouts.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The relative path of the type folder, or null.</returns>
+    internal static string? TypeFolderPathOf(string relativePath) => RemoteLibraryOf(relativePath) is null
+        ? null
+        : Path.Combine(relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], 4)[..3]);
+
+    /// <summary>Gives the server and type of the relative path of a type folder of a remote library, or null for any other path.</summary>
+    /// <param name="relativePath">A path relative to the federated folder.</param>
+    /// <returns>The server and the type folder, or null.</returns>
+    internal static (Guid ServerId, TypeFolder Type)? TypeFolderAt(string relativePath)
+        => relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) is [var server, _, var name] && RemoteLibraryOf(relativePath) is not null
+            ? (Guid.ParseExact(server, "D"), TypeFolder.All.First(type => string.Equals(type.Name, name, StringComparison.Ordinal)))
+            : null;
+
+    /// <summary>Builds the relative path of a film stub in a type folder, named <c>{folder} - {label}</c>.</summary>
+    /// <param name="typeFolder">The relative type folder.</param>
+    /// <param name="folderName">The folder name of the film.</param>
+    /// <param name="label">The label of the server, from <see cref="Labels"/>.</param>
+    /// <returns>The relative path of the <c>.strm</c>.</returns>
+    public static string MovieStubIn(string typeFolder, string folderName, string label)
+        => Path.Combine(typeFolder, folderName, folderName + " - " + label + ".strm");
 
     /// <summary>Builds the relative path of an episode stub, with the label of its server after the numbers if it has one.</summary>
     /// <param name="seriesFolder">The relative folder of the series.</param>
@@ -136,13 +208,15 @@ public static partial class FederatedPaths
     /// <param name="episode">The episode.</param>
     /// <param name="lastEpisode">The last episode of a stub that covers several.</param>
     /// <param name="label">The label of the server, null in the flat layout.</param>
+    /// <param name="id">The ID of the stub when its first 8 characters are in the name, null otherwise.</param>
     /// <returns>The relative path of the <c>.strm</c>.</returns>
-    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null, string? label = null)
+    public static string EpisodeStub(string seriesFolder, string seriesName, int season, int episode, int? lastEpisode = null, string? label = null, string? id = null)
     {
         var folder = SeasonFolder(season);
         var range = lastEpisode is { } last ? string.Create(CultureInfo.InvariantCulture, $"-E{last:00}") : string.Empty;
+        var mark = id is null ? string.Empty : $" [{id[..8]}]";
         var suffix = label is null ? string.Empty : " - " + label;
-        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}{suffix}.strm");
+        var file = string.Create(CultureInfo.InvariantCulture, $"{Sanitize(seriesName)} S{season:00}E{episode:00}{range}{mark}{suffix}.strm");
         return Path.Combine(seriesFolder, folder, file);
     }
 
@@ -201,6 +275,22 @@ public static partial class FederatedPaths
         var others = stored.Where(entry => entry.Key != serverId).ToDictionary(entry => entry.Key, entry => entry.Value);
         var label = Labels([(serverId, name)], others)[serverId];
         return stored.TryGetValue(serverId, out var current) && string.Equals(current, label, StringComparison.OrdinalIgnoreCase) ? current : label;
+    }
+
+    /// <summary>
+    /// Tells whether a saved label is over the byte limit of a label, without the start of the GUID it may end with
+    /// (row 564).
+    /// </summary>
+    /// <param name="serverId">The server of the label.</param>
+    /// <param name="label">The saved label.</param>
+    /// <returns>True if the label is too long.</returns>
+    public static bool IsLabelOverLimit(Guid serverId, string label)
+    {
+        ArgumentNullException.ThrowIfNull(label);
+
+        var suffix = " " + GuidStart(serverId);
+        var name = label.EndsWith(suffix, StringComparison.Ordinal) ? label[..^suffix.Length] : label;
+        return Encoding.UTF8.GetByteCount(name) > MaxLabelBytes;
     }
 
     /// <summary>
@@ -282,10 +372,7 @@ public static partial class FederatedPaths
                 && !_threeDWords.Contains(word, StringComparer.OrdinalIgnoreCase));
 
         var label = string.Join(' ', words);
-        if (label.Length > MaxLabelLength)
-        {
-            label = label[..MaxLabelLength].TrimEnd();
-        }
+        label = label[..LengthWithin(label, MaxLabelBytes)].TrimEnd();
 
         return label.Length == 0 ? GuidStart(serverId) : label;
     }

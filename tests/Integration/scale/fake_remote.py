@@ -8,7 +8,8 @@ with SCALE_SEASONS seasons of SCALE_EPISODES episodes each. Items look like what
 plugin asks for (provider IDs, one media source with video, audio and subtitle streams, people, chapters, image tags).
 SCALE_IMAGES=0 sends no image tags, so the plugin downloads no image. SCALE_IMAGE_BYTES pads the JPEG and
 SCALE_IMAGE_DELAY_MS waits before each image, to stand for a real poster over a real link. SCALE_SERVER_ID and
-SCALE_SERVER_NAME set the identity of the fake, so that several of them can be configured on one consumer.
+SCALE_SERVER_NAME set the identity of the fake, so that several of them can be configured on one consumer. While the file
+SCALE_HOLD names exists, the catalog is empty.
 
 Every request goes to the log as "<epoch ms> <ms spent> <bytes> <kind> <detail>", which is what the phases are cut from.
 """
@@ -30,6 +31,7 @@ IMAGES = os.environ.get("SCALE_IMAGES", "1") == "1"
 IMAGE_DELAY = int(os.environ.get("SCALE_IMAGE_DELAY_MS", "0")) / 1000
 SERVER_ID = os.environ.get("SCALE_SERVER_ID", "8" * 32)
 SERVER_NAME = os.environ.get("SCALE_SERVER_NAME", "scale-remote")
+HOLD = os.environ.get("SCALE_HOLD")
 
 TOKEN = "scale-remote-token"
 USER_ID = "5" * 32
@@ -206,7 +208,7 @@ def items_answer(query):
         return query.get(name, [default])[0]
 
     kinds = [kind for kind in (first("includeItemTypes") or "").split(",") if kind in MAKERS]
-    if first("minDateLastSaved"):
+    if first("minDateLastSaved") or (HOLD and os.path.exists(HOLD)):
         # The catalog never changes after it was made.
         return {"Items": [], "TotalRecordCount": 0, "StartIndex": 0}
     if first("ids"):

@@ -10,8 +10,7 @@ from playwright.sync_api import Locator, sync_playwright
 WEB = "/w"
 SHOTS = os.path.join(WEB, "shots")
 VIEWPORTS = {"1280": {"width": 1280, "height": 900}, "390": {"width": 390, "height": 844}}
-PLUGIN = "28c43ea1-fb5a-4b3a-8e6e-30aa3245c653"
-PLUGIN_CONFIG = "**/Plugins/" + PLUGIN + "/Configuration"
+SETTINGS_ROUTE = "**/JellyMesh/Admin/Settings"
 
 PAGE = "#JellyMeshConfigPage"
 TAB = "[role=tab][data-tab-index]"
@@ -92,10 +91,18 @@ BANNER = "#jmBanner"
 MIGRATION = "#jmMigration"
 MIGRATION_TITLE = "#jmMigrationTitle"
 MIGRATION_TEXT = "#jmMigrationText"
+MIGRATION_TWICE = "#jmMigrationTwice"
+MIGRATION_NEXT = "#jmMigrationNext"
 MIGRATION_LIBRARIES = "#jmMigrationLibraries"
 MIGRATE_AUTOMATIC = "#jmMigrateAutomatic"
 MIGRATE_MANUAL = "#jmMigrateManual"
 NEW_SERVER_MODE = "#jmNewServerMode"
+SHARED = "#jmSharedLibraries"
+SHARED_GROUP = "#jmShared"
+SHARED_NOTES = "#jmSharedNotes"
+STORE = "#jmStore"
+MIGRATED = "#jmMigrated"
+NEW_SERVER_LIBRARY_MODE = "#jmNewServerLibraryMode"
 ADD_PART = "#jmAddServerPart"
 ADD_BLOCKED = "#jmAddBlocked"
 LIBRARIES_NOTE = ".jmLibrariesNote"
@@ -123,18 +130,18 @@ SETTINGS = {
     "#jmPlaybackIdle": "PlaybackIdleSeconds",
     "#jmSessionRetention": "SessionRetentionHours",
     "#jmPolicyCache": "PolicyCacheMinutes",
+    "#jmNewServerLibraryMode": "NewServerLibraryMode",
 }
 BUTTON = {
     "test": "Test connection",
-    "libraries": "Libraries",
+    "edit": "Edit",
+    "close": "Close",
     "remove": "Remove",
     "disconnect": "Disconnect",
-    "save_libraries": "Save libraries",
     "merge": "Merge selected",
     "undo": "Undo merge",
     "save": "Save",
     "connect": "Connect",
-    "save_login": "Save login",
 }
 READABLE = ", ".join(["h2, h3, h4, p, label, dt, dd, .fieldDescription", STATE, MERGE_CASE, MERGE_DETAILS, MERGE_QUALITY, MERGE_RESULT, MERGE_DATE, WARNING, SUMMARY_TEXT])
 FAILURE = {
@@ -146,7 +153,8 @@ FAILURE = {
     "settings": "#jmSettingsFailure",
 }
 NEW_PEER = "Connect a server"
-OWN_LIBRARIES = "Create a Film and a Serie library for this server"
+EDIT_FORM = ".jmLibraries .jmServerForm"
+MODE_LABEL = "Library mode"
 ALERT = ".jmAlert"
 ALERTS_WITH_DATA = [WARNING, "#jmIndexWarning", "#jmMergeWarning"]
 SELECT = "select"
@@ -243,15 +251,16 @@ def api(server, method, path, body=None):
 
 
 def config(server):
-    """Returns the plugin configuration of a server."""
-    return api(server, "GET", "/Plugins/%s/Configuration" % PLUGIN)[1]
+    """Returns the plugin settings of a server."""
+    return api(server, "GET", "/JellyMesh/Admin/Settings")[1]
 
 
 def settings(server, change):
-    """Saves the plugin configuration after a change, and returns the status."""
+    """Saves the plugin settings after a change, and returns the status."""
     current = config(server)
+    current.pop("FixedByEnvironment", None)
     change(current)
-    return api(server, "POST", "/Plugins/%s/Configuration" % PLUGIN, current)[0]
+    return api(server, "PUT", "/JellyMesh/Admin/Settings", current)[0]
 
 
 def set_theme(server, theme):
@@ -394,6 +403,12 @@ def button(scope, name):
     return scope.get_by_role("button", name=BUTTON[name], exact=True, include_hidden=True)
 
 
+def open_edit(page, row):
+    """Opens the edit form of a server card and waits for the libraries it reads."""
+    button(row, "edit").click()
+    page.wait_for_selector(SERVER + " " + LIBRARY, state="attached", timeout=15000)
+
+
 def tick(box, on=True):
     """Sets a Jellyfin checkbox as a person does, by clicking its label: the box itself is hidden under the drawn one."""
     if box.is_checked() != on:
@@ -447,7 +462,7 @@ def open_advanced(page):
 
 def copy_button(page, path):
     """Finds the copy button of a path to link."""
-    return page.locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
+    return page.locator(FOLDER_INFO).locator(FOLDER_PATH, has_text=path).get_by_role("button", name="Copy", include_hidden=True)
 
 
 def pasted(page):

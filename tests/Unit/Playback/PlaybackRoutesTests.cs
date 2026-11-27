@@ -53,8 +53,8 @@ public class PlaybackRoutesTests
     [Theory]
     [InlineData("http://127.0.0.1:8096/JellyMesh/Play/abc", true)]
     [InlineData("http://127.0.0.1:8096/JellyMesh/Play/abc?sig=00ff", true)]
-    [InlineData("https://friend.ts.net/jf/jellymesh/play/abc?sig=00ff", true)]
-    [InlineData("https://friend.ts.net/jf/jellymesh/play/abc", true)]
+    [InlineData("https://remote.invalid/jf/jellymesh/play/abc?sig=00ff", true)]
+    [InlineData("https://remote.invalid/jf/jellymesh/play/abc", true)]
     [InlineData("http://example.com/film.mkv", false)]
     [InlineData("/media/film/JellyMesh/Play/x.mkv", false)]
     [InlineData(null, false)]
@@ -87,7 +87,7 @@ public class PlaybackRoutesTests
 
     [Theory]
     [InlineData("172.17.0.1")]
-    [InlineData("100.64.0.9")]
+    [InlineData("198.51.100.9")]
     [InlineData("::ffff:172.17.0.1")]
     public void Anyone_else_is_refused(string address)
     {

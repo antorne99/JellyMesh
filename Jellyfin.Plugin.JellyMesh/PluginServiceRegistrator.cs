@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Jellyfin.Plugin.JellyMesh.Activity;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -7,7 +8,9 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.Mvc;
@@ -40,21 +43,27 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IFederatedFolderLinkChecker, FederatedFolderLinkChecker>();
 
         serviceCollection.TryAddSingleton(TimeProvider.System);
-        serviceCollection.AddSingleton(provider => new IndexFile(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<IndexFile>>(),
-            provider.GetRequiredService<ErrorLogLimits>()));
+
+        // Opens on first use; the services move into it from later phases.
+        serviceCollection.AddSingleton(provider =>
+        {
+            var folder = Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized.");
+            var legacy = new LegacyImport(
+                folder,
+                Path.Combine(provider.GetRequiredService<IApplicationPaths>().PluginConfigurationsPath, LegacyImport.ConfigurationFileName),
+                provider.GetRequiredService<ILogger<LegacyImport>>(),
+                provider.GetRequiredService<ErrorLogLimits>());
+            return new PluginDatabase(folder, provider.GetRequiredService<ILogger<PluginDatabase>>(), legacy, provider.GetRequiredService<ErrorLogLimits>());
+        });
+        serviceCollection.AddSingleton<IPluginDatabase>(provider => provider.GetRequiredService<PluginDatabase>());
         serviceCollection.AddSingleton<IFederationIndex, FederationIndex>();
         serviceCollection.AddSingleton<ILocalCatalogReader, LocalCatalogReader>();
-        serviceCollection.AddSingleton<IManualMergeStore>(provider => new ManualMergeStore(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<ManualMergeStore>>(),
-            provider.GetRequiredService<ErrorLogLimits>()));
+        serviceCollection.AddSingleton<IManualMergeStore, ManualMergeStore>();
         serviceCollection.AddSingleton<ManualMergeService>();
         serviceCollection.AddSingleton<IFederationResolver, FederationResolver>();
         serviceCollection.AddSingleton<IRemoteCatalogReader, RemoteCatalogReader>();
         serviceCollection.AddSingleton(provider => new StubRegistry(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
+            provider.GetRequiredService<IPluginDatabase>(),
             provider.GetRequiredService<IPluginConfigurationStore>(),
             provider.GetRequiredService<ILogger<StubRegistry>>(),
             provider.GetRequiredService<ErrorLogLimits>()));
@@ -67,6 +76,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StubTechnicalData>();
         serviceCollection.AddSingleton<StubItemUpdater>();
         serviceCollection.AddSingleton<StubRemover>();
+        serviceCollection.AddSingleton<WatchStateCleaner>();
         serviceCollection.AddSingleton<ILocalRefreshRequester, LocalRefreshRequester>();
         serviceCollection.AddSingleton<ILibraryMaterializer, LibraryMaterializer>();
         serviceCollection.AddSingleton<ILibraryScans, LibraryScans>();
@@ -74,33 +84,26 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IServerLibraryManager, ServerLibraryManager>();
         serviceCollection.AddSingleton<RetiredLibraryIds>();
         serviceCollection.AddSingleton<ILibraryViewIds, LibraryViewIds>();
-        serviceCollection.AddSingleton(provider => new LibraryRenameJournal(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<LibraryRenameJournal>>(),
-            provider.GetRequiredService<ErrorLogLimits>()));
+        serviceCollection.AddSingleton<LibraryRenameJournal>();
         serviceCollection.AddSingleton<ILibraryRenamer, LibraryRenamer>();
         serviceCollection.AddHostedService<LibraryRenameResumeService>();
         serviceCollection.AddSingleton<RetiredLibraryFilter>();
         serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<RetiredLibraryFilter>());
+        serviceCollection.Configure<MvcOptions>(options => options.Filters.Add<StoreUnavailableFilter>());
+        serviceCollection.AddSingleton<StoreNotLoadedFilter>();
+        serviceCollection.Configure<MvcOptions>(options => options.Filters.AddService<StoreNotLoadedFilter>());
         serviceCollection.AddSingleton<IVersionLinker, VersionLinker>();
         serviceCollection.AddSingleton<ILocalTitleLinker, LocalTitleLinker>();
         serviceCollection.AddHostedService<LocalRefreshWatcher>();
-        serviceCollection.AddSingleton<IWatchStateCarryLog>(provider => new WatchStateCarryLog(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<WatchStateCarryLog>>(),
-            provider.GetRequiredService<ErrorLogLimits>()));
+        serviceCollection.AddSingleton<IWatchStateCarryLog, WatchStateCarryLog>();
         serviceCollection.AddSingleton<IWatchStateCarrier, WatchStateCarrier>();
         serviceCollection.AddSingleton<IServerStubRenamer, ServerStubRenamer>();
         serviceCollection.AddSingleton<IServerRenamer, ServerRenamer>();
+        serviceCollection.AddHostedService<LongLabelRenameService>();
         serviceCollection.AddSingleton<IMergeWatchStateCarry, MergeWatchStateCarry>();
-        serviceCollection.AddSingleton<IKeptWatchStateStore>(provider => new KeptWatchStateStore(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<KeptWatchStateStore>>()));
+        serviceCollection.AddSingleton<IKeptWatchStateStore, KeptWatchStateStore>();
         serviceCollection.AddSingleton<IWatchStateKeeper, WatchStateKeeper>();
-        serviceCollection.AddSingleton<ISyncHistory>(provider => new SyncHistoryStore(
-            Plugin.Instance?.DataFolderPath ?? throw new InvalidOperationException("The JellyMesh plugin is not initialized."),
-            provider.GetRequiredService<ILogger<SyncHistoryStore>>(),
-            provider.GetRequiredService<ErrorLogLimits>()));
+        serviceCollection.AddSingleton<ISyncHistory, SyncHistoryStore>();
         serviceCollection.AddSingleton<IMigrationSync, MigrationSync>();
         serviceCollection.AddSingleton<ILayoutMigration, LayoutMigration>();
         serviceCollection.AddSingleton<ILibraryChangeTracker, LibraryChangeTracker>();

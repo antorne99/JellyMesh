@@ -21,8 +21,8 @@ public sealed class ContentPairingTests
         Ids = ids ?? ContentIds.None
     };
 
-    private static string[] Pairs(CatalogItem[] saved, CatalogItem[] current, CatalogItem[]? savedSeries = null, CatalogItem[]? currentSeries = null) =>
-        DedupEngine.Pair(saved, savedSeries ?? [], current, currentSeries ?? [])
+    private static string[] Pairs(CatalogItem[] saved, CatalogItem[] current, CatalogItem[]? savedSeries = null, CatalogItem[]? currentSeries = null, ManualMerge[]? merges = null) =>
+        DedupEngine.Pair(saved, savedSeries ?? [], current, currentSeries ?? [], merges)
             .Select(pair => pair.Saved.ItemId + " > " + pair.Current.ItemId)
             .Order()
             .ToArray();
@@ -34,6 +34,26 @@ public sealed class ContentPairingTests
         var current = Movie(Current, "Altro nome", 2021, new ContentIds(Imdb: "tt1"));
 
         Assert.Equal(["item-Film > item-Altro nome"], Pairs([saved], [current]));
+    }
+
+    // D21: a title merged by hand pairs a saved copy of each of its identities with every copy of it.
+    [Fact]
+    public void AManualMergePairsASavedCopyWithEveryCopyOfTheMergedTitle()
+    {
+        var withIds = Movie(Current, "Alfa", 2026, new ContentIds("1"));
+        var withoutIds = Movie(Current, "Sonda Senza ID", 2026, null).Lasting(90);
+        var saved = new[] { Movie(Saved, "Alfa", 2026, new ContentIds("1")), Movie(Saved, "Sonda Senza ID", 2026, null).Lasting(90) };
+        var merge = new ManualMerge
+        {
+            Id = System.Guid.NewGuid(),
+            CreatedUtc = System.DateTimeOffset.UnixEpoch,
+            Copies = [MergedCopy.From(withIds, false), MergedCopy.From(withoutIds, false)]
+        };
+
+        Assert.Equal(2, Pairs(saved, [withIds, withoutIds]).Length);
+        Assert.Equal(
+            ["item-Alfa > item-Alfa", "item-Alfa > item-Sonda Senza ID", "item-Sonda Senza ID > item-Alfa", "item-Sonda Senza ID > item-Sonda Senza ID"],
+            Pairs(saved, [withIds, withoutIds], merges: [merge]));
     }
 
     [Fact]

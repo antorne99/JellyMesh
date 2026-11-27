@@ -23,6 +23,9 @@ public sealed record IndexSnapshot
     /// <summary>Gets the servers.</summary>
     public required IReadOnlyList<ServerCatalog> Servers { get; init; }
 
+    /// <summary>Gets the opening of the database the index was read in.</summary>
+    public long Generation { get; init; }
+
     /// <summary>
     /// Creates an empty index.
     /// </summary>

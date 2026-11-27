@@ -11,6 +11,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
@@ -91,7 +92,19 @@ internal static class PlaybackValues
 /// <summary>Runs the call at once, or fails as a server that is offline.</summary>
 internal sealed class FakeRegistry : IRemoteServerRegistry
 {
-    private static readonly RemoteEndpoint _endpoint = new(new Uri("http://friend.tailnet.ts.net:8096/"), PlaybackValues.RemoteDevice);
+    public Task<RemoteResult<RemoteEditReport>> CheckEditAsync(Guid serverId, RemoteServerEdit edit, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
+    public Task<RemoteResult<RemoteEditReport>> SaveEditAsync(Guid serverId, RemoteServerEdit edit, Func<Task>? stopStreams, CancellationToken cancellationToken)
+        => throw new NotSupportedException();
+
+    public Task<IDisposable?> EnterEditAsync(Guid serverId, CancellationToken cancellationToken)
+        => Task.FromResult<IDisposable?>(new CancellationTokenSource());
+
+    public Task<IDisposable> BeginRemovalAsync(Guid serverId, CancellationToken cancellationToken)
+        => Task.FromResult<IDisposable>(new CancellationTokenSource());
+
+    private static readonly RemoteEndpoint _endpoint = new(new Uri("http://remote.invalid:8096/"), PlaybackValues.RemoteDevice);
     private static readonly RemoteSession _session = new(PlaybackValues.RemoteToken, "remote-user");
 
     public HashSet<Guid> Offline { get; } = [];
@@ -111,8 +124,6 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
 
     public Task<RemoteResult<RemoteServerInfo>> AddAsync(string name, string url, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
 
-    public Task<RemoteResult<RemoteServerInfo>> UpdateCredentialsAsync(Guid serverId, RemoteCredentials credentials, CancellationToken cancellationToken) => throw new NotSupportedException();
-
     public Action? OnRemove { get; set; }
 
     public Task<bool> RemoveAsync(Guid serverId)
@@ -124,8 +135,6 @@ internal sealed class FakeRegistry : IRemoteServerRegistry
     public Task<RemoteResult<ConnectionReport>> TestAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
 
     public Task<RemoteResult<IReadOnlyList<RemoteLibrary>>> GetLibrariesAsync(Guid serverId, CancellationToken cancellationToken) => throw new NotSupportedException();
-
-    public bool SetImportedLibraries(Guid serverId, IEnumerable<string> libraryIds) => throw new NotSupportedException();
 
     public bool Rename(Guid serverId, string name) => throw new NotSupportedException();
 
@@ -217,10 +226,13 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
     {
         Stopped.Add(playSessionId);
         OnStop?.Invoke();
-        return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(RemoteResult.Success(true));
+        return StopsHang ? HangAsync(cancellationToken, StopOverrun) : Task.FromResult(RemoteResult.Success(true));
     }
 
     public bool StopsHang { get; set; }
+
+    /// <summary>Gets or sets how long a hanging stop still takes after it is cancelled, as a remote slow to drop the call.</summary>
+    public TimeSpan StopOverrun { get; set; }
 
     public List<string> Renewed { get; } = [];
 
@@ -242,9 +254,18 @@ internal sealed class FakePlaybackClient : IRemotePlaybackClient
         return StopsHang ? HangAsync(cancellationToken) : Task.FromResult(ReleaseFailure == RemoteFailure.None ? RemoteResult.Success(true) : RemoteResult.Fail<bool>(ReleaseFailure));
     }
 
-    private static async Task<RemoteResult<bool>> HangAsync(CancellationToken cancellationToken)
+    private static async Task<RemoteResult<bool>> HangAsync(CancellationToken cancellationToken, TimeSpan overrun = default)
     {
-        await Task.Delay(Timeout.Infinite, cancellationToken);
+        try
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+        catch (OperationCanceledException) when (overrun > TimeSpan.Zero)
+        {
+            await Task.Delay(overrun, CancellationToken.None);
+            throw;
+        }
+
         return RemoteResult.Success(true);
     }
 }
@@ -264,10 +285,18 @@ internal sealed class CoordinatorFixture
     public CoordinatorFixture(ILastServedSourceStore? lastServed = null, ILogger<PlaybackCoordinator>? logger = null)
     {
         LastServed = lastServed ?? new InMemoryLastServedStore();
-        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
+        Database.Setup(database => database.Health).Returns(() => Health);
+        Coordinator = new PlaybackCoordinator(Registry, Client, Sessions, Store, LastServed, Clock, Database.Object, logger ?? NullLogger<PlaybackCoordinator>.Instance, Transcodes.Object);
     }
 
     public Mock<ITranscodeManager> Transcodes { get; } = new();
+
+    public Mock<IPluginDatabase> Database { get; } = new();
+
+    public StoreHealth Health { get; set; } = StoreHealth.Healthy;
+
+    /// <summary>Makes the plugin database one found damaged by an access.</summary>
+    public void Damage() => Health = new StoreHealth(StoreState.Damaged, "test");
 
     public ILastServedSourceStore LastServed { get; }
 

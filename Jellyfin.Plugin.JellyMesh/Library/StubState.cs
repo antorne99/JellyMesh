@@ -48,6 +48,9 @@ public sealed record StubState
     /// <summary>Gets the stubs of renamed servers whose old files and items are not gone yet.</summary>
     public IReadOnlyList<StubRename> Renames { get; init; } = [];
 
+    /// <summary>Gets the stubs and series that split from another and wait for its watch state.</summary>
+    public IReadOnlyList<StubSplit> Splits { get; init; } = [];
+
     /// <summary>
     /// Gets these stubs, each followed by itself at every old path a pending server rename still keeps with an item, so that
     /// both items leave their version groups before a removal (Q351). An old path that a stub has now is left out.

@@ -31,7 +31,7 @@ namespace JellyMesh.Probe;
 public static class Refusal
 {
     /// <summary>The name a careless error message would reveal. Must never reach a client.</summary>
-    public const string Sentinel = "remoto-segreto.tailnet-sentinel.ts.net";
+    public const string Sentinel = "remoto-segreto.sentinel.invalid";
 
     public const string RefuseFile = "/config/jmprobe.refuse";
     public const string ItemFile = "/config/jmprobe.item";

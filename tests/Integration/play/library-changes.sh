@@ -32,26 +32,31 @@ NUGET_VOLUME=jellymesh-nuget bash "$WT/tests/Integration/scripts/install-plugin.
 sleep 3
 wait_ready local
 login local
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 id_a=$(add_remote local Casa "http://host.docker.internal:$(port_of a)" jellymesh)
 id_b=$(add_remote local Amico "http://host.docker.internal:$(port_of b)" jellymesh)
 import_all local "$id_a"
 import_all local "$id_b"
 sync_now local
-fa=$(server_folder "$id_a")
-fb=$(server_folder "$id_b")
+# type_folder <server id> <Film|Serie>: the type folder of the remote library of that kind.
+type_folder() { docker exec "$PREFIX-local" sh -c "ls -d '$(server_folder "$1")'/*/'$2' 2>/dev/null" | head -1; }
+fa_film=$(type_folder "$id_a" Film)
+fa_serie=$(type_folder "$id_a" Serie)
+fb_film=$(type_folder "$id_b" Film)
+fb_serie=$(type_folder "$id_b" Serie)
 folder() { get local /JellyMesh/Admin/Status | jq -c ".FederatedFolder | $1"; }
 
 echo "--- a fresh install: two servers, nothing linked, no migration"
-check "each server has its two paths" "[\"$fa/Film\",\"$fa/Serie\",\"$fb/Film\",\"$fb/Serie\"]" "$(folder '[.Servers[] | .MoviesPath, .SeriesPath]')"
+check "each server has its two type folders" "[\"$fa_film\",\"$fa_serie\",\"$fb_film\",\"$fb_serie\"]" "$(folder '[.Servers[].Folders[].Path]')"
 check "the folders are not linked" '"NotLinked"' "$(folder .Link)"
 check "no flat path is offered" 0 "$(get local /JellyMesh/Admin/Status | grep -c '/federata/Film\|/federata/Serie' || true)"
 check "and no migration banner" null "$(folder .Migration)"
 
 echo "--- the folders linked as the page says"
-library local Film movies "$fa/Film" "$fb/Film"
-library local Serie tvshows "$fa/Serie" "$fb/Serie"
-library local "Casa - Film" movies "$fa/Film"
+library local Film movies "$fa_film" "$fb_film"
+library local Serie tvshows "$fa_serie" "$fb_serie"
+library local "Casa - Film" movies "$fa_film"
 scan local
 sync_now local
 check "every server is linked" '"Linked"' "$(folder .Link)"
@@ -65,7 +70,7 @@ check "the films of both servers are versions of one title" true "$([ "$before" 
 
 echo "--- a library over the federated folder, and a series folder in one more library"
 library local Tutto mixed /federata
-library local "Casa - Serie" tvshows "$fa/Serie"
+library local "Casa - Serie" tvshows "$fa_serie"
 check "the page names the covering library" '["Tutto"]' "$(folder .Covering)"
 check "and the libraries added since the sync" '["Tutto","Casa - Serie"]' "$(folder '.Changes.Added | sort_by(. != "Tutto")')"
 check "the series of the two servers stay split" true "$(folder .SeriesSplit)"
@@ -100,8 +105,8 @@ check "nothing covers the folders any more" '[]' "$(folder .Covering)"
 
 echo "--- the automatic libraries of one server, one of them deleted in the dashboard, then another library on its folder"
 own() { get local /JellyMesh/Admin/Status | jq -c --arg id "$id_b" ".Servers[] | select(.Id == \$id) | .AutomaticLibraries | $1"; }
-post local "/JellyMesh/Admin/Servers/$id_b/AutomaticLibraries" '{"Enabled":true}' >/dev/null
-check "switching on answers 202" 202 "$(cat "$WORK/status")"
+save_server local "$id_b" '{"LibraryMode":"ByType"}' >/dev/null
+check "switching on answers 200" 200 "$(cat "$WORK/status")"
 for i in $(seq 1 120); do [ "$(own '[.Busy, (.Libraries | length)]')" = '[false,2]' ] && break; sleep 1; done
 check "the server has its two libraries" 2 "$(own '.Libraries | length')"
 own_serie=$(own '.Libraries[] | select(.Kind == "Series") | .Name' | jq -r .)
@@ -110,7 +115,7 @@ scan local
 sync_now local
 check "the deleted library is left to the admin" "[\"$own_serie\"]" "$(own .Released)"
 check "and the other one stays" 1 "$(own '.Libraries | length')"
-library local "Amico - Extra" tvshows "$fb/Serie"
+library local "Amico - Extra" tvshows "$fb_serie"
 check "the library only on its folders is named" '["Amico - Extra"]' "$(folder "[.Servers[] | select(.Id == \"$id_b\") | .Unregistered[]]")"
 docker run --rm --add-host host.docker.internal:host-gateway -v "$WORK/web:/w" -v "$PREFIX-pw:/pw" -e PYTHONPATH=/pw "$PW_IMAGE" \
   python3 /w/serverpage.py "http://host.docker.internal:$PORT" "$(token_of local)" "$me" "$sid" /w/own | tee "$WORK/web/own.out"

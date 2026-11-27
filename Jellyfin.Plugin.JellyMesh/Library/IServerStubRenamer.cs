@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -23,6 +24,12 @@ public interface IServerStubRenamer
     /// <param name="serverId">The server.</param>
     /// <returns>True while the last finish could not detach an old item of a stub of the server.</returns>
     bool IsStuck(Guid serverId);
+
+    /// <summary>
+    /// Gives the servers whose saved label is over the byte limit of a label (row 564).
+    /// </summary>
+    /// <returns>The servers.</returns>
+    IReadOnlyList<Guid> LongLabels();
 
     /// <summary>
     /// Writes the stubs of a server under the label of its new name, and saves their new and old paths with the label

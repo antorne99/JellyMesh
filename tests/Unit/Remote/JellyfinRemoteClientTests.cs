@@ -132,6 +132,27 @@ public class JellyfinRemoteClientTests
         var result = await LoginAsync(handler);
 
         Assert.Equal(RemoteFailure.AdministratorAccount, result.Failure);
+        Assert.Equal("t", result.Value?.AccessToken);
+    }
+
+    // The refused login is handed back, so that it can be ended: the remote opened it.
+    [Fact]
+    public async Task AnUnexpectedLoginAnswerWithATokenHandsTheLoginBack()
+    {
+        var result = await LoginAsync(new StubHandler(_ => StubHandler.Json("{\"AccessToken\":\"t\",\"User\":{\"Id\":\"u\"}}")));
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+        Assert.Equal("t", result.Value?.AccessToken);
+    }
+
+    [Theory]
+    [InlineData("{\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":false}}}")]
+    [InlineData("{\"AccessToken\":\"t\\r\\nX-Injected: 1\",\"User\":{\"Id\":\"u\",\"Policy\":{\"IsAdministrator\":true}}}")]
+    public async Task ALoginAnswerWithNoUsableTokenHandsNothingBack(string body)
+    {
+        var result = await LoginAsync(new StubHandler(_ => StubHandler.Json(body)));
+
+        Assert.False(result.IsSuccess);
         Assert.Null(result.Value);
     }
 
@@ -202,8 +223,8 @@ public class JellyfinRemoteClientTests
     }
 
     [Theory]
-    [InlineData("http://friend.tailnet.ts.net:9999/x")]  // other port
-    [InlineData("https://friend.tailnet.ts.net:8096/x")] // other scheme
+    [InlineData("http://remote.invalid:9999/x")]  // other port
+    [InlineData("https://remote.invalid:8096/x")] // other scheme
     public async Task ARedirectToAnotherOriginOnTheSameHostIsNotFollowed(string location)
     {
         var handler = new StubHandler(_ => StubHandler.Redirect(HttpStatusCode.TemporaryRedirect, location));
@@ -303,14 +324,35 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
-    public async Task LibrariesComeFromUserViewsAndKeepOnlyFilmsAndSeries()
+    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyFilmsAndSeries()
     {
         var handler = StubHandler.StockServer();
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
 
         Assert.Equal(["Film", "Serie"], result.Value!.Select(library => library.Name));
-        Assert.Equal(TestValues.Url + "/UserViews", Assert.Single(handler.Requests).Uri.ToString());
+        Assert.Equal(TestValues.Url + "/UserViews?includeHidden=true", Assert.Single(handler.Requests).Uri.ToString());
+    }
+
+    [Fact]
+    public async Task AViewThatIsNoLibraryOfItsOwnMayCombineSeveral()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"g1","Name":"Film","CollectionType":"movies","Type":"UserView"},{"Id":"s1","Name":"Serie","CollectionType":"tvshows","Type":"CollectionFolder"}]}"""));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Equal([("g1", true), ("s1", false)], result.Value!.Select(library => (library.Id, library.MayCombine)));
+    }
+
+    [Fact]
+    public async Task AnAnswerWithOnlyOtherLibraryTypesGivesNoLibrariesButCountsItsViews()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"m1","Name":"Musica","CollectionType":"music"}]}"""));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Empty(result.Value!);
+        Assert.Equal(1, RemoteLibraryList.ViewCountOf(result.Value!));
     }
 
     [Fact]

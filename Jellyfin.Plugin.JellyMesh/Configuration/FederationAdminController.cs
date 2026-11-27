@@ -9,6 +9,7 @@ using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Security;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
@@ -46,6 +47,8 @@ public class FederationAdminController : ControllerBase
     private readonly ILibraryChangeTracker? _changes;
     private readonly IServerRenamer? _renamer;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly IPluginDatabase? _database;
+    private readonly IStubRegistry? _stubs;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FederationAdminController"/> class.
@@ -64,7 +67,9 @@ public class FederationAdminController : ControllerBase
     /// <param name="changes">The libraries that changed on the federated folder since the last sync.</param>
     /// <param name="renamer">The server rename.</param>
     /// <param name="keeper">The watch state kept for removed servers, for the removals it holds.</param>
+    /// <param name="database">The plugin database, whose state the status carries.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
+    /// <param name="stubs">The stub registry, which tells whether the folder migration has ended.</param>
     public FederationAdminController(
         IRemoteServerRegistry registry,
         ICredentialVault vault,
@@ -80,7 +85,9 @@ public class FederationAdminController : ControllerBase
         ILibraryChangeTracker? changes = null,
         IServerRenamer? renamer = null,
         IWatchStateKeeper? keeper = null,
-        ErrorLogLimits? errorLogs = null)
+        IPluginDatabase? database = null,
+        ErrorLogLimits? errorLogs = null,
+        IStubRegistry? stubs = null)
     {
         _errorLogs = errorLogs ?? new ErrorLogLimits();
         _registry = registry;
@@ -97,15 +104,18 @@ public class FederationAdminController : ControllerBase
         _changes = changes;
         _renamer = renamer;
         _keeper = keeper;
+        _database = database;
+        _stubs = stubs;
     }
 
     /// <summary>
     /// Gets the state shown on the configuration page.
     /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The status.</returns>
     [HttpGet("Status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public ActionResult<FederationStatus> GetStatus()
+    public async Task<ActionResult<FederationStatus>> GetStatus(CancellationToken cancellationToken)
     {
         var keyState = _vault.GetKeyState();
 
@@ -125,7 +135,10 @@ public class FederationAdminController : ControllerBase
                     .Where(name => !held.HiddenReleasedLibraries.Contains(name, StringComparer.Ordinal))
                     .Select(name => new ReleasedLibrary(held.ServerId, name)))
                 .ToList()),
-            HeldRemovals = _keeper?.HeldRemovals ?? []
+            HeldRemovals = _keeper?.HeldRemovals ?? [],
+            Store = _database is null ? null : await StoreStatus.ReadAsync(_database, cancellationToken).ConfigureAwait(false),
+            SharedLibraries = _libraries.GetSharedState(),
+            OlderLayoutInUse = OlderLayout()
         };
     }
 
@@ -178,6 +191,10 @@ public class FederationAdminController : ControllerBase
     public async Task<ActionResult<ServerStatus>> AddServer([FromBody] AddServerRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.LibraryMode is { } asked && !Enum.IsDefined(asked))
+        {
+            return BadRequest(new SettingRefusal(nameof(AddServerRequest.LibraryMode), "Choose a library mode: ByType, ByRemoteLibrary or None."));
+        }
 
         var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
         var result = await _registry.AddAsync(request.Name, request.Url, credentials, cancellationToken).ConfigureAwait(false);
@@ -194,6 +211,16 @@ public class FederationAdminController : ControllerBase
         }
 
         _sync.PrepareServerFolders();
+
+        // The mode is kept at once, so that a check makes the libraries once the folder is set and a sync read the remote ones.
+        var mode = request.LibraryMode ?? _store.Read(config => config.NewServerLibraryMode);
+        if (mode != LibraryMode.None)
+        {
+            var id = result.Value!.Id;
+            KeepLibraryMode(id, mode);
+            _libraries.Enable(id, mode);
+        }
+
         return ToStatus(result.Value!);
     }
 
@@ -218,6 +245,8 @@ public class FederationAdminController : ControllerBase
             return Failed(RemoteFailure.UnknownServer);
         }
 
+        // Edits wait for the removal and are refused, and the removal waits for the edit in progress (row 434).
+        using var removal = await _registry.BeginRemovalAsync(serverId, cancellationToken).ConfigureAwait(false);
         bool removed;
         var stopping = false;
         try
@@ -272,6 +301,10 @@ public class FederationAdminController : ControllerBase
         {
             forgotten = await _sync.ForgetMissingServersAsync(cancellationToken).ConfigureAwait(false);
         }
+        catch (StoreSuspendedException)
+        {
+            return StoreUnavailableFilter.Unavailable();
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             var detail = ErrorText.Of(exception);
@@ -288,25 +321,65 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Enters the dedicated user of a server again, after logging in with it. This is how a lost key file is fixed.
+    /// Checks an edit of a server without saving anything: logs in with the new data, accepts only the saved Server Id,
+    /// reads the libraries the user sees and lists the consequences of the save (row 432, 433).
     /// </summary>
-    /// <param name="serverId">The server to update.</param>
-    /// <param name="request">The dedicated user.</param>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The edit form.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The server with its new credentials.</returns>
-    [HttpPost("Servers/{serverId:guid}/Credentials")]
+    /// <returns>The libraries and the consequences, or the refusal with the field it is about.</returns>
+    [HttpPost("Servers/{serverId:guid}/Edit/Check")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status502BadGateway)]
-    public async Task<ActionResult<ServerStatus>> UpdateCredentials([FromRoute] Guid serverId, [FromBody] CredentialsRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<ServerEditCheck>> CheckServerEdit([FromRoute] Guid serverId, [FromBody] ServerEditRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var credentials = new RemoteCredentials { Username = request.Username, Password = request.Password };
-        var result = await _registry.UpdateCredentialsAsync(serverId, credentials, cancellationToken).ConfigureAwait(false);
-        return result.IsSuccess ? ToStatus(result.Value!) : Failed(result.Failure, result.Error?.ToString());
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
+        var retryRename = request.Name is not null && RenameFailed(serverId);
+        request = WithSavedFields(serverId, request);
+        if ((RefuseName(serverId, request.Name) ?? RefuseResume(retryRename) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
+        {
+            return refused;
+        }
+
+        var result = await _registry.CheckEditAsync(serverId, request.ToEdit(), cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? ToCheck(serverId, request, result.Value!, retryRename) : EditFailed(result);
+    }
+
+    /// <summary>
+    /// Saves an edit of a server all or nothing, after the same checks as its check (row 432), then stops the streams and
+    /// ends the login of an old user, renames, writes the server folders and starts a sync of the server as needed (row 434).
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <param name="request">The edit form.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The saved server, or the refusal with the field it is about.</returns>
+    [HttpPut("Servers/{serverId:guid}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<ServerStatus>> SaveServerEdit([FromRoute] Guid serverId, [FromBody] ServerEditRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
+        }
+
+        return await SaveEditCoreAsync(serverId, request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -327,120 +400,27 @@ public class FederationAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Lists the importable libraries of a server.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The libraries.</returns>
-    [HttpGet("Servers/{serverId:guid}/Libraries")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    [ProducesResponseType(StatusCodes.Status502BadGateway)]
-    public async Task<ActionResult<IReadOnlyList<LibraryOption>>> GetLibraries([FromRoute] Guid serverId, CancellationToken cancellationToken)
-    {
-        var result = await _registry.GetLibrariesAsync(serverId, cancellationToken).ConfigureAwait(false);
-        if (!result.IsSuccess)
-        {
-            return Failed(result.Failure, result.Error?.ToString());
-        }
-
-        var selected = _registry.GetServers().FirstOrDefault(server => server.Id == serverId)?.ImportedLibraryIds ?? [];
-        return result.Value!
-            .Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, selected.Contains(library.Id)))
-            .ToList();
-    }
-
-    /// <summary>
-    /// Sets the libraries to import from a server.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="request">The libraries.</param>
-    /// <returns>Nothing.</returns>
-    [HttpPost("Servers/{serverId:guid}/Libraries")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult SetLibraries([FromRoute] Guid serverId, [FromBody] SetLibrariesRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        return _registry.SetImportedLibraries(serverId, request.LibraryIds) ? NoContent() : Failed(RemoteFailure.UnknownServer);
-    }
-
-    /// <summary>
-    /// Turns on or off the Film and Serie libraries the plugin keeps for a server. Turning them off deletes them, so it
-    /// needs a confirmation while there are any.
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="request">The switch and the confirmation.</param>
-    /// <returns>The state, while the work runs in the background.</returns>
-    [HttpPost("Servers/{serverId:guid}/AutomaticLibraries")]
-    [ProducesResponseType(StatusCodes.Status202Accepted)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public ActionResult<AutomaticLibrariesState> SetAutomaticLibraries([FromRoute] Guid serverId, [FromBody] SetAutomaticLibrariesRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var answer = request.Enabled ? _libraries.Enable(serverId) : _libraries.Disable(serverId, request.Confirmed);
-        if (answer.Outcome == AutomaticLibrariesOutcome.Started)
-        {
-            return Accepted(_libraries.GetState(serverId));
-        }
-
-        var status = answer.Outcome == AutomaticLibrariesOutcome.UnknownServer ? StatusCodes.Status404NotFound : StatusCodes.Status409Conflict;
-        return StatusCode(status, new AutomaticLibrariesRefusal(answer.Outcome, RefusalMessage(answer.Outcome), answer.ToDelete));
-    }
-
-    /// <summary>
-    /// Renames a server with its stubs and automatic libraries, after a confirmation (Q38).
-    /// </summary>
-    /// <param name="serverId">The server.</param>
-    /// <param name="request">The new name and the confirmation.</param>
-    /// <returns>The state, while the work runs in the background.</returns>
-    [HttpPost("Servers/{serverId:guid}/Rename")]
-    [ProducesResponseType(StatusCodes.Status202Accepted)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public ActionResult<ServerRenameState> RenameServer([FromRoute] Guid serverId, [FromBody] RenameServerRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        if (_renamer is null)
-        {
-            return NotFound();
-        }
-
-        var answer = _renamer.Rename(serverId, request.Name, request.Confirmed);
-        if (answer.Outcome == ServerRenameOutcome.Started)
-        {
-            return Accepted(_renamer.GetState(serverId));
-        }
-
-        var status = answer.Outcome switch
-        {
-            ServerRenameOutcome.InvalidName => StatusCodes.Status400BadRequest,
-            ServerRenameOutcome.UnknownServer => StatusCodes.Status404NotFound,
-            _ => StatusCodes.Status409Conflict
-        };
-        return StatusCode(status, new ServerRenameRefusal(answer.Outcome, RenameRefusalMessage(answer.Outcome), answer.Libraries));
-    }
-
-    /// <summary>
     /// Drops the stub moves of a server that wait for a scan, and deletes their old files (§10 row 288).
     /// </summary>
     /// <param name="serverId">The server.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The state of the rename.</returns>
     [HttpPost("Servers/{serverId:guid}/Rename/Cancel")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId)
+    public async Task<ActionResult<ServerRenameState>> CancelServerRename([FromRoute] Guid serverId, CancellationToken cancellationToken)
     {
         if (_renamer is null)
         {
             return NotFound();
+        }
+
+        using var edit = await _registry.EnterEditAsync(serverId, cancellationToken).ConfigureAwait(false);
+        if (edit is null)
+        {
+            return Failed(RemoteFailure.BeingRemoved);
         }
 
         var outcome = await _renamer.CancelPendingAsync(serverId).ConfigureAwait(false);
@@ -456,6 +436,43 @@ public class FederationAdminController : ControllerBase
             _ => StatusCodes.Status409Conflict
         };
         return StatusCode(status, new ServerRenameRefusal(outcome, RenameRefusalMessage(outcome), []));
+    }
+
+    /// <summary>
+    /// Gets the state of the shared libraries (§10 row 442).
+    /// </summary>
+    /// <returns>The state.</returns>
+    [HttpGet("SharedLibraries")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<SharedLibrariesState> GetSharedLibraries() => _libraries.GetSharedState();
+
+    /// <summary>
+    /// Turns the shared libraries on, or off once the admin confirmed the deletion of those the plugin made; the work runs
+    /// in the background.
+    /// </summary>
+    /// <param name="request">The switch.</param>
+    /// <returns>The state, accepted, or the reason of a refusal with the libraries a confirmation would delete.</returns>
+    [HttpPost("SharedLibraries")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public ActionResult<SharedLibrariesState> SetSharedLibraries([FromBody] SharedLibrariesRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // A list sent as null is not one with no library.
+        if (request.ToDelete is null || request.ToRelease is null)
+        {
+            var field = request.ToDelete is null ? nameof(SharedLibrariesRequest.ToDelete) : nameof(SharedLibrariesRequest.ToRelease);
+            return BadRequest(new SettingRefusal(field, "Send the libraries to delete and to release as lists, empty when there are none."));
+        }
+
+        var answer = request.Enabled
+            ? _libraries.EnableShared()
+            : _libraries.DisableShared(request.Confirmed ? new SharedLibrariesConfirmation(request.ToDelete, request.ToRelease) : null);
+        return answer.Outcome == AutomaticLibrariesOutcome.Started
+            ? Accepted(_libraries.GetSharedState())
+            : StatusCode(StatusCodes.Status409Conflict, new SharedLibrariesRefusal(answer.Outcome, SharedRefusalMessage(answer.Outcome), answer.ToDelete, answer.ToRelease));
     }
 
     /// <summary>
@@ -547,6 +564,20 @@ public class FederationAdminController : ControllerBase
         };
     }
 
+    internal static string EditFailureMessage(RemoteFailure failure, RemoteEditField field, string? serverName)
+    {
+        return (failure, field) switch
+        {
+            (RemoteFailure.AlreadyConfigured, _) when !string.IsNullOrEmpty(serverName) => $"This server is already configured as “{serverName}”.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Name) => "Enter a name.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Url) => "Enter an http or https URL with no credentials, query or fragment.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Username) => "Enter the dedicated user: the saved one can no longer be read.",
+            (RemoteFailure.InvalidServer, RemoteEditField.Password) => "Enter the password of the dedicated user: the saved one can no longer be read.",
+            (RemoteFailure.InvalidServer, RemoteEditField.LibraryMode) => "Choose a library mode.",
+            _ => FailureMessage(failure)
+        };
+    }
+
     internal static string FailureMessage(RemoteFailure failure)
     {
         return failure switch
@@ -563,13 +594,31 @@ public class FederationAdminController : ControllerBase
             RemoteFailure.ServerError => "The server answered with an error.",
             RemoteFailure.InvalidResponse => "The answer does not look like a Jellyfin server.",
             RemoteFailure.ResponseTooLarge => "The server sent an answer too large to accept.",
-            RemoteFailure.LibraryUnavailable => "A chosen library is no longer visible to the dedicated user. Open Libraries and save the selection again.",
+            RemoteFailure.LibraryUnavailable => "A chosen library is no longer visible to the dedicated user. Open Edit and save the libraries again.",
             RemoteFailure.CatalogChanged => "The catalog kept changing while it was read. Try again.",
             RemoteFailure.StreamLimitReached => "This server is at its stream limit on that remote.",
             RemoteFailure.RemovalFailed => "The server could not be removed. It stays, with its titles. Try again.",
             RemoteFailure.RemovalFailedPlaybackStopped => "The server could not be removed. It stays, with its titles, but any playback from it was stopped. Try again.",
             RemoteFailure.ForgetFailed => "The missing servers could not be forgotten. Their titles stay. Try again.",
             RemoteFailure.AlreadyConfigured => "This server is already configured.",
+            RemoteFailure.OtherServer => "Another server answers at this address. To use it, remove this one and add it as a new server.",
+            RemoteFailure.BeingRemoved => "This server is being removed.",
+            RemoteFailure.NameTaken => "Another server already has this name.",
+            RemoteFailure.RenameUnfinished => "A rename of this server has not finished. Wait for it, or save the edit without changing the name.",
+            RemoteFailure.MigrationUnfinished => "The name of a server can change after the folder migration ends. Save the edit without changing the name, or rename the server then.",
+            RemoteFailure.MigrationUnknown => "JellyMesh cannot tell yet whether the folder migration has ended, so the server cannot be renamed now. Try again in a moment.",
+            RemoteFailure.RenameWaitsForMigration => "The rename of this server that did not finish resumes after the folder migration ends: save the edit with the same name then.",
+            _ => "The operation failed."
+        };
+    }
+
+    internal static string SharedRefusalMessage(AutomaticLibrariesOutcome outcome)
+    {
+        return outcome switch
+        {
+            AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
+            AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the shared libraries the plugin made and release the adopted ones.",
+            AutomaticLibrariesOutcome.Busy => "The shared libraries are being updated. Try again when it is done.",
             _ => "The operation failed."
         };
     }
@@ -582,6 +631,7 @@ public class FederationAdminController : ControllerBase
             AutomaticLibrariesOutcome.NoFederatedFolder => "Set the federated folder first.",
             AutomaticLibrariesOutcome.ConfirmationRequired => "Confirm to delete the libraries of this server.",
             AutomaticLibrariesOutcome.Busy => "The libraries of this server are being updated. Try again when it is done.",
+            AutomaticLibrariesOutcome.ModeChangeNotAllowed => "The library mode of this server cannot be changed here.",
             _ => "The operation failed."
         };
     }
@@ -616,18 +666,315 @@ public class FederationAdminController : ControllerBase
         };
     }
 
-    private ObjectResult Failed(RemoteFailure failure, string? detail = null)
+    private static int StatusOf(RemoteFailure failure)
     {
-        var status = failure switch
+        return failure switch
         {
-            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured => StatusCodes.Status409Conflict,
+            RemoteFailure.Suspended or RemoteFailure.AlreadyConfigured or RemoteFailure.OtherServer or RemoteFailure.BeingRemoved
+                or RemoteFailure.NameTaken or RemoteFailure.RenameUnfinished or RemoteFailure.MigrationUnfinished
+                or RemoteFailure.MigrationUnknown or RemoteFailure.RenameWaitsForMigration => StatusCodes.Status409Conflict,
             RemoteFailure.UnknownServer => StatusCodes.Status404NotFound,
             RemoteFailure.InvalidServer => StatusCodes.Status400BadRequest,
             RemoteFailure.RemovalFailed or RemoteFailure.RemovalFailedPlaybackStopped or RemoteFailure.ForgetFailed => StatusCodes.Status500InternalServerError,
             _ => StatusCodes.Status502BadGateway
         };
+    }
 
-        return StatusCode(status, new FailureResponse(failure, FailureMessage(failure)) { Detail = detail });
+    private ObjectResult Failed(RemoteFailure failure, string? detail = null)
+    {
+        return StatusCode(StatusOf(failure), new FailureResponse(failure, FailureMessage(failure)) { Detail = detail });
+    }
+
+    // A refused edit, with the field it is about so that the page shows it there (row 432).
+    private ObjectResult EditFailed(RemoteResult<RemoteEditReport> result)
+    {
+        var field = result.Value?.Field ?? RemoteEditField.None;
+        var name = result.Value?.ServerName;
+        return StatusCode(
+            StatusOf(result.Failure),
+            new FailureResponse(result.Failure, EditFailureMessage(result.Failure, field, name))
+            {
+                ServerName = string.IsNullOrEmpty(name) ? null : name,
+                Field = field == RemoteEditField.None ? null : field,
+                Detail = result.Error?.ToString()
+            });
+    }
+
+    // Tells whether a server other than this one has the name, trimmed and in any case.
+    private static bool NameHeldElsewhere(IReadOnlyList<RemoteServerInfo> servers, Guid serverId, string? name)
+        => !string.IsNullOrWhiteSpace(name)
+            && servers.Any(server => server.Id != serverId && string.Equals(server.Name.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    // Refuses on the name a new name another server has, or one given while a rename or the folder migration has not
+    // finished, or while the end of the migration cannot be read (rows 434, 566).
+    private ObjectResult? RefuseName(Guid serverId, string? name)
+    {
+        var trimmed = name?.Trim();
+        var servers = _registry.GetServers();
+        if (string.IsNullOrEmpty(trimmed) || servers.FirstOrDefault(server => server.Id == serverId) is not { } saved || saved.Name == trimmed)
+        {
+            return null;
+        }
+
+        var failure = NameHeldElsewhere(servers, serverId, trimmed)
+            ? RemoteFailure.NameTaken
+            : RenameUnfinished(serverId) ? RemoteFailure.RenameUnfinished : MigrationFailure();
+        return failure == RemoteFailure.None
+            ? null
+            : EditFailed(RemoteResult.Fail(failure, new RemoteEditReport(RemoteEditField.Name)));
+    }
+
+    // Tells whether a rename of the server runs, waits for a scan, failed, or left a library waiting for a restart.
+    private bool RenameUnfinished(Guid serverId)
+    {
+        if (_renamer is null)
+        {
+            return false;
+        }
+
+        var state = _renamer.GetState(serverId);
+        return state.Busy || state.Pending || state.Failed || _renamer.NeedsRestart;
+    }
+
+    // Refuses the resume of a failed rename, a save of the same name, until the folder migration ends (row 567).
+    private ObjectResult? RefuseResume(bool retryRename)
+    {
+        var failure = retryRename ? MigrationFailure() : RemoteFailure.None;
+        return failure switch
+        {
+            RemoteFailure.None => null,
+            RemoteFailure.MigrationUnfinished => EditFailed(RemoteResult.Fail(RemoteFailure.RenameWaitsForMigration, new RemoteEditReport(RemoteEditField.Name))),
+            _ => EditFailed(RemoteResult.Fail(failure, new RemoteEditReport(RemoteEditField.Name)))
+        };
+    }
+
+    // Refuses a new name while titles are in the older folder layouts, or while that cannot be read (row 566).
+    private RemoteFailure MigrationFailure() => OlderLayout() switch
+    {
+        false => RemoteFailure.None,
+        true => RemoteFailure.MigrationUnfinished,
+        null => RemoteFailure.MigrationUnknown
+    };
+
+    // Tells whether titles are still in the older folder layouts, null while the registry cannot tell; false without it.
+    private bool? OlderLayout()
+    {
+        if (_stubs is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return _stubs.UsesOlderLayout();
+        }
+        catch (StoreSuspendedException)
+        {
+            return null;
+        }
+    }
+
+    // Tells whether the last rename of the server failed, so that a save of the same name runs it again.
+    private bool RenameFailed(Guid serverId) => _renamer is not null && _renamer.GetState(serverId).Failed;
+
+    // Refuses on the mode an unknown one and a change while the libraries are being updated (section 3.8).
+    private ObjectResult? RefuseMode(Guid serverId, LibraryMode? asked)
+    {
+        if (asked is not { } mode)
+        {
+            return null;
+        }
+
+        if (!Enum.IsDefined(mode))
+        {
+            return EditFailed(RemoteResult.Fail(RemoteFailure.InvalidServer, new RemoteEditReport(RemoteEditField.LibraryMode)));
+        }
+
+        var saved = _store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.LibraryMode);
+        if (saved is null || (mode == saved && mode == LibraryMode.None))
+        {
+            return null;
+        }
+
+        var state = _libraries.GetState(serverId);
+        return state.Busy
+            ? StatusCode(StatusCodes.Status409Conflict, new FailureResponse(RemoteFailure.None, RefusalMessage(AutomaticLibrariesOutcome.Busy)) { Field = RemoteEditField.LibraryMode })
+            : null;
+    }
+
+    // Fills a name or an address the form left out with the saved one, so that a form of the mode alone changes neither.
+    private ServerEditRequest WithSavedFields(Guid serverId, ServerEditRequest request)
+    {
+        if ((request.Name is not null && request.Url is not null)
+            || _registry.GetServers().FirstOrDefault(server => server.Id == serverId) is not { } saved)
+        {
+            return request;
+        }
+
+        return new ServerEditRequest
+        {
+            Name = request.Name ?? saved.Name,
+            Url = request.Url ?? saved.Url,
+            Username = request.Username,
+            Password = request.Password,
+            LibraryIds = request.LibraryIds,
+            LibraryMode = request.LibraryMode
+        };
+    }
+
+    // Closes the playback of a server whose user changed, then lets it play again with the new user (row 434).
+    private async Task StopStreamsAsync(Guid serverId)
+    {
+        try
+        {
+            await _playback.CloseServerAsync(serverId).ConfigureAwait(false);
+        }
+        finally
+        {
+            _playback.ReopenServer(serverId);
+        }
+    }
+
+    // Saves an edit after refusing a taken name, then sets off its effects (row 434). The caller holds the edit lock.
+    private async Task<ActionResult<ServerStatus>> SaveEditCoreAsync(Guid serverId, ServerEditRequest request, CancellationToken cancellationToken)
+    {
+        // A form with no name runs no failed rename again: only a save of the name does (row 290).
+        var retryRename = request.Name is not null && RenameFailed(serverId);
+        request = WithSavedFields(serverId, request);
+
+        // A first check, before any remote; the registry checks the name again in the change that stores it.
+        if ((RefuseName(serverId, request.Name) ?? RefuseResume(retryRename) ?? RefuseMode(serverId, request.LibraryMode)) is { } refused)
+        {
+            return refused;
+        }
+
+        var result = await _registry.SaveEditAsync(serverId, request.ToEdit(), () => StopStreamsAsync(serverId), cancellationToken).ConfigureAwait(false);
+        if (!result.IsSuccess)
+        {
+            return EditFailed(result);
+        }
+
+        AfterSave(serverId, result.Value!.Changes, request.Name!.Trim(), retryRename, request.LibraryMode);
+
+        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
+        return server is null ? Failed(RemoteFailure.UnknownServer) : ToStatus(server) with { RemoteWarning = result.Value.RemoteWarning };
+    }
+
+    // Runs what follows a saved edit, after the old user was logged out by the save: rename, libraries, mode,
+    // then the sync of the server. A step that fails is logged and leaves the save and the next steps (rows 432, 434).
+    private void AfterSave(Guid serverId, RemoteEditChanges changes, string name, bool retryRename, LibraryMode? mode)
+    {
+        // A rename that failed runs again on a save of the same name, as the page says (row 290).
+        if ((changes.HasFlag(RemoteEditChanges.Name) || retryRename) && _renamer is not null)
+        {
+            RunStep("rename", () =>
+            {
+                // The name is saved and was checked before the save, so the rename needs no confirmation here.
+                var answer = _renamer.Rename(serverId, name, confirmed: true);
+                if (answer.Outcome != ServerRenameOutcome.Started)
+                {
+                    _logger.LogWarning("The rename after an edit of a server did not start: {Outcome}", answer.Outcome);
+                }
+            });
+        }
+
+        if (changes.HasFlag(RemoteEditChanges.Libraries))
+        {
+            RunStep("libraries", _sync.PrepareServerFolders);
+        }
+
+        if (changes.HasFlag(RemoteEditChanges.LibraryMode))
+        {
+            RunStep("library mode", () =>
+            {
+                var answer = _libraries.ApplyMode(serverId);
+                if (answer.Outcome != AutomaticLibrariesOutcome.Started)
+                {
+                    _logger.LogWarning("The change of library mode after an edit of a server did not start: {Outcome}", answer.Outcome);
+                }
+            });
+        }
+        else if (mode is { } asked and not LibraryMode.None)
+        {
+            RunStep("library mode", () => MakeMissingLibraries(serverId, asked));
+        }
+
+        if ((changes & (RemoteEditChanges.Url | RemoteEditChanges.User | RemoteEditChanges.Libraries)) != RemoteEditChanges.None)
+        {
+            RunStep("sync", () => _sync.StartServerSync(serverId));
+        }
+    }
+
+    // The saved mode sent again makes the libraries of the server that are missing (section 3.8).
+    private void MakeMissingLibraries(Guid serverId, LibraryMode mode)
+    {
+        if (_store.Read(config => config.Servers.FirstOrDefault(server => server.Id == serverId)?.LibraryMode) != mode)
+        {
+            return;
+        }
+
+        var answer = _libraries.Enable(serverId, mode);
+        if (answer.Outcome != AutomaticLibrariesOutcome.Started)
+        {
+            _logger.LogWarning("The library mode after an edit of a server was not applied: {Outcome}", answer.Outcome);
+        }
+    }
+
+    // Stores the mode of a server at once, so that a check makes its libraries once the folder is set.
+    private void KeepLibraryMode(Guid serverId, LibraryMode mode)
+    {
+        _store.Update(config =>
+        {
+            if (config.Servers.FirstOrDefault(server => server.Id == serverId) is { } server)
+            {
+                server.LibraryMode = mode;
+            }
+        });
+    }
+
+    private static string? NameOrNull(string? name) => string.IsNullOrEmpty(name) ? null : name;
+
+    private void RunStep(string step, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError("The {Step} step after an edit of a server failed: {Error}{Detail:l}", step, exception.GetType().Name, _errorLogs.Local.Of(exception));
+        }
+    }
+
+    // The libraries and the consequences of an edit the remote accepted (row 432).
+    private ServerEditCheck ToCheck(Guid serverId, ServerEditRequest request, RemoteEditReport report, bool retryRename)
+    {
+        var name = request.Name!.Trim();
+        var server = _registry.GetServers().FirstOrDefault(candidate => candidate.Id == serverId);
+        var visible = report.Libraries ?? [];
+        var kept = report.LibraryIds.ToHashSet(StringComparer.Ordinal);
+        var lastRead = _store.Read(config => config.Servers.FirstOrDefault(candidate => candidate.Id == serverId)?.RemoteLibraries.ToList() ?? []);
+        var removed = (server?.ImportedLibraryIds ?? [])
+            .Where(id => !kept.Contains(id))
+            .Select(id => visible.FirstOrDefault(library => library.Id == id) is { } library
+                ? new ImportedLibraryRemoval(id, library.Name, false)
+                : new ImportedLibraryRemoval(id, NameOrNull(lastRead.FirstOrDefault(library => library.Id == id)?.Name), true))
+            .ToList();
+        var rename = server is not null && (report.Changes.HasFlag(RemoteEditChanges.Name) || retryRename)
+            ? new ServerRenameConsequence(server.Name, name, _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList())
+            : null;
+        var streams = report.Changes.HasFlag(RemoteEditChanges.User) ? _playback.CountServerSessions(serverId) : 0;
+        return new ServerEditCheck(
+            report.ServerName ?? string.Empty,
+            visible.Select(library => new LibraryOption(library.Id, library.Name, library.CollectionType, kept.Contains(library.Id))).ToList(),
+            new ServerEditConsequences(rename, removed, streams)
+            {
+                ModeChange = report.Changes.HasFlag(RemoteEditChanges.LibraryMode) && request.LibraryMode is { } mode ? _libraries.PreviewModeChange(serverId, mode) : null
+            })
+        {
+            RemoteOffline = report.RemoteOffline,
+            RemoteWarning = report.RemoteWarning
+        };
     }
 
     // Takes the copies of a removed server out of the manual merges (decision 45). The server is gone by now, so a failure
@@ -635,7 +982,16 @@ public class FederationAdminController : ControllerBase
     private async Task RemoveFromMergesAsync(Guid serverId)
     {
         var server = serverId.ToString("N");
-        if (!_merges.Merges.Any(merge => ManualMergeService.HasCopyOn(merge, server)))
+        var held = _merges.Merges.Where(merge => ManualMergeService.HasCopyOn(merge, server)).ToList();
+
+        // The kept watch state finds the other copies through these merges (D33), in place of those of an earlier removal of
+        // the same server; unsaved, the copies stay in them.
+        if (_keeper is not null && !await _keeper.KeepMergesAsync(serverId, held, CancellationToken.None).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (held.Count == 0)
         {
             return;
         }
@@ -685,12 +1041,14 @@ public class FederationAdminController : ControllerBase
         return new ServerFolderStatus(
             link.ServerId,
             name,
-            link.MoviesPath,
-            link.SeriesPath,
+            link.Folders,
             link.Movies,
             link.Series,
             link.SeriesGroupingOff,
             link.SeriesLibraries,
-            unregistered);
+            unregistered)
+        {
+            SeriesSplitWith = link.SeriesSplitWith
+        };
     }
 }

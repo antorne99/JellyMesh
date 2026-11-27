@@ -233,17 +233,21 @@ public class ServerRemovalLogoutTests
         Task<bool>? removal = null;
         store.BeforeUpdate = () => removal = restarted.RemoveAsync(server.Id);
 
-        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var update = await restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.True(await removal!);
         Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
         // The update ends its login, then the removal, which found no live login, logs in and out with the same device (418).
-        Assert.Equal([LoginPath, LogoutPath, LoginPath, LogoutPath], fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath));
-        var logout = fixture.Handler.Requests[1];
+        Assert.Equal([LoginPath, LogoutPath, LoginPath, LogoutPath], LoginsAndLogouts(fixture));
+        var logout = fixture.Handler.Requests.First(request => request.Uri.AbsolutePath == LogoutPath);
         Assert.Contains($"Token=\"{TestValues.Token}\"", logout.Authorization, StringComparison.Ordinal);
         Assert.Contains(logger.Lines, line => line.Contains("removed", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
         AssertClean(logger);
     }
+
+    // The logins and logouts sent to the remote, without the reads of a save.
+    private static string[] LoginsAndLogouts(RegistryFixture fixture)
+        => fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath).Where(path => path is LoginPath or LogoutPath).ToArray();
 
     [Fact]
     public async Task ALoginForNewCredentialsIsLoggedOutWhenTheRemovalEndsRightAfterItIsSaved()
@@ -257,11 +261,11 @@ public class ServerRemovalLogoutTests
         Task<bool>? removal = null;
         store.AfterUpdate = () => removal = restarted.RemoveAsync(server.Id);
 
-        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var update = await restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.True(await removal!);
         Assert.Equal(RemoteFailure.UnknownServer, update.Failure);
-        Assert.Equal([LoginPath, LogoutPath, LoginPath, LogoutPath], fixture.Handler.Requests.Select(request => request.Uri.AbsolutePath));
+        Assert.Equal([LoginPath, LogoutPath, LoginPath, LogoutPath], LoginsAndLogouts(fixture));
         Assert.Contains(logger.Lines, line => line.Contains("removed", StringComparison.Ordinal) && line.Contains("Friend", StringComparison.Ordinal));
         AssertClean(logger);
     }
@@ -307,7 +311,7 @@ public class ServerRemovalLogoutTests
         await handler.FirstLoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Runs up to its first pending wait: without the gate its login would reach the remote now.
-        var update = restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var update = restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(1, handler.Logins);
         Assert.False(update.IsCompleted);
@@ -332,7 +336,7 @@ public class ServerRemovalLogoutTests
         using var restarted = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger);
         var call = PingAsync(restarted, server.Id);
         await handler.FirstLoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var update = restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var update = restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
         handler.ReleaseFirstLogin.SetResult();
         await call.WaitAsync(TimeSpan.FromSeconds(5));
         await update.WaitAsync(TimeSpan.FromSeconds(5));
@@ -378,7 +382,7 @@ public class ServerRemovalLogoutTests
         {
             try
             {
-                return await registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+                return await registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
             }
             finally
             {
@@ -471,7 +475,7 @@ public class ServerRemovalLogoutTests
         Task<bool>? removal = null;
         store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
 
-        var update = await restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var update = await restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.True(await removal!);
         Assert.Equal(RemoteFailure.AuthenticationFailed, update.Failure);
@@ -488,7 +492,7 @@ public class ServerRemovalLogoutTests
         Task<bool>? removal = null;
         store.AfterRead = () => removal = restarted.RemoveAsync(server.Id);
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, new CancellationToken(true)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, new CancellationToken(true)));
 
         Assert.True(await removal!);
         Assert.False(restarted.HoldsStateFor(server.Id));
@@ -520,7 +524,7 @@ public class ServerRemovalLogoutTests
 
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, new CancellationToken(true)));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, new CancellationToken(true)));
         }
         finally
         {
@@ -600,11 +604,11 @@ public class ServerRemovalLogoutTests
 
         if (saveFails)
         {
-            await Assert.ThrowsAsync<IOException>(() => registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None));
+            await Assert.ThrowsAsync<IOException>(() => registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None));
         }
         else
         {
-            Assert.Equal(RemoteFailure.Suspended, (await registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None)).Failure);
+            Assert.Equal(RemoteFailure.Suspended, (await registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None)).Failure);
         }
 
         Assert.Equal([TestValues.Token + "2"], handler.LoggedOut);
@@ -643,7 +647,7 @@ public class ServerRemovalLogoutTests
         var stored = fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials);
         withServerId = true;
 
-        await Assert.ThrowsAsync<IOException>(() => fixture.Registry.UpdateCredentialsAsync(server.Id, new RemoteCredentials { Username = "other-user", Password = "other-pass" }, CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => fixture.Registry.EnterCredentialsAsync(server, new RemoteCredentials { Username = "other-user", Password = "other-pass" }, CancellationToken.None));
 
         Assert.Equal(stored, fixture.Store.Read(config => config.Servers.Single().EncryptedCredentials));
         Assert.Equal(string.Empty, fixture.Store.Read(config => config.Servers.Single().JellyfinServerId));
@@ -688,7 +692,7 @@ public class ServerRemovalLogoutTests
             SpinWait.SpinUntil(() => Volatile.Read(ref read), TimeSpan.FromSeconds(5));
         };
 
-        await Assert.ThrowsAsync<IOException>(() => restarted.UpdateCredentialsAsync(server.Id, OtherCredentials, CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => restarted.EnterCredentialsAsync(server, OtherCredentials, CancellationToken.None));
 
         Assert.True((await call!.WaitAsync(TimeSpan.FromSeconds(5))).IsSuccess);
         var login = Assert.Single(fixture.Handler.Requests.Skip(before), request => request.Uri.AbsolutePath == LoginPath);
@@ -718,7 +722,7 @@ public class ServerRemovalLogoutTests
             SpinWait.SpinUntil(() => fixture.Store.Read(config => config.Servers.Count == 0), TimeSpan.FromSeconds(5));
         };
 
-        await Assert.ThrowsAsync<IOException>(() => restarted.UpdateCredentialsAsync(server.Id, OtherCredentials, CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => restarted.EnterCredentialsAsync(server, OtherCredentials, CancellationToken.None));
 
         Assert.True(await removal!.WaitAsync(TimeSpan.FromSeconds(5)));
         var login = Assert.Single(fixture.Handler.Requests.Skip(before), request => request.Uri.AbsolutePath == LoginPath);
@@ -754,7 +758,7 @@ public class ServerRemovalLogoutTests
             SpinWait.SpinUntil(() => Volatile.Read(ref removalFailed), TimeSpan.FromSeconds(5));
         };
 
-        Volatile.Write(ref change, Task.Run(() => restarted.UpdateCredentialsAsync(server.Id, OtherCredentials, CancellationToken.None)));
+        Volatile.Write(ref change, Task.Run(() => restarted.EnterCredentialsAsync(server, OtherCredentials, CancellationToken.None)));
 
         await Assert.ThrowsAsync<IOException>(() => change!);
         await Assert.ThrowsAsync<IOException>(() => removal!.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -905,7 +909,7 @@ public class ServerRemovalLogoutTests
         using var registry = new RemoteServerRegistry(fixture.Store, fixture.Vault, client, logger) { LogoutLimit = TimeSpan.FromMilliseconds(200) };
         var watch = Stopwatch.StartNew();
 
-        var update = await registry.UpdateCredentialsAsync(server.Id, TestValues.Credentials, CancellationToken.None);
+        var update = await registry.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.Suspended, update.Failure);
         Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), watch.Elapsed.ToString());
@@ -927,7 +931,7 @@ public class ServerRemovalLogoutTests
         var call = PingAsync(restarted, server.Id);
         await handler.FirstLoginArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         using var cancel = new CancellationTokenSource();
-        var update = restarted.UpdateCredentialsAsync(server.Id, TestValues.Credentials, cancel.Token);
+        var update = restarted.EnterCredentialsAsync(server, CredentialsEntry.NewPassword, cancel.Token);
         var removalSaved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<bool>? removal = null;

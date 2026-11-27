@@ -16,4 +16,23 @@ public sealed record AutomaticLibrariesState(
     bool Busy,
     IReadOnlyList<AutomaticLibraryStatus> Libraries,
     IReadOnlyList<string> Released,
-    AutomaticLibrariesError Error);
+    AutomaticLibrariesError Error)
+{
+    /// <summary>Gets the library mode of the server.</summary>
+    public LibraryMode Mode { get; init; }
+
+    /// <summary>Gets the folders of the server to add to libraries by hand in "none" mode, each with the type it needs.</summary>
+    public IReadOnlyList<ManualLibraryPath> ManualPaths { get; init; } = [];
+
+    /// <summary>Gets the remote libraries the server no longer has, by name: they left the imported ones (§10 row 436).</summary>
+    public IReadOnlyList<string> Vanished { get; init; } = [];
+
+    /// <summary>Gets the libraries of the admin that kept the last check from making or adopting a library, and why.</summary>
+    public IReadOnlyList<LibraryConflict> Conflicts { get; init; } = [];
+
+    /// <summary>Gets the users who lost titles in the last change of library mode, by library of the new mode.</summary>
+    public IReadOnlyList<AccessLoss> LostAccess { get; init; } = [];
+
+    /// <summary>Gets a value indicating whether a library the mode wants is not in the registry, as after the admin deleted it.</summary>
+    public bool Missing { get; init; }
+}

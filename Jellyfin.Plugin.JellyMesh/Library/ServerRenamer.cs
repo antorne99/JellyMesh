@@ -18,7 +18,6 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     private readonly IRemoteServerRegistry _registry;
     private readonly IServerStubRenamer _stubs;
     private readonly IServerLibraryManager _libraries;
-    private readonly ILibraryScans _scans;
     private readonly IVersionLinker _linker;
     private readonly RetiredLibraryIds _retired;
     private readonly IFederatedFolderLinkChecker _links;
@@ -35,7 +34,6 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
     /// <param name="registry">The server registry.</param>
     /// <param name="stubs">The stub moves.</param>
     /// <param name="libraries">The automatic libraries.</param>
-    /// <param name="scans">The library scans.</param>
     /// <param name="linker">The version linker.</param>
     /// <param name="retired">The old ids of renamed libraries.</param>
     /// <param name="links">The link check of the server folders.</param>
@@ -46,7 +44,6 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         IRemoteServerRegistry registry,
         IServerStubRenamer stubs,
         IServerLibraryManager libraries,
-        ILibraryScans scans,
         IVersionLinker linker,
         RetiredLibraryIds retired,
         IFederatedFolderLinkChecker links,
@@ -58,7 +55,6 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         _registry = registry;
         _stubs = stubs;
         _libraries = libraries;
-        _scans = scans;
         _linker = linker;
         _retired = retired;
         _links = links;
@@ -100,7 +96,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
 
         if (!confirmed)
         {
-            var libraries = _libraries.GetState(serverId).Libraries.Select(library => library.Name).ToList();
+            var libraries = _libraries.GetState(serverId).Libraries.Where(library => !library.Adopted).Select(library => library.Name).ToList();
             return new ServerRenameRequest(ServerRenameOutcome.ConfirmationRequired, Task.CompletedTask, libraries);
         }
 
@@ -116,6 +112,46 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
             _jobs[serverId] = job;
             return new ServerRenameRequest(ServerRenameOutcome.Started, job, []);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<int> RenameLongLabelsAsync(CancellationToken cancellationToken)
+    {
+        var longLabels = _stubs.LongLabels();
+        if (longLabels.Count == 0)
+        {
+            return 0;
+        }
+
+        // A rename scans, so it waits for the libraries as a sync does.
+        await _libraries.WaitReadyAsync(cancellationToken).ConfigureAwait(false);
+        var servers = _registry.GetServers();
+        var ran = 0;
+        foreach (var serverId in longLabels)
+        {
+            if (servers.FirstOrDefault(server => server.Id == serverId) is not { } server)
+            {
+                continue;
+            }
+
+            var answer = Rename(serverId, server.Name, confirmed: true);
+            if (answer.Outcome != ServerRenameOutcome.Started)
+            {
+                _logger.LogInformation("The rename of a server with a label over the limit did not start, so the next start tries again: {Outcome}", answer.Outcome);
+                continue;
+            }
+
+            await answer.Job.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (_stubs.LongLabels().Contains(serverId))
+            {
+                _logger.LogWarning("The rename of a server with a label over the limit did not change its label, so the next start tries again");
+                continue;
+            }
+
+            ran++;
+        }
+
+        return ran;
     }
 
     /// <inheritdoc />
@@ -227,12 +263,13 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
             finally
             {
                 // A renamed library stops the library monitor, which only a scan starts again.
-                await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+                await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
         await _stubs.RelabelAsync(serverId, name, cancellationToken).ConfigureAwait(false);
         bool done;
+        bool scanned;
         try
         {
             done = await _libraries.RenameAsync(serverId, cancellationToken).ConfigureAwait(false);
@@ -240,21 +277,28 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         finally
         {
             // The scan also starts the library monitor the rename stopped, and makes the new stubs.
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
+            scanned = await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // A scan held back for a shared library without its blocks is owed: the stubs finish after it (D42).
+        if (!scanned)
+        {
+            _logger.LogInformation("The library scan waits for a shared library, so the stubs of the server finish after it");
+            return done;
         }
 
         await FinishAsync(cancellationToken).ConfigureAwait(false);
-        if (_stubs.IsPending(serverId))
+
+        // The old items go with this scan, which then links their groups again (row 85).
+        if (_stubs.IsPending(serverId) && await _libraries.ScanAsync(cancellationToken).ConfigureAwait(false))
         {
-            // The old items go with this scan, which then links their groups again (row 85).
-            await _scans.QueueAndWaitAsync(cancellationToken).ConfigureAwait(false);
             await FinishAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return done;
     }
 
-    // Only when the libraries could be read and none has either folder of the server or one over them.
+    // Only when the libraries could be read, the server has folders and none of them, or one over them, is in a library.
     private bool InNoLibrary(Guid serverId)
     {
         var root = _store.Read(config => config.FederatedFolderPath);
@@ -266,7 +310,7 @@ public sealed class ServerRenamer : IServerRenamer, IDisposable
         var report = _links.Check(root, [serverId]);
         return report.IsChecked && report.Servers.Count > 0
             && report.Covering.Count == 0
-            && report.Servers.All(server => server.Movies.Link == FederatedPathLink.NotLinked && server.Series.Link == FederatedPathLink.NotLinked);
+            && report.Servers.All(server => server.Folders.Count > 0 && server.Folders.All(folder => folder.Link.Link == FederatedPathLink.NotLinked));
     }
 
     private void MarkUnfinished(Guid serverId, bool unfinished) => _store.Update(config =>

@@ -30,7 +30,7 @@ public sealed class FederatedStubImportTests : IDisposable
     [InlineData("https://other.host:8920/jf/JellyMesh/Play/abc?sig=00ff")]
     public void AVersionThatIsAStubOfAnotherServerIsDropped(string path)
     {
-        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), path), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
+        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), path), RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch);
 
         Assert.Empty(item.Versions);
     }
@@ -41,7 +41,7 @@ public sealed class FederatedStubImportTests : IDisposable
     [InlineData(null)]
     public void AnyOtherPathIsNormalAndIsNotKept(string? path)
     {
-        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), path), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
+        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), path), RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch);
 
         Assert.Single(item.Versions);
     }
@@ -54,7 +54,7 @@ public sealed class FederatedStubImportTests : IDisposable
             MediaSources = [TestItems.Source("a", 1080, 1000) with { Path = StubUrl }, TestItems.Source("b", 720, 1000) with { Path = "/media/b.mkv" }]
         };
 
-        var item = RemoteItemMapper.ToIndexedItem(film, RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
+        var item = RemoteItemMapper.ToIndexedItem(film, RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch);
 
         Assert.Equal("b", Assert.Single(item.Versions).MediaSourceId);
     }
@@ -63,11 +63,11 @@ public sealed class FederatedStubImportTests : IDisposable
     public async Task AStubOfAnotherServerGetsNoStubHere()
     {
         _fixture.Sync.Client.Add(
-            "films",
+            TestLibraries.Films,
             RemoteItemType.Movie,
             WithPath(TestItems.Movie("stub", "Federated There", 2020, "1"), StubUrl),
             WithPath(TestItems.Movie("real", "Real There", 2021, "2"), "/media/real.mkv"));
-        await _fixture.Sync.AddServerAsync("A", "films");
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
 
         await _fixture.SyncAndMaterializeAsync();
 
@@ -80,12 +80,12 @@ public sealed class FederatedStubImportTests : IDisposable
     public async Task AnItemThatBecomesAStubLeavesWithAnIncrementalRead()
     {
         var film = TestItems.Movie("m");
-        _fixture.Sync.Client.Add("films", RemoteItemType.Movie, film);
-        await _fixture.Sync.AddServerAsync("A", "films");
+        _fixture.Sync.Client.Add(TestLibraries.Films, RemoteItemType.Movie, film);
+        await _fixture.Sync.AddServerAsync("A", TestLibraries.Films);
         await _fixture.SyncAndMaterializeAsync();
         Assert.Single(_fixture.Resolver.Resolve().Contents);
 
-        _fixture.Sync.Client.Items[("films", RemoteItemType.Movie)][0] = WithPath(film, StubUrl);
+        _fixture.Sync.Client.Items[(TestLibraries.Films, RemoteItemType.Movie)][0] = WithPath(film, StubUrl);
         _fixture.Sync.Client.SavedUtc["m"] = SyncFixture.Start.AddMinutes(1);
         await _fixture.Sync.Sync.RunIncrementalAsync(CancellationToken.None);
 
@@ -95,11 +95,11 @@ public sealed class FederatedStubImportTests : IDisposable
     [Fact]
     public void ThePathNeverReachesTheEntry()
     {
-        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), "http://friend.tailnet.ts.net/secret"), RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
+        var item = RemoteItemMapper.ToIndexedItem(WithPath(TestItems.Movie("m"), "http://remote.invalid/secret"), RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch);
 
         var json = System.Text.Json.JsonSerializer.Serialize(item);
 
-        Assert.DoesNotContain("friend.tailnet", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("remote.invalid", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class FederatedStubImportTests : IDisposable
             ]
         };
 
-        var item = RemoteItemMapper.ToIndexedItem(film, RemoteItemType.Movie, "films", DateTimeOffset.UnixEpoch);
+        var item = RemoteItemMapper.ToIndexedItem(film, RemoteItemType.Movie, TestLibraries.Films, DateTimeOffset.UnixEpoch);
 
         var track = Assert.Single(Assert.Single(item.Versions).Streams);
         Assert.Equal((3, "ita", 6), (track.Index, track.Language, track.Channels));

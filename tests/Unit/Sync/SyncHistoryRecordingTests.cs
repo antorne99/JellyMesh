@@ -7,7 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Sync;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Moq;
 using Xunit;
 
@@ -52,8 +54,8 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task AReconciliationIsRecordedWithWhatEachServerRead()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta"));
-        var server = await _fixture.AddServerAsync("Friend", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta"));
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         Remote.BeforeClock = (_, _) =>
         {
             _fixture.Clock.Now = _fixture.Clock.Now.AddSeconds(2);
@@ -74,13 +76,13 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task AnIncrementalSyncIsRecordedWithWhatChanged()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta"));
-        await _fixture.AddServerAsync("Friend", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"), TestItems.Movie("b", "Beta"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         using var sync = NewSync();
         await sync.RunAsync(CancellationToken.None);
         _fixture.Clock.Now = _fixture.Clock.Now.AddMinutes(15);
         Remote.ServerTime = Remote.ServerTime!.Value.AddMinutes(15);
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("c", "Gamma"));
         Remote.SavedUtc["c"] = Remote.ServerTime.Value;
 
         await sync.RunIncrementalAsync(CancellationToken.None);
@@ -94,7 +96,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task AStartFromThePageIsRecordedAsAReconciliation()
     {
-        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         using var sync = NewSync();
 
         Assert.Equal(SyncStartResult.Started, sync.TryStart());
@@ -106,9 +108,9 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task AServerThatCannotBeReadIsRecordedWithItsFailure_AndTheRunPartlyFailed()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
-        var first = await _fixture.AddServerAsync("Friend", "films");
-        var second = await _fixture.AddServerAsync("Other", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
+        var first = await _fixture.AddServerAsync("Friend", TestLibraries.Films);
+        var second = await _fixture.AddServerAsync("Other", TestLibraries.Films);
         Remote.BeforeClock = (read, _) =>
         {
             Remote.ClockFailure = read == 2 ? RemoteFailure.Unreachable : RemoteFailure.None;
@@ -127,7 +129,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task NoServerRead_IsAFailedRun()
     {
-        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         Remote.ClockFailure = RemoteFailure.Timeout;
         using var sync = NewSync();
 
@@ -139,7 +141,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task TheStubsOfEachServerAndTheTotalsComeFromThisRunsMaterialization()
     {
-        var server = await _fixture.AddServerAsync("Friend", "films");
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         var report = Report(3, 2, 1, 0, new() { [server.Id] = new StubCounts(2, 1, 1, 0) });
         using var sync = NewSync(materializer: Materializer(report).Object);
 
@@ -154,7 +156,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task StubsThatCouldNotBeWritten_MakeTheRunPartlyFailed()
     {
-        var server = await _fixture.AddServerAsync("Friend", "films");
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         var report = Report(0, 0, 0, 1, new() { [server.Id] = new StubCounts(0, 0, 0, 1) });
         using var sync = NewSync(materializer: Materializer(report).Object);
 
@@ -168,7 +170,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task AMaterializationThatThrows_IsAFailedRun()
     {
-        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         var materializer = new Mock<ILibraryMaterializer>();
         materializer.Setup(item => item.MaterializeAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
         using var sync = NewSync(materializer: materializer.Object);
@@ -183,7 +185,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task ACancelledRunIsRecorded()
     {
-        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         using var cancel = new CancellationTokenSource();
         Remote.BeforeClock = async (_, token) =>
         {
@@ -199,9 +201,30 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     }
 
     [Fact]
+    public async Task ALibraryThatVanishesIsAWarningOfItsServerInThatRunOnly()
+    {
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
+        Remote.Add(TestLibraries.FilmsB, RemoteItemType.Movie, TestItems.Movie("b", "Beta", 2021, "2"));
+        Remote.Libraries.Add(new RemoteLibrary(TestLibraries.FilmsB, "Film 4K", "movies"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films, TestLibraries.FilmsB);
+        using var sync = NewSync();
+        await sync.RunAsync(CancellationToken.None);
+        Remote.Libraries.RemoveAll(library => library.Id == TestLibraries.FilmsB);
+
+        await sync.RunAsync(CancellationToken.None);
+        Assert.Null(Assert.Single(_history.Runs[0].Servers).Warning);
+        await sync.RunAsync(CancellationToken.None);
+        await sync.RunAsync(CancellationToken.None);
+
+        Assert.Equal(["Film 4K"], Assert.Single(_history.Runs[1].Servers).Warning!.VanishedLibraries);
+        Assert.Null(Assert.Single(_history.Runs[1].Servers).Failure);
+        Assert.Null(Assert.Single(_history.Runs[0].Servers).Warning);
+    }
+
+    [Fact]
     public async Task TheRunIsInTheHistoryBeforeTheSyncShowsFinished()
     {
-        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         bool? runningWhenAdded = null;
         CatalogSyncService? sync = null;
         var history = new Mock<ISyncHistory>();
@@ -219,8 +242,8 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task AHistoryThatCannotBeSaved_NeverFailsTheSync_AndLogsTheWholeError()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
-        var server = await _fixture.AddServerAsync("Friend", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
+        var server = await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         var history = new Mock<ISyncHistory>();
         history.Setup(item => item.AddAsync(It.IsAny<SyncRun>(), It.IsAny<CancellationToken>())).ThrowsAsync(new IOException(TestValues.Host));
         using var sync = NewSync(history.Object);
@@ -237,16 +260,18 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task TheSavedHistoryHoldsNoAddressNoTokenAndNoLogin()
     {
-        Remote.Add("films", RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
-        await _fixture.AddServerAsync("Friend", "films");
-        await _fixture.AddServerAsync("Other", "films");
+        Remote.Add(TestLibraries.Films, RemoteItemType.Movie, TestItems.Movie("a", "Alfa"));
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
+        await _fixture.AddServerAsync("Other", TestLibraries.Films);
         Remote.BeforeClock = (read, _) => read == 2 ? throw new HttpRequestException(TestValues.Url) : Task.CompletedTask;
-        using var store = new SyncHistoryStore(_fixture.Folder, new CapturingLogger<SyncHistoryStore>());
+        using var database = new TestDatabase();
+        using var store = new SyncHistoryStore(database, new CapturingLogger<SyncHistoryStore>());
         using var sync = NewSync(store);
 
         await sync.RunAsync(CancellationToken.None);
 
-        var content = await File.ReadAllTextAsync(Path.Combine(_fixture.Folder, SyncHistoryStore.FileName));
+        var file = Path.Combine(database.Folder, PluginDatabase.FileName);
+        var content = await File.ReadAllTextAsync(file) + await File.ReadAllTextAsync(file + "-wal");
         Assert.Contains("InvalidResponse", content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Host, content, StringComparison.Ordinal);
         Assert.DoesNotContain(TestValues.Token, content, StringComparison.Ordinal);
@@ -270,7 +295,7 @@ public sealed class SyncHistoryRecordingTests : IDisposable
     [Fact]
     public async Task ASyncThatDoesNotRunIsNotRecorded()
     {
-        await _fixture.AddServerAsync("Friend", "films");
+        await _fixture.AddServerAsync("Friend", TestLibraries.Films);
         _fixture.KeySource.Key = null;
         using var sync = NewSync();
 

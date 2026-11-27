@@ -16,6 +16,14 @@ public interface ICatalogSyncService
     SyncStartResult TryStart();
 
     /// <summary>
+    /// Starts a full read of one server in the background, as after an edit of its address, user or libraries (row 434).
+    /// A sync in progress finishes with the data it read, then this one follows it.
+    /// </summary>
+    /// <param name="serverId">The server.</param>
+    /// <returns>Started, AlreadyRunning when it follows the sync in progress, or why it cannot run.</returns>
+    SyncStartResult StartServerSync(Guid serverId);
+
+    /// <summary>
     /// Runs a full sync and waits for it. This is the reconciliation: what a complete read no longer finds leaves the
     /// index, and a server that fails keeps its entries.
     /// </summary>

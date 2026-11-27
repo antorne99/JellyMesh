@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
@@ -62,6 +63,7 @@ public sealed class UnchangedSyncGateTests : IDisposable
         "a server's catalog changes",
         "a server is added",
         "a server's libraries change",
+        "a server's library mode changes",
         "metadata protection changes",
         "collections change",
         "the federated folder changes",
@@ -101,12 +103,25 @@ public sealed class UnchangedSyncGateTests : IDisposable
     [MemberData(nameof(Changes))]
     public async Task AnyChangeOfWhatTheRunReadsIsSeen(string change)
     {
-        await _fixture.AddServerAsync("A", "films");
+        await _fixture.AddServerAsync("A", TestLibraries.Films);
         await _fixture.Index.ReplaceServerAsync(_fixture.Registry.GetServers()[0].Id, [], SyncFixture.Start, null, CancellationToken.None);
         _gate.Remember(_gate.Capture());
 
         await ChangeAsync(change);
 
+        Assert.False(_gate.IsUnchanged(_gate.Capture()));
+    }
+
+    // Missing an edit while the settings cannot be read would let the next sync skip it.
+    [Fact]
+    public void AnUpdateWhileTheSettingsCannotBeReadCountsAsAChange()
+    {
+        _gate.Remember(_gate.Capture());
+        _fixture.Store.Unavailable = true;
+
+        RaiseUpdated(new Movie { Path = Root + "/a/Film/A/A.strm" });
+
+        _fixture.Store.Unavailable = false;
         Assert.False(_gate.IsUnchanged(_gate.Capture()));
     }
 
@@ -151,14 +166,17 @@ public sealed class UnchangedSyncGateTests : IDisposable
                 _folders.Add(new VirtualFolderInfo { Name = "Serie", ItemId = "s1", Locations = [Root] });
                 break;
             case "a server's catalog changes":
-                IndexedItem film = new() { ItemId = "m1", Kind = IndexedItemKind.Movie, LibraryId = "films", LastSeenUtc = SyncFixture.Start };
+                IndexedItem film = new() { ItemId = "m1", Kind = IndexedItemKind.Movie, LibraryId = TestLibraries.Films, LastSeenUtc = SyncFixture.Start };
                 await _fixture.Index.ReplaceServerAsync(server.Id, [film], SyncFixture.Start, null, CancellationToken.None);
                 break;
             case "a server is added":
-                await _fixture.AddServerAsync("B", "films");
+                await _fixture.AddServerAsync("B", TestLibraries.Films);
                 break;
             case "a server's libraries change":
-                _fixture.Registry.SetImportedLibraries(server.Id, ["films", "shows"]);
+                _fixture.Registry.SetImportedLibraries(server.Id, [TestLibraries.Films, TestLibraries.Shows]);
+                break;
+            case "a server's library mode changes":
+                _fixture.Store.Configuration.Servers[0].LibraryMode = LibraryMode.ByRemoteLibrary;
                 break;
             case "metadata protection changes":
                 _fixture.Store.Configuration.MetadataProtection = !_fixture.Store.Configuration.MetadataProtection;

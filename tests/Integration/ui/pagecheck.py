@@ -129,8 +129,8 @@ def normal(s, width):
     check(name + " shows its stream limit", connected.locator(u.NUMBER).input_value() == "4")
     check(name + " shows what it shares", connected.locator(u.CHECKBOX + ":checked").count() == 2)
     for row in [stock, peer]:
-        own = row.get_by_label(u.OWN_LIBRARIES, exact=True)
-        check(f"{name} offers the automatic libraries of {row.locator('h4').inner_text()}, off", own.count() == 1 and not own.is_checked(), own.count())
+        mode = u.card_fact(row, u.MODE_LABEL)
+        check(f"{name} shows the library mode of {row.locator('h4').inner_text()}", mode == "None", mode)
     check(name + " offers the free user", page.locator(u.PEERS + " select").locator("option", has_text="friend").count() == 1)
     settings_match(page, "fresh", name)
     healthy(page, name)
@@ -248,17 +248,18 @@ def keyboard(s, width):
             if focus == "checkbox" and u.has_focus(pair):
                 page.keyboard.press("Space")
 
-    for action in [u.BUTTON["test"], u.BUTTON["libraries"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
+    for action in [u.BUTTON["test"], u.BUTTON["edit"], u.BUTTON["remove"], u.BUTTON["merge"], u.BUTTON["connect"], u.BUTTON["save"],
                    u.SYNC_NOW[1:], u.ADD_SUBMIT[1:], u.SYNC_INTERVAL[1:], u.ADD_FIELDS["name"][1:], u.METADATA_PROTECTION[1:]]:
         check(f"{name} reaches {action}", action in reached, reached)
     check(name + " reaches a settings Save", u.SAVE_SETTINGS[1:] in reached, reached)
     check(name + " reaches the title checkboxes", reached.count("checkbox") >= 5, reached)
 
-    libraries = u.button(u.server_row(page, "stock"), "libraries")
-    libraries.focus()
+    edit = u.button(u.server_row(page, "stock"), "edit")
+    edit.focus()
     page.keyboard.press("Enter")
     page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
-    check(name + " Enter opens the libraries", u.server_row(page, "stock").locator(u.LIBRARY).count() == 2)
+    check(name + " Enter opens the edit form with the libraries", u.server_row(page, "stock").locator(u.LIBRARY).count() == 2)
+    check(name + " the edit form takes the focus", u.has_focus(u.server_row(page, "stock").get_by_label("Name", exact=True)))
     box = u.merge_case(page, CHAIN).locator(u.CHECKBOX).first
     box.focus()
     page.keyboard.press("Space")
@@ -348,11 +349,13 @@ def actions(s, width):
 
     u.clear_message(page)
     stock = u.server_row(page, "stock")
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
-    check(name + " the libraries show what is imported", stock.locator(u.LIBRARY + ":checked").count() == 2)
-    u.button(stock, "save_libraries").click()
-    check(name + " the libraries save", "saved" in u.wait_message(page))
+    u.open_edit(page, stock)
+    check(name + " the edit form shows what is imported", stock.locator(u.LIBRARY + ":checked").count() == 2)
+    u.button(stock, "save").click()
+    shown = u.wait_message(page)
+    check(name + " an edit with no change saves with no question", "Saved stock." in shown and page.locator(u.CONFIRM).count() == 0, shown)
+    check(name + " a save read by the remote says nothing is wrong", "does not answer" not in shown, shown)
+    check(name + " a saved edit closes its form", until(page, lambda: stock.locator(u.EDIT_FORM).count() == 0))
 
     u.clear_message(page)
     connected = u.peer_row(page, "jellymesh")
@@ -435,8 +438,7 @@ def edits(s, width):
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
     new_peer = u.peer_row(page, u.NEW_PEER)
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.open_edit(page, stock)
     u.tick(stock.locator(u.LIBRARY).first, False)
     connected.locator(u.NUMBER).fill("9")
     u.tick(connected.locator(u.CHECKBOX).first, False)
@@ -477,14 +479,20 @@ def edits(s, width):
     kept("a value typed during a refresh", "7")
 
     u.clear_message(page)
-    u.button(stock, "save_libraries").click()
+    u.button(stock, "save").click()
+    u.answer_confirm(page, True)
     u.wait_message(page)
-    kept("saved libraries", "7")
-    check(name + " saved libraries update their row", u.card_fact(stock, "Libraries to import") == "1", stock.inner_text())
-    u.tick(stock.locator(u.LIBRARY).first)
+    check(name + " a saved edit keeps the unsaved limit", connected.locator(u.NUMBER).input_value() == "7", connected.locator(u.NUMBER).input_value())
+    check(name + " a saved edit keeps the unchecked peer box", connected.locator(u.CHECKBOX + ":checked").count() == 1)
+    check(name + " a saved edit updates its row", until(page, lambda: u.card_fact(stock, "Libraries to import") == "1"), stock.inner_text())
+    u.open_edit(page, stock)
+    check(name + " the edit form opens on what was saved", stock.locator(u.LIBRARY + ":checked").count() == 1)
+    for box in stock.locator(u.LIBRARY).all():
+        u.tick(box)
     u.clear_message(page)
-    u.button(stock, "save_libraries").click()
+    u.button(stock, "save").click()
     u.wait_message(page)
+    check(name + " adding a library back saves with no question", until(page, lambda: u.card_fact(stock, "Libraries to import") == "2"), stock.inner_text())
 
     new_peer.locator(u.NUMBER).fill("5")
     u.tick(new_peer.locator(u.CHECKBOX).first)
@@ -524,10 +532,10 @@ def edits(s, width):
     page.context.close()
 
 
-def fake(page, path, change):
-    """Rewrites the reads of an admin path with change, which sees the decoded answer."""
+def fake(page, path, change, method="GET"):
+    """Rewrites the answers of an admin path to one method with change, which sees the decoded answer."""
     def answer(route):
-        if route.request.method != "GET":
+        if route.request.method != method:
             route.continue_()
             return
         response = route.fetch()
@@ -635,7 +643,8 @@ def quiet(s, width):
     page.context.close()
 
 
-MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": []}],
+MIGRATION_STEP = {"Step": "RemoveOldPaths", "Libraries": [{"Name": "Film", "OldPaths": ["/federata/Film"], "MissingPaths": [], "PathsToAdd": []},
+                                                {"Name": "Serie", "OldPaths": ["/federata/Serie"], "MissingPaths": [], "PathsToAdd": ["/federata/x/y/Serie"]}],
                   "OldTitles": 0, "UnlinkedFolders": [], "Mode": "None", "AutomaticStep": None, "Running": False, "Error": "None"}
 
 
@@ -674,7 +683,7 @@ def migration(s, width):
     page = s.open("fresh", width, route=routes)
     page.on("request", lambda request: reads.append(request.url.split("/JellyMesh/Admin/")[1]) if "/JellyMesh/Admin/" in request.url else None)
     banner = page.locator(u.MIGRATION)
-    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each server", text(page, u.MIGRATION_TITLE))
+    check(name + " shows the choice", banner.is_visible() and text(page, u.MIGRATION_TITLE) == "Choose how to move to the folders of each remote library", text(page, u.MIGRATION_TITLE))
     check(name + " offers both ways", page.locator(u.MIGRATE_AUTOMATIC).is_visible() and page.locator(u.MIGRATE_MANUAL).is_visible())
     mode = page.locator(u.NEW_SERVER_MODE)
     check(name + " shows the mode of the servers linked later", mode.is_enabled() and mode.input_value() == "Manual", mode.input_value())
@@ -685,12 +694,24 @@ def migration(s, width):
     check(name + " a choice reads the status at once", until(page, lambda: "Status" in reads, 3), reads)
     check(name + " by hand names the step", until(page, lambda: text(page, u.MIGRATION_TITLE) == "Remove the old folders from the libraries", 3), text(page, u.MIGRATION_TITLE))
     check(name + " by hand lists the old folders", "/federata/Film" in text(page, u.MIGRATION_LIBRARIES), text(page, u.MIGRATION_LIBRARIES))
+    listed = text(page, u.MIGRATION_LIBRARIES)
+    check(name + " by hand lists the folders to add before the old ones to remove",
+          "Then remove" in listed and 0 <= listed.find("/federata/x/y/Serie") < listed.find("/federata/Serie"), listed)
+    check(name + " with no titles left says nothing of titles shown twice", page.locator(u.MIGRATION_TWICE).is_hidden())
     check(name + " by hand drops its own choice", page.locator(u.MIGRATE_MANUAL).is_hidden())
     page.unroute("**/JellyMesh/Admin/Migration")
 
-    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Running": True}))
+    # Stopped after the old paths left the libraries: nothing is left by hand, so the banner asks only for a retry.
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Libraries": [], "AutomaticStep": "Finish", "Error": "Failed"}))
+    page.locator(u.MIGRATE_AUTOMATIC).click()
+    check(name + " a run stopped at the end asks to try again", until(page, lambda: text(page, u.MIGRATION_TEXT).endswith("Try again to finish the migration."), 3), text(page, u.MIGRATION_TEXT))
+    check(name + " a run stopped at the end lists no step by hand", page.locator(u.MIGRATION_NEXT).is_hidden() and page.locator(u.MIGRATION_LIBRARIES).is_hidden())
+    page.unroute("**/JellyMesh/Admin/Migration")
+
+    page.route("**/JellyMesh/Admin/Migration", answer(mode={"Mode": "Automatic", "Step": "Carrying", "OldTitles": 3, "AutomaticStep": "Carry", "Error": "None", "Running": True}))
     page.locator(u.MIGRATE_AUTOMATIC).click()
     check(name + " a running migration says its step", until(page, lambda: text(page, u.MIGRATION_TEXT) == "Moving the watch state to the new titles.", 3), text(page, u.MIGRATION_TEXT))
+    check(name + " until it runs the titles show twice", text(page, u.MIGRATION_TWICE).startswith("Until the migration runs, each title shows twice"), text(page, u.MIGRATION_TWICE))
     page.wait_for_timeout(500)
     reads.clear()
     times.clear()
@@ -820,7 +841,7 @@ def sections(s, width):
         "sync": "**/JellyMesh/Admin/Sync",
         "peers": "**/JellyMesh/Admin/Peers",
         "merges": "**/JellyMesh/Admin/Merges",
-        "settings": u.PLUGIN_CONFIG,
+        "settings": u.SETTINGS_ROUTE,
     }
 
     def filled(page):
@@ -909,10 +930,10 @@ def outcomes_shown(page, name):
     outcome(page, name + " a refused merge", "Error", "at least two")
     page.unroute("**/JellyMesh/Admin/Merges")
     error = page.locator(u.OUTCOME).evaluate("node => getComputedStyle(node).backgroundColor")
-    u.button(u.server_row(page, "stock"), "libraries").click()
+    u.button(u.server_row(page, "stock"), "edit").click()
     u.wait_idle(page)
     page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
-    check(name + " opening the libraries clears the old error", u.message(page) == "", u.message(page))
+    check(name + " opening the edit form clears the old error", u.message(page) == "", u.message(page))
 
     u.button(u.server_row(page, "stock"), "test").click()
     outcome(page, name + " a connection test", "Done", "connected")
@@ -1038,18 +1059,18 @@ def settings_refused(page, name):
 
 def settings_failed(page, name):
     """Failures the page cannot foresee: the server refuses, breaks, or does not answer."""
-    config = u.PLUGIN_CONFIG
+    config = u.SETTINGS_ROUTE
 
     folder = page.locator(u.FEDERATED_FOLDER).input_value()
     page.locator(u.FEDERATED_FOLDER).fill("C:\\films")
     page.locator(u.SAVE_SETTINGS).click()
-    outcome(page, name + " a save the server refuses", "Error", "server refused")
-    check(name + " the field errors have gone", page.locator(u.FIELD_ERROR).count() == 0)
+    outcome(page, name + " a save the server refuses", "Error", "Federated folder was refused")
+    check(name + " the refused field is marked", page.locator(u.FIELD_ERROR).count() == 1)
     page.locator(u.FEDERATED_FOLDER).fill(folder)
     interval = u.change_settings(page)
 
     def post(answer):
-        page.route(config, lambda route: answer(route) if route.request.method == "POST" else route.continue_())
+        page.route(config, lambda route: answer(route) if route.request.method == "PUT" else route.continue_())
 
     post(lambda route: route.fulfill(status=500, body=""))
     page.locator(u.SAVE_SETTINGS).click()
@@ -1180,7 +1201,7 @@ def readable(page, name, selector):
 
 def broken_reads(context):
     """Refuses every read of the page, so that each part shows its failure."""
-    for pattern in ["**/JellyMesh/Admin/Status", "**/JellyMesh/Admin/Sync", "**/JellyMesh/Admin/Peers", "**/JellyMesh/Admin/Merges", u.PLUGIN_CONFIG]:
+    for pattern in ["**/JellyMesh/Admin/Status", "**/JellyMesh/Admin/Sync", "**/JellyMesh/Admin/Peers", "**/JellyMesh/Admin/Merges", u.SETTINGS_ROUTE]:
         context.route(pattern, lambda route: route.fulfill(status=500, json={}))
 
 
@@ -1200,7 +1221,7 @@ def control_themes(s, width):
         stock = u.server_row(page, "stock")
         connected = u.peer_row(page, "jellymesh")
         new_peer = u.peer_row(page, u.NEW_PEER)
-        u.button(stock, "libraries").click()
+        u.button(stock, "edit").click()
         page.wait_for_selector(u.SERVER + " " + u.LIBRARY_MARK, state="attached", timeout=15000)
         page.mouse.move(0, 0)
 
@@ -1266,14 +1287,14 @@ def controls(s, width):
     extra = [{"Id": "jm-long", "Name": LONG_NAME, "CollectionType": "movies"}, {"Id": "jm-hostile", "Name": HOSTILE, "CollectionType": "movies"}]
 
     def odd(context):
-        fake(context, "Servers/*/Libraries", lambda data: data.extend(dict(item, Selected=False) for item in extra))
+        fake(context, "Servers/*/Edit/Check", lambda data: data["Libraries"].extend(dict(item, Selected=False) for item in extra), "POST")
         fake(context, "Peers/Options", lambda data: (data["Users"].append({"Id": SECOND_USER, "Name": "second"}), data["Libraries"].extend(extra)))
 
     page = s.open("fresh", width, route=odd)
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
     new_peer = u.peer_row(page, u.NEW_PEER)
-    u.button(stock, "libraries").click()
+    u.button(stock, "edit").click()
     page.wait_for_selector(u.SERVER + " " + u.LIBRARY_MARK, state="attached", timeout=15000)
 
     select = new_peer.get_by_label(u.USER_LABEL, exact=True)
@@ -1762,10 +1783,10 @@ def folder_chosen(page, name):
 
 
 def folder_paths(server, remote=None):
-    """Returns the paths to link that the server reports: the Film then the Serie folder of each remote, or of the one named."""
+    """Returns the paths to link that the server reports: the folders of each remote, or of the one named."""
     folder = u.api(server, "GET", "/JellyMesh/Admin/Status")[1]["FederatedFolder"]
     remotes = [of_server(folder, remote)] if remote else folder["Servers"]
-    return [path for each in remotes for path in (each["MoviesPath"], each["SeriesPath"])]
+    return [each_folder["Path"] for each in remotes for each_folder in each["Folders"]]
 
 
 def copied_over_http(page, name):
@@ -1841,6 +1862,66 @@ def merge_details(s, width):
     merge_forecasts(s, width, name + " forecast")
     merge_refresh(s, width, name + " refresh")
     merge_dates(s, width, name + " merged")
+    merge_split(s, width, name + " split series")
+
+
+def series_copy(server):
+    """A remote series copy of a merge, as the merge list gives it."""
+    return {"Copy": {"ServerId": server["Id"], "ItemId": "5e71e5000000400080000000000000" + server["Id"][:2], "Kind": "Episode", "IsLocal": False,
+                     "Title": "JM Serie Divisa", "Year": 2026}, "ServerName": server["Name"], "RunTimeTicks": None, "IsFound": True,
+            "Versions": [], "EpisodeCount": 3, "SeasonCount": 1}
+
+
+def merge_split(s, width, name):
+    """A merged series warns that it stays split only for the servers the status names as split (Q46, row 77),
+    and a server with no series library gets no series warning."""
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    stock_id = of_server(status["FederatedFolder"], "stock")["Id"]
+    peer_id = of_server(status["FederatedFolder"], "peer")["Id"]
+    split = {"with": {}, "flag": False}
+
+    def merged(data):
+        data["Merges"] = [{"Id": "5e71e500-0000-4000-8000-000000000001", "CreatedUtc": "2026-11-01T10:00:00Z", "IsInEffect": True,
+                           "Copies": [series_copy(of_server(status, "stock")), series_copy(of_server(status, "peer"))]}]
+
+    def folders(data):
+        linked(data)
+        folder = data["FederatedFolder"]
+        folder["SeriesSplit"] = split["flag"]
+        stock, peer = of_server(folder, "stock"), of_server(folder, "peer")
+        stock["SeriesLibraries"] = ["Serie", "Anime"]
+        peer["SeriesLibraries"] = ["Serie"]
+        for server in (stock, peer):
+            server["SeriesSplitWith"] = split["with"].get(server["Id"], [])
+        # The peer has no series library: its kind has no folder and counts as linked with no library.
+        peer["Folders"] = [each for each in peer["Folders"] if each["LibraryType"] != "tvshows"]
+        peer["Series"] = dict(Link="Linked", Libraries=[])
+
+    def routes(context):
+        context.route("**/JellyMesh/Admin/Merges", lambda route: answer_list(route, merged))
+        fake(context, "Status", folders)
+
+    page = s.open("fresh", width, route=routes)
+    merge = page.locator("#jmSeriesMerges " + u.MERGE)
+    warning = merge.locator(".jmMergeSplit")
+    peer_block = u.server_folder(page, "peer")
+    check(name + " shows the merged series", until(page, lambda: merge.count() == 1), page.locator("#jmSeriesMerges").inner_text())
+    check(name + " other series libraries alone do not warn", warning.count() == 0, merge.inner_text())
+    folder_info = page.locator(u.FOLDER_INFO)
+    check(name + " nor does the folder", "different libraries" not in folder_info.text_content(), folder_info.text_content())
+    check(name + " a server with no series library has no series warning", "serie" not in peer_block.text_content().lower(), peer_block.text_content())
+
+    split.update(flag=True, **{"with": {stock_id: [peer_id], peer_id: [stock_id]}})
+    check(name + " warns once the status names its servers split", until(page, lambda: warning.count() == 1, 20), merge.inner_text())
+    check(name + " names both servers", warning.count() == 1 and "stock" in warning.inner_text() and "peer" in warning.inner_text(), merge.inner_text())
+    check(name + " the folder names them too", until(page, lambda: "stock (Serie, Anime); peer (Serie)" in folder_info.text_content()), folder_info.text_content())
+    healthy(page, name)
+    u.shot(page, f"merge-split-{width}")
+
+    split.update(flag=True, **{"with": {stock_id: ["0f0f0f0f-0000-4000-8000-000000000009"]}})
+    check(name + " a split with a server outside the merge does not warn on it", until(page, lambda: warning.count() == 0, 20), merge.inner_text())
+    check(name + " the folder names only the split server", "stock (Serie, Anime)" in folder_info.text_content() and "peer (Serie)" not in folder_info.text_content(), folder_info.text_content())
+    u.close(page)
 
 
 def copy_with_api(s, width):
@@ -1878,13 +1959,14 @@ def link_warnings(page, name):
     fake(page, "Status", unlinked)
     check(name + " warns about the path of the server", until(page, lambda: "is not linked" in block.inner_text(), 20), block.inner_text())
     check(name + " leaves the other server alone", "is not linked" not in u.server_folder(page, "peer").inner_text(), u.server_folder(page, "peer").inner_text())
+    check(name + " fits the warning in the block", block.locator(".jmFolderWarning").first.evaluate("node => node.scrollWidth <= node.clientWidth"))
     check(name + " keeps the row", u.is_marked(button))
     check(name + " keeps the focus", u.has_focus(button))
     u.shot(page, f"folder-warning-{page.viewport_size['width']}")
     page.unroute("**/JellyMesh/Admin/Status")
 
     def long_path(status):
-        of_server(status["FederatedFolder"], "stock")["MoviesPath"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
+        of_server(status["FederatedFolder"], "stock")["Folders"][0]["Path"] = "/media/" + "a-very-long-folder-name/" * 6 + "Film"
 
     fake(page, "Status", long_path)
     check(name + " shows a long path", until(page, lambda: u.copy_button(page, "a-very-long-folder-name").count() == 1, 20))
@@ -2127,8 +2209,7 @@ def tabs_keep_edits(s, width):
     connected = u.peer_row(page, "jellymesh")
     case = u.merge_case(page, PAIR)
     page.locator(u.ADD_FIELDS["name"]).fill("kept name")
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.open_edit(page, stock)
     u.tick(stock.locator(u.LIBRARY).first, False)
     connected.locator(u.NUMBER).fill("9")
     u.tick(connected.locator(u.CHECKBOX).first, False)
@@ -2318,20 +2399,20 @@ def cards_faults(s, width):
     u.shot(page, f"card-login-refused-{width}")
 
     fault("NotChecked", "LibraryUnavailable")
-    shows("a sync failure after a restart", "A chosen library is gone", "Last sync failed (a chosen library is gone)", "Open Libraries")
+    shows("a sync failure after a restart", "A chosen library is gone", "Last sync failed (a chosen library is gone)", "Open Edit")
 
     fault("Online", "ServerError")
     shows("a sync failure on a working connection", "Online, last sync failed", "Last sync failed (server error)", "log of that server")
 
     fault("Offline", None, "Complete")
-    shows("a failed check after a good sync", "Offline", "tailnet")
+    shows("a failed check after a good sync", "Offline", "reachable at its URL")
 
     fault("NewFailure", "AnotherNewFailure", Mode="NewMode")
     shows("an unknown failure", "Unknown problem", "Last sync failed (unknown problem)", "Test the connection")
     check(name + " an unknown failure shows no enum name", "NewFailure" not in stock.inner_text(), stock.inner_text())
     check(name + " an unknown mode shows no enum name", u.card_fact(stock, "Mode") == "Mode not known yet", u.card_fact(stock, "Mode"))
 
-    long_url = "http://" + "a-very-long-host-name-without-any-place-to-break" * 3 + ".tailnet.ts.net:8096"
+    long_url = "http://" + "a-very-long-host-name-without-any-place-to-break" * 3 + ".invalid:8096"
     fault("Online", None, "Complete", Name=LONG_NAME, Url=long_url)
     long_card = u.server_row(page, LONG_NAME)
     check(name + " a long name updates in place", until(page, lambda: long_card.count() == 1, 22))
@@ -2357,8 +2438,7 @@ def cards_in_place(s, width):
     page = s.open("fresh", width)
     stock = u.server_row(page, "stock")
     connected = u.peer_row(page, "jellymesh")
-    u.button(stock, "libraries").click()
-    page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+    u.open_edit(page, stock)
     u.tick(stock.locator(u.LIBRARY).first, False)
     box = stock.locator(u.LIBRARY).last
     box.focus()
@@ -2451,8 +2531,7 @@ def cards(s, width):
         name = f"{width} {theme} cards"
         page = s.open("fresh", width, theme=theme)
         cards_online(page, name)
-        u.button(u.server_row(page, "stock"), "libraries").click()
-        page.wait_for_selector(u.SERVER + " " + u.LIBRARY, state="attached", timeout=15000)
+        u.open_edit(page, u.server_row(page, "stock"))
         healthy(page, name)
         u.show_tab(page, "servers")
         u.shot(page, f"cards-servers-{theme}-{width}")
@@ -2491,7 +2570,7 @@ def cards_offline(s, width):
     stock = card_shows(page, name, of_server(status, "stock"), of_server(sync, "stock"))
     cause = u.cause_of(stock)
     check(name + " says offline", u.state_of(stock) == "Offline", u.state_of(stock))
-    for part in ["could not reach it", "kept as they were", "full read runs when it answers again", "tailnet"]:
+    for part in ["could not reach it", "kept as they were", "full read runs when it answers again", "reachable at its URL"]:
         check(f"{name} says {part}", part in cause, cause)
     check(name + " has no capitals", "OFFLINE" not in page.locator(u.PAGE).inner_text())
     state_is_written(page, name)
@@ -2511,9 +2590,10 @@ def cards_nokey(s, width):
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
         check(f"{name} {server} asks for its password", u.state_of(row) == "Password needed", u.state_of(row))
-        check(f"{name} {server} says why", "Enter the login again below" in u.cause_of(row), u.cause_of(row))
-        check(f"{name} {server} is open on the form", row.evaluate("node => node.open") and u.button(row, "save_login").is_visible())
-        check(f"{name} {server} has a user and a password field", row.locator("input[type=text]").count() == 1 and row.locator("input[type=password]").count() == 1)
+        check(f"{name} {server} says why", "Enter the login again in the edit form below" in u.cause_of(row), u.cause_of(row))
+        check(f"{name} {server} is open on the edit form", row.evaluate("node => node.open") and u.button(row, "save").is_visible())
+        check(f"{name} {server} asks for a user and a password", row.get_by_label("User", exact=True).input_value() == "" and row.locator("input[type=password]").count() == 1)
+        check(f"{name} {server} says the login no longer decrypts", "no longer decrypts" in row.locator(u.EDIT_FORM).inner_text())
         check(f"{name} {server} keeps the counts", "films" in u.card_fact(row, "Catalog"), u.card_fact(row, "Catalog"))
         check(f"{name} {server} can still be removed", u.button(row, "remove").is_enabled())
     check(name + " is never not checked", "Not checked yet" not in text(page, u.SERVERS), text(page, u.SERVERS))
@@ -2581,19 +2661,27 @@ def opens(page, name, node, tab):
 
 
 def link_folders(status, link, movies=None, series=None, grouping_off=()):
-    """Sets the link of the federated folder, and of the two folders of each server, or of the one named in movies and series."""
+    """Sets the link of the federated folder, and of the folders of each server, or of the one named in movies and series."""
     folder = status["FederatedFolder"]
     folder.update(Link=link, Path="/federata", Covering=[], SeriesSplit=False, Migration=None)
     for server in folder["Servers"]:
         server.update(SeriesGroupingOff=list(grouping_off), Unregistered=[])
         server["Movies"].update(Link="Linked", Libraries=["Film"])
         server["Series"].update(Link="Linked", Libraries=["Serie"])
+        for each in server["Folders"]:
+            each["Link"] = dict(Link="Linked", Libraries=["Serie" if each["LibraryType"] == "tvshows" else "Film"])
         if link == "NotLinked" and movies is None and series is None:
             server["Movies"].update(Link="NotLinked", Libraries=[])
             server["Series"].update(Link="NotLinked", Libraries=[])
+            for each in server["Folders"]:
+                each["Link"] = dict(Link="NotLinked", Libraries=[])
     for kind, named in [("Movies", movies), ("Series", series)]:
         if named:
-            of_server(folder, named[0])[kind].update(Link=named[1], Libraries=named[2])
+            target = of_server(folder, named[0])
+            target[kind].update(Link=named[1], Libraries=named[2])
+            for each in target["Folders"]:
+                if (each["LibraryType"] == "tvshows") == (kind == "Series"):
+                    each["Link"] = dict(Link=named[1], Libraries=named[2])
 
 
 def linked(status):
@@ -2765,7 +2853,7 @@ def overview_failed(s, width):
         u.close(page)
 
     name = width + " overview settings failing"
-    page = s.open("fresh", width, route=lambda context: context.route(u.PLUGIN_CONFIG, lambda route: route.fulfill(status=500, json={})), wait=False)
+    page = s.open("fresh", width, route=lambda context: context.route(u.SETTINGS_ROUTE, lambda route: route.fulfill(status=500, json={})), wait=False)
     page.wait_for_selector(u.PAGE, state="attached", timeout=30000)
     check(name + " is reported", until(page, lambda: "settings" in " ".join(alarms(page)), 20), alarms(page))
     u.close(page)
@@ -2869,7 +2957,7 @@ def overview_half(s, width):
     check(name + " names the server waiting", "Still to choose: " + HOSTILE in libraries.inner_text(), libraries.inner_text())
     check(name + " keeps remote text as text", page.locator(u.SETUP + " b").count() == 0)
     link_step = u.step(page, "Link the folders of each server").inner_text()
-    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or turn on the automatic libraries" in link_step, link_step)
+    check(name + " says what is done by hand or by the automatic libraries", "in Dashboard > Libraries, or choose a library mode for the server" in link_step, link_step)
     check(name + " marks state in the text and the icon", u.step(page, "Add a remote server").locator(".check_circle").count() == 1)
     for label, tab in [("Add a remote server", "servers"), ("Choose libraries to import", "servers"), ("Choose the federated folder", "settings"),
                        ("Run the first sync", "catalog"), ("Link the folders of each server", "settings")]:
@@ -2893,20 +2981,21 @@ def relogin(s, width):
     page = s.open("fresh", width)
     u.show_tab(page, "servers")
     row = u.server_row(page, "stock")
-    row.locator("input[type=text]").fill("jellymesh")
+    row.get_by_label("User", exact=True).fill("jellymesh")
     row.locator("input[type=password]").fill("wrong")
-    u.button(row, "save_login").click()
+    u.button(row, "save").click()
     outcome(page, name + " a wrong password", "Error", "refused the login")
-    check(name + " a wrong password keeps the form", u.state_of(row) == "Password needed", u.state_of(row))
+    check(name + " a wrong password keeps the form", u.state_of(row) == "Password needed" and row.locator(u.EDIT_FORM).count() == 1, u.state_of(row))
     empty = u.server_row(page, "peer")
-    u.button(empty, "save_login").click()
+    u.button(empty, "save").click()
     check(name + " an empty user is marked", until(page, lambda: empty.locator("input[aria-invalid=true]").count() == 1))
+    check(name + " the empty user is the field marked", empty.get_by_label("User", exact=True).get_attribute("aria-invalid") == "true")
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
-        row.locator("input[type=text]").fill("jellymesh")
+        row.get_by_label("User", exact=True).fill("jellymesh")
         row.locator("input[type=password]").fill("jellymesh-test")
-        u.button(row, "save_login").click()
-        outcome(page, f"{name} {server}", "Done", server + ": login saved.")
+        u.button(row, "save").click()
+        outcome(page, f"{name} {server}", "Done", "Saved " + server + ".")
     check(name + " the warning goes", until(page, lambda: not page.locator(u.WARNING).is_visible(), 20))
     for server in ["stock", "peer"]:
         row = u.server_row(page, server)
@@ -2970,7 +3059,7 @@ def connect_flow(s, width):
     healthy(page, name)
 
     u.tick(row.locator(u.LIBRARY).first)
-    u.button(row, "save_libraries").click()
+    u.button(row, "save").click()
     check(name + " saves the choice", until(page, lambda: len(u.api("first", "GET", "/JellyMesh/Admin/Status")[1]["Servers"][0]["ImportedLibraryIds"]) == 1))
     check(name + " the prompt goes", until(page, lambda: u.cause_of(row) == ""), u.cause_of(row))
     healthy(page, name)
@@ -2984,7 +3073,7 @@ def connect_failure(s, width):
     forget_servers("first")
 
     def refuse(context):
-        context.route("**/JellyMesh/Admin/Servers/*/Libraries", lambda route: route.abort())
+        context.route("**/JellyMesh/Admin/Servers/*/Edit/Check", lambda route: route.abort())
 
     page = s.open("first", width, tab="servers", route=refuse)
     page.locator(u.ADD_FIELDS["name"]).fill("stock")
@@ -2992,7 +3081,7 @@ def connect_failure(s, width):
     page.locator(u.ADD_FIELDS["user"]).fill("jellymesh")
     page.locator(u.ADD_FIELDS["password"]).fill("jellymesh-test")
     page.locator(u.ADD_SUBMIT).click()
-    outcome(page, name, "Error", "Open Libraries on its card")
+    outcome(page, name, "Error", "Open Edit on its card")
     check(name + " the server stays", u.server_row(page, "stock").count() == 1)
     page.context.close()
     forget_servers("first")
@@ -3232,6 +3321,557 @@ def save_bar(s, width):
     u.close(page)
 
 
+def new_library_mode(s, width):
+    """The library mode of a server linked later: saved with Save, and preselected in the add form (row 437)."""
+    name = width + " new library mode"
+    saved = u.config("fresh")["NewServerLibraryMode"]
+    chosen = "ByRemoteLibrary" if saved != "ByRemoteLibrary" else "ByType"
+    page = s.open("fresh", width, tab="settings")
+    select = page.locator(u.NEW_SERVER_LIBRARY_MODE)
+    check(name + " shows the saved mode", select.input_value() == saved, select.input_value())
+    options = select.locator("option").all_inner_texts()
+    check(name + " offers the three modes", options == ["By type", "By remote library", "None"], options)
+    select.select_option(chosen)
+    check(name + " a change shows Save", page.locator(u.SAVE_BAR).is_visible())
+    select.scroll_into_view_if_needed()
+    u.shot(page, f"new-library-mode-{width}", full_page=False)
+    page.locator(u.SAVE_SETTINGS).click()
+    check(name + " saves", until(page, lambda: u.config("fresh")["NewServerLibraryMode"] == chosen), u.config("fresh"))
+    u.wait_idle(page)
+    check(name + " a save hides Save", page.locator(u.SAVE_BAR).is_hidden())
+    u.show_tab(page, "servers")
+    if not page.locator(u.ADD_PART).evaluate("node => node.open"):
+        page.locator(u.ADD_PART + " > summary").click()
+    mode = page.locator(u.ADD_FORM).get_by_label(u.MODE_LABEL, exact=True)
+    check(name + " preselects it in the add form", until(page, lambda: mode.input_value() == chosen), mode.input_value())
+    u.settings("fresh", lambda config: config.update(NewServerLibraryMode=saved))
+    healthy(page, name)
+    u.close(page)
+
+    page = s.open("fresh", width, tab="settings", language="it")
+    group = page.locator(u.NEW_SERVER_LIBRARY_MODE).locator("xpath=ancestor::div[contains(@class,'jmGroup')]")
+    check(name + " speaks Italian", "Modalità delle librerie di un server collegato in seguito" in group.inner_text(), group.inner_text())
+    u.close(page)
+
+
+def edit_form(s, width):
+    """The edit form of a server: its fields, a refusal shown on its field, and a confirmation listing only what happens."""
+    name = width + " edit form"
+    viewport = u.VIEWPORTS[width]
+    names = lambda: [server["Name"] for server in u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]["Servers"]]
+    saved = of_server(u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1], "stock")
+    page = s.open("fresh", width, tab="servers")
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    field = lambda label: form.get_by_label(label, exact=True)
+    check(name + " fills the name", field("Name").input_value() == "stock", field("Name").input_value())
+    check(name + " fills the URL", field("Server URL").input_value() == saved["Url"], field("Server URL").input_value())
+    check(name + " keeps the login unless one is typed", field("User").input_value() == "" and field("User").get_attribute("placeholder") == "Unchanged"
+          and field("Password").get_attribute("placeholder") == "Unchanged")
+    mode = field(u.MODE_LABEL)
+    check(name + " shows the saved mode", mode.input_value() == "None", mode.input_value())
+    options = mode.locator("option").all_inner_texts()
+    check(name + " offers the three modes", options == ["By type", "By remote library", "None"], options)
+    check(name + " ticks the imported libraries", stock.locator(u.LIBRARY + ":checked").count() == 2)
+    check(name + " a remote that answers well has no warning", "answered with a problem" not in form.inner_text(), form.inner_text())
+    healthy(page, name)
+    u.shot(page, f"edit-form-{width}")
+
+    field("Name").fill("peer")
+    u.button(stock, "save").click()
+    outcome(page, name + " a taken name", "Error", "Another server already has this name")
+    check(name + " a taken name marks the name", field("Name").get_attribute("aria-invalid") == "true")
+    check(name + " a taken name moves the focus there", u.has_focus(field("Name")))
+    check(name + " a taken name saves nothing", sorted(names()) == ["peer", "stock"], names())
+
+    field("Name").fill(HOSTILE)
+    u.tick(stock.locator(u.LIBRARY).first, False)
+    u.button(stock, "save").click()
+    check(name + " a new name clears the old mark", field("Name").get_attribute("aria-invalid") != "true")
+    confirm_shows(page, name + " a rename and a library less", "Save these changes?", [
+        "stock becomes " + HOSTILE, "watch state of each user", "scanned twice", "leave the import"], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " says nothing that does not happen", "library mode" not in shown and "streams" not in shown, shown)
+    u.shot(page, f"edit-confirm-{width}", full_page=False)
+    confirm_keeps(page, name + " a rename", lambda: sorted(names()) == ["peer", "stock"] and form.count() == 1)
+
+    field("Name").fill("stock")
+    u.tick(stock.locator(u.LIBRARY).first)
+    mode.select_option("ByType")
+    u.button(stock, "save").click()
+    confirm_shows(page, name + " a mode change", "Save these changes?", ["The library mode becomes By type", "makes or adopts the libraries"], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " a mode change alone says no rename", "becomes stock" not in shown and "scanned twice" not in shown, shown)
+    confirm_keeps(page, name + " a mode change", lambda: of_server(u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1], "stock")["AutomaticLibraries"]["Mode"] == "None")
+
+    u.button(stock, "close").click()
+    check(name + " Close drops the form", form.count() == 0)
+
+    fake(page, "Servers/*", lambda data: data.update(RemoteWarning="Timeout"), "PUT")
+    u.open_edit(page, stock)
+    u.button(stock, "save").click()
+    outcome(page, name + " a save the remote did not answer", "Done", "Saved stock. It does not answer now (no answer in time).")
+    page.unroute("**/JellyMesh/Admin/Servers/*")
+    until(page, lambda: form.count() == 0)
+    u.clear_message(page)
+    u.open_edit(page, stock)
+    u.button(stock, "save").click()
+    shown = outcome(page, name + " a save the remote answered", "Done", "Saved stock.")
+    check(name + " a save the remote answered says nothing is wrong", "does not answer" not in shown, shown)
+    healthy(page, name)
+    u.close(page)
+
+
+def edit_locks(s, width):
+    """The edit form locks what a case does not let change, and says why: an unfinished rename, a remote that does not
+    answer, one that answers with a problem."""
+    name = width + " edit locks"
+    status = u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1]
+    ids = {server["Name"]: server["Id"] for server in status["Servers"]}
+
+    rename = [{"Busy": False, "Pending": True, "Failed": False, "Stuck": False}]
+    login = [False]
+    offline = [True]
+
+    def check_answer(data, url):
+        if ids["peer"] in url:
+            if offline[0]:
+                data.update(RemoteOffline=True, Libraries=[])
+        else:
+            data.update(RemoteWarning="Timeout")
+
+    def status(data):
+        of_server(data, "stock").update(Rename=rename[0])
+        of_server(data, "peer").update(Connection="Offline" if offline[0] else "Online")
+        if login[0]:
+            data.update(KeyState="Wrong")
+            of_server(data, "stock").update(NeedsPassword=True)
+
+    def cases(context):
+        fake(context, "Status", status)
+
+        def answer(route):
+            if route.request.method != "POST":
+                route.continue_()
+                return
+            response = route.fetch()
+            data = response.json()
+            check_answer(data, route.request.url)
+            route.fulfill(response=response, json=data)
+
+        context.route("**/JellyMesh/Admin/Servers/*/Edit/Check", answer)
+
+    page = s.open("fresh", width, tab="servers", route=cases)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    check(name + " a pending rename locks the name", form.get_by_label("Name", exact=True).evaluate("node => node.readOnly"))
+    check(name + " a pending rename says why", "The name cannot change now" in form.inner_text() and "next library scan" in form.inner_text(), form.inner_text())
+    check(name + " a locked name looks locked", form.get_by_label("Name", exact=True).evaluate("node => getComputedStyle(node).borderTopStyle") == "dashed")
+    check(name + " the card does not repeat the rename", not stock.locator(".jmRenameCancel").is_visible() and not stock.locator(".jmRenameNote").is_visible())
+    check(name + " a pending rename leaves the URL", not form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
+    check(name + " a problem on the remote is a warning", "answered with a problem (no answer in time)" in form.inner_text(), form.inner_text())
+    check(name + " a problem on the remote still lists the libraries", stock.locator(u.LIBRARY).count() == 2)
+    cancel = form.get_by_role("button", name="Cancel the pending rename", exact=True)
+    check(name + " a pending rename can be cancelled from the form", cancel.is_visible())
+    cancel.click()
+    confirm_shows(page, name + " cancel the rename", "Cancel the pending rename?", ["keep the new name", "watch state not yet carried"], u.VIEWPORTS[width])
+    u.answer_confirm(page, False)
+    healthy(page, name)
+    u.shot(page, f"edit-rename-lock-{width}")
+    rename[0] = dict(rename[0], Pending=False)
+    unlocked = lambda: not form.get_by_label("Name", exact=True).evaluate("node => node.readOnly") and "The name cannot change now" not in form.inner_text()
+    check(name + " a rename that ends unlocks the open form", until(page, unlocked, 25), form.inner_text())
+    rename[0] = dict(rename[0], Pending=True)
+    check(name + " a rename that starts locks the open form", until(page, lambda: not unlocked(), 25), form.inner_text())
+    login[0] = True
+    asks = lambda: "no longer decrypts" in form.inner_text() and stock.locator(u.LIBRARY).count() == 0
+    check(name + " a login that no longer decrypts asks for it in the open form", until(page, asks, 25), form.inner_text())
+    login[0] = False
+    reads = lambda: "no longer decrypts" not in form.inner_text() and stock.locator(u.LIBRARY).count() == 2
+    check(name + " a login that decrypts again reads the libraries in the open form", until(page, reads, 25), form.inner_text())
+
+    peer = u.server_row(page, "peer")
+    u.button(peer, "edit").click()
+    form = peer.locator(u.EDIT_FORM)
+    check(name + " an offline remote says so", until(page, lambda: "does not answer" in form.inner_text()), form.inner_text())
+    check(name + " an offline remote leaves the name", not form.get_by_label("Name", exact=True).evaluate("node => node.readOnly"))
+    check(name + " an offline remote leaves the mode", form.get_by_label(u.MODE_LABEL, exact=True).is_enabled())
+    check(name + " an offline remote leaves the URL", not form.get_by_label("Server URL", exact=True).evaluate("node => node.readOnly"))
+    check(name + " an offline remote locks the login", form.get_by_label("User", exact=True).is_disabled() and form.get_by_label("Password", exact=True).is_disabled())
+    check(name + " an offline remote lists no library", peer.locator(u.LIBRARY).count() == 0)
+    healthy(page, name)
+    u.shot(page, f"edit-offline-lock-{width}")
+    offline[0] = False
+    answers = lambda: "does not answer" not in form.inner_text() and peer.locator(u.LIBRARY).count() > 0
+    check(name + " a remote that answers again lists its libraries in the open form", until(page, answers, 25), form.inner_text())
+    check(name + " a remote that answers again unlocks the login", form.get_by_label("User", exact=True).is_enabled())
+    offline[0] = True
+    stops = lambda: "does not answer" in form.inner_text() and form.get_by_label("User", exact=True).is_disabled()
+    check(name + " a remote that stops answering says so in the open form", until(page, stops, 25), form.inner_text())
+    check(name + " a remote that stops answering keeps the libraries read", peer.locator(u.LIBRARY).count() > 0)
+    u.close(page)
+
+
+def edit_gone(s, width):
+    """An imported library the user no longer sees shows in the edit form, marked as going at the save (row 434)."""
+    name = width + " edit gone"
+
+    def gone(context):
+        fake(context, "Servers/*/Edit/Check", lambda data: data["Consequences"]["RemovedLibraries"].extend([
+            {"Id": "gone-1", "Name": HOSTILE, "NoLongerVisible": True}, {"Id": "gone-2", "Name": None, "NoLongerVisible": True}]), "POST")
+
+    page = s.open("fresh", width, tab="servers", route=gone)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    form = stock.locator(u.EDIT_FORM)
+    marks = stock.locator(u.LIBRARY + ":disabled")
+    check(name + " marks each library no longer visible", until(page, lambda: marks.count() == 2), form.inner_text())
+    check(name + " names it as text", HOSTILE + ": no longer visible, will be removed" in form.inner_text() and form.locator("b, i").count() == 0, form.inner_text())
+    check(name + " marks one with no name", "A library no longer visible, will be removed" in form.inner_text(), form.inner_text())
+    check(name + " leaves the marks unticked", stock.locator(u.LIBRARY + ":disabled:checked").count() == 0)
+    check(name + " keeps the libraries the user sees", stock.locator(u.LIBRARY + ":enabled").count() == 2)
+    healthy(page, name)
+    u.shot(page, f"edit-gone-{width}")
+    u.close(page)
+
+
+def mode_change(s, width):
+    """The confirmation of a mode change names the libraries it deletes and releases and who loses titles, as the check
+    answers them, with every name escaped."""
+    name = width + " mode change"
+    viewport = u.VIEWPORTS[width]
+    answers = []
+
+    def check_answer(context):
+        def answer(route):
+            if route.request.method != "POST" or not answers:
+                route.continue_()
+                return
+            response = route.fetch()
+            data = response.json()
+            data["Consequences"]["ModeChange"] = answers[-1]
+            route.fulfill(response=response, json=data)
+
+        context.route("**/JellyMesh/Admin/Servers/*/Edit/Check", answer)
+
+    saved_mode = lambda: of_server(u.api("fresh", "GET", "/JellyMesh/Admin/Status")[1], "stock")["AutomaticLibraries"]["Mode"]
+    page = s.open("fresh", width, tab="servers", route=check_answer)
+    stock = u.server_row(page, "stock")
+    u.open_edit(page, stock)
+    mode = stock.locator(u.EDIT_FORM).get_by_label(u.MODE_LABEL, exact=True)
+
+    answers.append({"From": "ByType", "To": "ByRemoteLibrary", "Deleted": ["stock - Film", HOSTILE], "Released": [],
+                    "LostAccess": [{"Library": HOSTILE, "Users": ["ristretto", HOSTILE_PEER]}, {"Library": LONG_NAME, "Users": ["bambini"]}]})
+    mode.select_option("ByRemoteLibrary")
+    u.button(stock, "save").click()
+    confirm_shows(page, name + " between two modes", "Save these changes?", [
+        "The library mode changes from By type to By remote library", "makes the new libraries first, then deletes its old ones",
+        "These libraries are deleted now: stock - Film, " + HOSTILE,
+        f"In {HOSTILE} these users lose titles, because they could see only some of the libraries it joins: ristretto, {HOSTILE_PEER}.",
+        f"In {LONG_NAME} these users lose titles"], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " between two modes releases nothing", "adopted libraries stay" not in shown, shown)
+    check(name + " between two modes says no rename", "scanned twice" not in shown and "becomes stock" not in shown, shown)
+    u.shot(page, f"mode-change-confirm-{width}", full_page=False)
+    confirm_keeps(page, name + " between two modes", lambda: saved_mode() == "None")
+
+    answers.append({"From": "ByRemoteLibrary", "To": "None", "Deleted": ["stock - Film HD"], "Released": [HOSTILE_PEER], "LostAccess": []})
+    mode.select_option("ByType")
+    u.button(stock, "save").click()
+    confirm_shows(page, name + " to none", "Save these changes?", [
+        "The library mode becomes None: JellyMesh makes no library for this server, and you add its folders to your libraries by hand.",
+        "These libraries are deleted now: stock - Film HD.",
+        f"These adopted libraries stay, and JellyMesh no longer manages them: {HOSTILE_PEER}."], viewport)
+    shown = u.wait_confirm(page)[1]
+    check(name + " to none names no one", "lose titles" not in shown, shown)
+    u.shot(page, f"mode-change-none-{width}", full_page=False)
+    confirm_keeps(page, name + " to none", lambda: saved_mode() == "None")
+    healthy(page, name)
+    u.close(page)
+
+
+def recreate(s, width):
+    """Recreate missing libraries sends the mode saved at the click alone: no name or URL, so no failed rename runs again."""
+    name = width + " recreate"
+    mode = ["ByType"]
+    sent = []
+
+    def missing(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(
+            Rename={"Busy": False, "Pending": False, "Failed": True, "Stuck": False},
+            AutomaticLibraries={"Enabled": True, "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "ManualPaths": [],
+                                "Libraries": [], "Conflicts": [], "Missing": True}))
+
+        def save(route):
+            if route.request.method != "PUT":
+                route.continue_()
+                return
+            sent.append(route.request.post_data_json)
+            route.fulfill(status=200, json={})
+
+        context.route("**/JellyMesh/Admin/Servers/*", save)
+
+    page = s.open("fresh", width, tab="servers", route=missing)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    recreate_button = stock.get_by_role("button", name="Recreate missing libraries", exact=True)
+    check(name + " offers to recreate", until(page, lambda: recreate_button.is_visible()))
+    mode[0] = "ByRemoteLibrary"
+    recreate_button.click()
+    check(name + " sends one save", until(page, lambda: len(sent) == 1), sent)
+    body = sent[0] if sent else {}
+    check(name + " sends the mode read at the click", body.get("LibraryMode") == "ByRemoteLibrary", body)
+    check(name + " sends no name or URL", "Name" not in body and "Url" not in body, body)
+    healthy(page, name)
+    u.close(page)
+
+
+def adopted(s, width):
+    """A library JellyMesh adopted is marked, and a library of the admin in the way says what to do, as text."""
+    name = width + " adopted"
+
+    def libraries(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(AutomaticLibraries={
+            "Enabled": True, "Busy": False, "Mode": "ByType", "Error": "None", "Released": [], "ManualPaths": [],
+            "Libraries": [{"Kind": "Movies", "Name": "Film miei", "Adopted": True, "Disabled": False}],
+            "Conflicts": [{"Library": HOSTILE, "Reason": "OtherPaths", "Kind": "Series", "RemoteLibraryId": "x", "Paths": ["/federata/x/Serie"]}]}))
+
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    check(name + " a conflict opens the card", until(page, lambda: stock.evaluate("node => node.open")))
+    check(name + " marks the adopted library", until(page, lambda: u.card_fact(stock, "Server libraries") == "Film miei (adopted)"), u.card_fact(stock, "Server libraries"))
+    check(name + " shows the mode", u.card_fact(stock, u.MODE_LABEL) == "By type", u.card_fact(stock, u.MODE_LABEL))
+    conflict = stock.locator(u.ALERT, has_text="together with other folders")
+    check(name + " says what is in the way", conflict.count() == 1 and HOSTILE in conflict.inner_text(), stock.inner_text())
+    check(name + " says what to do", "set the library mode of this server to None" in conflict.inner_text(), conflict.inner_text())
+    check(name + " a library name renders no markup", stock.locator("b").count() == 0)
+    healthy(page, name)
+    u.shot(page, f"adopted-{width}")
+    stock.locator("summary").click()
+    page.wait_for_timeout(16000)
+    check(name + " a closed card stays closed while the conflict is the same", not stock.evaluate("node => node.open"))
+    u.close(page)
+
+
+SHARED_STATE = {"Enabled": True, "Busy": False, "Error": "None", "Released": [], "Conflicts": [], "Unblocked": [],
+                "Libraries": [{"Kind": "Movies", "Name": "Tutti i server - Film", "Adopted": True, "Disabled": False},
+                              {"Kind": "Series", "Name": "Tutti i server - Serie", "Adopted": False, "Disabled": False}]}
+
+
+def fulfill_json(context, path, answer, method="GET"):
+    """Answers an admin path to one method with what answer returns for the request, a status and a body."""
+    def reply(route):
+        if route.request.method != method:
+            route.fallback()
+            return
+        status, body = answer(route.request)
+        route.fulfill(status=status, json=body)
+
+    context.route("**/JellyMesh/Admin/" + path, reply)
+
+
+def shared_libraries(s, width):
+    """The libraries of all servers: their state, marks and errors as text, and the switch-off that resends the names (D48)."""
+    name = width + " shared libraries"
+    state = [dict(SHARED_STATE, Error="Unconfirmed", Unblocked=[HOSTILE], Released=["Vecchia"],
+                  Conflicts=[{"Library": HOSTILE, "Reason": "OtherPaths", "Kind": "Series", "RemoteLibraryId": "", "Paths": ["/federata/a/Serie"]}])]
+    first = {"ToDelete": ["Tutti i server - Serie", "Tutti i server 1a2b3c4d - Film"], "ToRelease": ["Tutti i server - Film"]}
+    second = {"ToDelete": first["ToDelete"] + [HOSTILE], "ToRelease": first["ToRelease"]}
+    sent = []
+
+    def post(request):
+        body = request.post_data_json
+        sent.append(body)
+        # Unconfirmed, the server names the libraries; confirmed with the first list, it finds one more (D48).
+        if not body["Enabled"] and body.get("ToDelete") != second["ToDelete"]:
+            names = second if body.get("Confirmed") else first
+            return 409, dict(names, Outcome="ConfirmationRequired", Message="Confirm to delete the shared libraries the plugin made and release the adopted ones.")
+        state[0] = dict(SHARED_STATE, Enabled=body["Enabled"], Libraries=[])
+        return 202, state[0]
+
+    def routes(context):
+        fake(context, "Status", lambda data: data.update(SharedLibraries=state[0]))
+        fulfill_json(context, "SharedLibraries", post, "POST")
+
+    page = s.open("fresh", width, tab="settings", route=routes)
+    box = page.locator(u.SHARED)
+    notes = page.locator(u.SHARED_NOTES)
+    check(name + " shows the option on", until(page, lambda: box.is_checked() and box.is_enabled()))
+    check(name + " marks the adopted library", "Tutti i server - Film (adopted)" in notes.inner_text(), notes.inner_text())
+    check(name + " explains the title in two libraries (D29)", "one watch state" in text(page, u.SHARED_GROUP), text(page, u.SHARED_GROUP))
+    check(name + " says the switch-off was not confirmed", notes.locator(u.ALERT, has_text="changed before the switch-off").count() == 1, notes.inner_text())
+    unblocked = notes.locator(u.ALERT, has_text="holds its library scans")
+    check(name + " names the libraries without their blocks as text", unblocked.count() == 1 and HOSTILE in unblocked.inner_text(), notes.inner_text())
+    conflict = notes.locator(u.ALERT, has_text="together with other folders")
+    check(name + " says what is in the way (D43)", conflict.count() == 1 and "set the library mode" not in conflict.inner_text(), notes.inner_text())
+    check(name + " lists the released libraries", "Vecchia" in notes.inner_text(), notes.inner_text())
+    check(name + " a library name renders no markup", page.locator(u.SHARED_GROUP + " b").count() == 0)
+    healthy(page, name)
+    u.shot(page, f"shared-{width}")
+
+    u.tick(box, False)
+    u.wait_confirm(page)
+    shown = text(page, u.CONFIRM_TEXT)
+    check(name + " lists the libraries to delete with the crash one (D55)", all(library in shown for library in first["ToDelete"]), shown)
+    check(name + " lists the libraries to release", "Tutti i server - Film" in shown and "no longer manages" in shown, shown)
+    u.answer_confirm(page, False)
+    check(name + " a cancel keeps the option on", until(page, lambda: box.is_checked() and box.is_enabled()) and len(sent) == 1, sent)
+
+    u.tick(box, False)
+    u.wait_confirm(page)
+    # The second confirmation can open before the first has gone, so the first is answered without waiting for it to go.
+    page.locator(u.CONFIRM_OK).click()
+    check(name + " resends the names shown (D48)", until(page, lambda: len(sent) == 3)
+          and sent[2] == {"Enabled": False, "Confirmed": True, "ToDelete": first["ToDelete"], "ToRelease": first["ToRelease"]}, sent)
+    asked = lambda: page.locator(u.CONFIRM_TEXT).count() == 1 and HOSTILE in page.locator(u.CONFIRM_TEXT).inner_text()
+    check(name + " asks again with the new list", until(page, asked) and page.locator(u.CONFIRM_MARKUP).count() == 0, page.locator(u.CONFIRM_TEXT).all_inner_texts())
+    u.answer_confirm(page, True)
+    check(name + " resends the new list", until(page, lambda: len(sent) == 4) and sent[3]["ToDelete"] == second["ToDelete"], sent)
+    check(name + " shows the option off", until(page, lambda: not box.is_checked() and box.is_enabled()))
+    healthy(page, name)
+    u.close(page)
+
+    page = s.open("fresh", width, tab="settings", route=routes, language="it")
+    check(width + " Italian shared libraries", until(page, lambda: "una sola libreria per tipo" in text(page, u.SHARED_GROUP).lower()), text(page, u.SHARED_GROUP))
+    u.close(page)
+
+
+def shared_errors(s, width):
+    """Each error of the libraries of all servers says what failed, and a busy state holds the option."""
+    name = width + " shared errors"
+    state = [dict(SHARED_STATE, Error="NameTaken")]
+
+    def routes(context):
+        fake(context, "Status", lambda data: data.update(SharedLibraries=state[0]))
+
+    for error, words in [("NameTaken", "name was taken"), ("Failed", "change failed"), ("RemoveFailed", "refused to delete")]:
+        state[0] = dict(SHARED_STATE, Error=error)
+        page = s.open("fresh", width, tab="settings", route=routes)
+        notes = page.locator(u.SHARED_NOTES)
+        check(name + " says " + words, until(page, lambda: notes.locator(u.ALERT, has_text=words).count() == 1), notes.inner_text())
+        u.close(page)
+
+    state[0] = dict(SHARED_STATE, Busy=True)
+    page = s.open("fresh", width, tab="settings", route=routes)
+    notes = page.locator(u.SHARED_NOTES)
+    check(name + " holds the option while busy", until(page, lambda: page.locator(u.SHARED).is_disabled() and "Being updated" in notes.inner_text()), notes.inner_text())
+    state[0] = dict(SHARED_STATE)
+    check(name + " reads again soon while busy", until(page, lambda: page.locator(u.SHARED).is_enabled() and "Being updated" not in notes.inner_text()), notes.inner_text())
+    healthy(page, name)
+    u.close(page)
+
+
+def server_notes(s, width):
+    """A server card says who lost titles, which remote libraries are gone, and which folders to add by hand."""
+    name = width + " server notes"
+    mode = ["ByType"]
+
+    def libraries(context):
+        fake(context, "Status", lambda data: of_server(data, "stock").update(AutomaticLibraries={
+            "Enabled": mode[0] != "None", "Busy": False, "Mode": mode[0], "Error": "None", "Released": [], "Conflicts": [], "Missing": mode[0] != "None",
+            "Libraries": [] if mode[0] == "None" else [{"Kind": "Movies", "Name": "stock - Film", "Adopted": False, "Disabled": False}],
+            "Vanished": [HOSTILE], "LostAccess": [{"Library": "stock - Film", "Users": [HOSTILE_PEER, "friend"]}],
+            "ManualPaths": [{"Path": "/federata/x/a/Film", "LibraryType": "movies", "RemoteLibrary": "Film 4K"}]}))
+
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    lost = stock.locator(u.ALERT, has_text="lost titles")
+    check(name + " lists who lost titles", until(page, lambda: lost.count() == 1) and HOSTILE_PEER in lost.inner_text() and "friend" in lost.inner_text(), stock.inner_text())
+    gone = stock.locator(u.ALERT, has_text="no longer on this server")
+    check(name + " names the vanished library", gone.count() == 1 and HOSTILE in gone.inner_text(), stock.inner_text())
+    check(name + " offers to recreate a missing library", stock.get_by_role("button", name="Recreate missing libraries", exact=True).is_visible())
+    check(name + " lists no folder to add by hand", "/federata/x/a/Film" not in stock.inner_text())
+    check(name + " names render no markup", stock.locator("b, i").count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+    mode[0] = "None"
+    page = s.open("fresh", width, tab="servers", route=libraries)
+    stock = u.server_row(page, "stock")
+    stock.locator("summary").click()
+    check(name + " lists the folders to add by hand", until(page, lambda: "/federata/x/a/Film" in stock.inner_text()), stock.inner_text())
+    check(name + " gives each its type and library", "Films from Film 4K" in stock.inner_text(), stock.inner_text())
+    check(name + " offers nothing to recreate", stock.get_by_role("button", name="Recreate missing libraries", exact=True).count() == 0)
+    healthy(page, name)
+    u.shot(page, f"server-notes-{width}")
+    u.close(page)
+
+
+def store_notices(s, width):
+    """The database: why it is suspended with Retry (row 427), the restore banner (row 466) and the old files (row 469)."""
+    name = width + " store"
+    store = [{"State": "Unavailable", "Reason": "The database cannot be opened: disk full.", "Recovery": None, "MigratedKeptUntil": None}]
+    retried = []
+
+    def retry(request):
+        retried.append(True)
+        store[0] = {"State": "Healthy", "Reason": None, "Recovery": None, "MigratedKeptUntil": None}
+        return 200, store[0]
+
+    def routes(context):
+        fake(context, "Status", lambda data: data.update(Store=store[0]))
+        fulfill_json(context, "Store/Retry", retry, "POST")
+        fulfill_json(context, "Store/Recovery/Dismiss", lambda request: (204, None), "POST")
+
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " says the database cannot be used", until(page, lambda: notice.is_visible() and "disk full" in notice.inner_text()), notice.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-{width}")
+    notice.get_by_role("button", name="Try again", exact=True).click()
+    check(name + " retries", until(page, lambda: retried and notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": None, "MigratedKeptUntil": "2026-12-18T03:00:00Z",
+                "Recovery": {"RecoveredAt": "2026-11-18T03:05:00Z", "DamagedFile": "jellymesh.db.damaged-20261118", "CopyDate": "2026-11-17T03:00:00Z"}}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " shows the restore", until(page, lambda: "from the nightly copy" in notice.inner_text()), notice.inner_text())
+    check(name + " asks to check the servers and the connected servers", "connected servers of the copy have access again: check both lists" in notice.inner_text(), notice.inner_text())
+    migrated = page.locator(u.MIGRATED)
+    check(name + " says until when the old files stay", migrated.is_visible() and "migrated-0.5" in migrated.inner_text(), migrated.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-restore-{width}")
+    store[0] = dict(store[0], Recovery=None)
+    notice.get_by_role("button", name="I checked both lists", exact=True).click()
+    check(name + " the restore goes once checked", until(page, lambda: notice.is_hidden()), notice.inner_text())
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": None, "MigratedKeptUntil": None,
+                "Recovery": {"RecoveredAt": "2026-11-18T03:05:00Z", "DamagedFile": "jellymesh.db.damaged-20261118030500", "CopyDate": None}}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " shows the empty restart", until(page, lambda: "started with an empty one" in notice.inner_text()), notice.inner_text())
+    check(name + " asks to check both lists after an empty restart", "the lists of servers and connected servers" in notice.inner_text(), notice.inner_text())
+    healthy(page, name)
+    u.shot(page, f"store-empty-{width}")
+    u.close(page)
+
+    store[0] = {"State": "Healthy", "Reason": "Until when the files of the older version are kept cannot be read: /config/data/migrated-0.5 is denied",
+                "Recovery": None, "MigratedKeptUntil": None}
+    page = s.open("fresh", width, route=routes)
+    notice = page.locator(u.STORE)
+    check(name + " says why the old files cannot be read", until(page, lambda: notice.is_visible() and "migrated-0.5 is denied" in notice.inner_text()), notice.inner_text())
+    check(name + " a healthy database offers no retry", notice.get_by_role("button", name="Try again", exact=True).count() == 0)
+    healthy(page, name)
+    u.close(page)
+
+    # A database never loaded makes the status answer 503, so the page reads the database state on its own.
+    store[0] = {"State": "Damaged", "Reason": "The database is damaged and no copy could be restored.", "Recovery": None, "MigratedKeptUntil": None}
+
+    def suspended(context):
+        fulfill_json(context, "Status", lambda request: (503, {"Failure": "None", "Message": "The JellyMesh database cannot be used now, so JellyMesh is suspended until it can."}))
+        fulfill_json(context, "Store", lambda request: (200, store[0]))
+
+    page = s.open("fresh", width, route=suspended)
+    notice = page.locator(u.STORE)
+    check(name + " says why with no status", until(page, lambda: notice.is_visible() and "no copy could be restored" in notice.inner_text()), notice.inner_text())
+    u.close(page)
+
+
 SCENARIOS = {
     "tabs": (tabs, WIDTHS),
     "overview": (overview, WIDTHS),
@@ -3276,6 +3916,17 @@ SCENARIOS = {
     "cards-nokey": (cards_nokey, WIDTHS),
     "relogin": (relogin, ["390"]),
     "cards-restart": (cards_restart, WIDTHS),
+    "edit-form": (edit_form, WIDTHS),
+    "edit-locks": (edit_locks, WIDTHS),
+    "edit-gone": (edit_gone, WIDTHS),
+    "adopted": (adopted, WIDTHS),
+    "mode-change": (mode_change, WIDTHS),
+    "recreate": (recreate, ["1280"]),
+    "shared-libraries": (shared_libraries, WIDTHS),
+    "shared-errors": (shared_errors, ["1280"]),
+    "server-notes": (server_notes, WIDTHS),
+    "new-library-mode": (new_library_mode, WIDTHS),
+    "store": (store_notices, WIDTHS),
 }
 
 with u.Session() as session:

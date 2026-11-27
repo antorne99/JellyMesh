@@ -25,6 +25,21 @@ public class WatchStateTransferTests
     };
 
     [Fact]
+    public void ACopyOfTheWholeRowTakesNotWatchedAndNoDateOverAWatchedRow()
+    {
+        var old = Data(playCount: 2);
+        var renamed = Data(played: true, lastPlayed: _newer, position: 600, playCount: 1);
+        renamed.IsFavorite = true;
+        renamed.Rating = 7;
+
+        Assert.True(WatchStateTransfer.CopyWhole(old, renamed));
+
+        Assert.Equal((false, 2, 0L, (DateTime?)null, false, (double?)null), (renamed.Played, renamed.PlayCount, renamed.PlaybackPositionTicks, renamed.LastPlayedDate, renamed.IsFavorite, renamed.Rating));
+        Assert.Equal("key", renamed.Key);
+        Assert.False(WatchStateTransfer.CopyWhole(old, renamed));
+    }
+
+    [Fact]
     public void ThePositionGoesToTheVersionOfTheLastServer()
     {
         var old = Data(lastPlayed: _newer, position: 600, playCount: 1);
@@ -212,6 +227,53 @@ public class WatchStateTransferTests
         var b = new WatchStateVersion(_serverB, false, Data());
 
         Assert.Throws<ArgumentException>(() => WatchStateTransfer.Carry(Data(), null, [], [a, b]));
+    }
+
+    // §10 row 445: a title in two local libraries has one stub of the server in each, and both replace the old item.
+    [Fact]
+    public void EachLibraryOfTheServerOfThePositionTakesTheWholeState()
+    {
+        var old = Data(true, _newer, 600, 2);
+        old.IsFavorite = true;
+        old.Rating = 8;
+        var a = new WatchStateVersion(_serverA, true, Data());
+        var other = new WatchStateVersion(_serverB, false, Data());
+        var b = new WatchStateVersion(_serverA, false, Data());
+
+        var changed = WatchStateTransfer.Carry(old, null, [_serverA, _serverB], [a, other, b]);
+
+        Assert.All(
+            new[] { a.Data, b.Data },
+            data => Assert.Equal((600L, 2, (DateTime?)_newer, true, (double?)8, true), (data.PlaybackPositionTicks, data.PlayCount, data.LastPlayedDate, data.IsFavorite, data.Rating, data.Played)));
+        Assert.Equal((0L, 0, false, true), (other.Data.PlaybackPositionTicks, other.Data.PlayCount, other.Data.IsFavorite, other.Data.Played));
+        Assert.Equal(3, changed.Count);
+    }
+
+    [Fact]
+    public void ALibraryWithANewerStateKeepsItAndOneTheUserCannotSeeTakesNone()
+    {
+        var old = Data(lastPlayed: _older, position: 600);
+        var a = new WatchStateVersion(_serverA, true, Data());
+        var newer = new WatchStateVersion(_serverA, false, Data(lastPlayed: _newer, position: 7));
+        var hidden = new WatchStateVersion(_serverA, false, Data(), false);
+
+        WatchStateTransfer.Carry(old, _serverA, [_serverA], [a, newer, hidden]);
+
+        Assert.Equal([600L, 7L, 0L], new[] { a, newer, hidden }.Select(version => version.Data.PlaybackPositionTicks));
+    }
+
+    // Two copies of the server already had a position each, which a manual merge leaves alone (decision 172).
+    [Fact]
+    public void AMergeLeavesThePositionOfEachLibrary()
+    {
+        var old = Data(lastPlayed: _newer, position: 600, playCount: 2);
+        var a = new WatchStateVersion(_serverA, true, Data());
+        var b = new WatchStateVersion(_serverA, false, Data());
+
+        WatchStateTransfer.Carry(old, null, [_serverA], [a, b], withPosition: false);
+
+        Assert.Equal([0L, 0L], new[] { a, b }.Select(version => version.Data.PlaybackPositionTicks));
+        Assert.Equal([2, 0], new[] { a, b }.Select(version => version.Data.PlayCount));
     }
 
     [Fact]

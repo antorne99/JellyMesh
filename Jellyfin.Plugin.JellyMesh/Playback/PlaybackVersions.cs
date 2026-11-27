@@ -101,6 +101,22 @@ public sealed class PlaybackVersions
     }
 
     /// <summary>
+    /// Finds a local copy the user sees among the items Jellyfin links with a stub, when the registry does not hold the stub.
+    /// </summary>
+    /// <param name="itemId">The item of the stub.</param>
+    /// <param name="user">The user.</param>
+    /// <returns>The local item, null if there is none.</returns>
+    public Guid? LinkedLocalCopy(Guid itemId, User user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        return CopiesOf(itemId).Keys
+            .Where(id => !_stubs.IsStub(id) && _stubs.Sees(user, id))
+            .Select(id => (Guid?)id)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
     /// Lists the other stubs of the title the user sees, best first by §4.3: where a playback goes when its version cannot
     /// serve (Q44, D22). Each one is checked with the same rule as a named version, classification included.
     /// </summary>

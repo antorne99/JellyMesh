@@ -78,6 +78,10 @@ public sealed class ServerStubRenamer : IServerStubRenamer
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<Guid> LongLabels() =>
+        _registry.State.Labels.Where(entry => FederatedPaths.IsLabelOverLimit(entry.Key, entry.Value)).Select(entry => entry.Key).ToList();
+
+    /// <inheritdoc />
     public Task<int> RelabelAsync(Guid serverId, string name, CancellationToken cancellationToken) => RelabelAsync(serverId, name, false, cancellationToken);
 
     /// <inheritdoc />
@@ -229,7 +233,7 @@ public sealed class ServerStubRenamer : IServerStubRenamer
                 if (old is not null && renamed is not null)
                 {
                     var from = stub with { RelativePath = rename.OldPath };
-                    moves.Add((rename, stub, WatchStateMove.Of(from, old.Id, [new WatchStateTarget(renamed.Id, stub.ServerId)], removesOldItem: true)));
+                    moves.Add((rename, stub, WatchStateMove.OfRename(from, old.Id, new WatchStateTarget(renamed.Id, stub.ServerId))));
                 }
             }
 

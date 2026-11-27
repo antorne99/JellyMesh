@@ -59,6 +59,17 @@ public class PageTranslationsTests
         }
     }
 
+    // Row 526: the banner of a restore, also after an empty restart, asks for the peers as well as the servers.
+    [Fact]
+    public void TheBannerOfARestoreNamesServersAndPeers()
+    {
+        var texts = ScriptTexts().Where(text => text.Contains("the JellyMesh database was damaged", StringComparison.Ordinal)).Distinct().ToList();
+
+        Assert.Equal(2, texts.Count);
+        Assert.All(texts, text => Assert.Matches("(?i)servers and connected servers", text));
+        Assert.All(texts, text => Assert.Matches("server e (i|dei) server connessi", _languages["it"][text]));
+    }
+
     private static IEnumerable<string> MarkupTexts()
     {
         var markup = Regex.Replace(_markup, "<style.*?</style>", string.Empty, RegexOptions.Singleline);
@@ -84,6 +95,11 @@ public class PageTranslationsTests
             yield return FederationAdminController.FailureMessage(failure);
         }
 
+        foreach (var field in Enum.GetValues<RemoteEditField>())
+        {
+            yield return FederationAdminController.EditFailureMessage(RemoteFailure.InvalidServer, field, null);
+        }
+
         foreach (var state in Enum.GetValues<KeyState>().Where(state => state != KeyState.Ok))
         {
             yield return FederationAdminController.KeyWarning(state)!;
@@ -105,7 +121,10 @@ public class PageTranslationsTests
         }
 
         yield return FederationAdminController.ReleasedLibraryNotListed;
+        yield return FederationSettingsController.StoreSuspended;
+        yield return StoreUnavailableFilter.Message;
         yield return "A sync is already running.";
+        yield return FederationSyncController.DatabaseSuspendedMessage;
         yield return "This merge no longer exists.";
         yield return "Select at least two titles of one group.";
         yield return "Two local films cannot be merged: JellyMesh does not change local files. Select at most one title with a local copy.";
@@ -202,6 +221,17 @@ public class PageTranslationsTests
         // Decision 408: a server added back is a new one, so the page neither promises its folders back nor recognizes it.
         Assert.DoesNotContain("Adding the server back, or restoring", _script, StringComparison.Ordinal);
         Assert.DoesNotContain("RecognizedAs", _script, StringComparison.Ordinal);
+    }
+
+    // Row 567: while the folder migration has not ended, a library rename that failed says it resumes after it.
+    [Fact]
+    public void A_failed_library_rename_says_it_resumes_after_the_folder_migration()
+    {
+        const string Text = "The rename did not finish. It resumes after the folder migration ends: save the edit of this server with the same name then.";
+
+        Assert.Contains("ownCurrent.Error === 'RenameFailed' && migrationUnended()\n                            ? t('" + Text + "')", _script, StringComparison.Ordinal);
+        Assert.Contains("(statusSection.data ? statusSection.data.OlderLayoutInUse : null) !== false", _script, StringComparison.Ordinal);
+        Assert.Contains("migrazione delle cartelle", _languages["it"][Text], StringComparison.Ordinal);
     }
 
     [Theory]

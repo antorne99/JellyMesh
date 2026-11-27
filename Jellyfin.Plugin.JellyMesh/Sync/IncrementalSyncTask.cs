@@ -38,7 +38,9 @@ public sealed class IncrementalSyncTask : SyncTask
     public override string Description => "Reads what changed on the remote servers. The interval is set on the JellyMesh configuration page.";
 
     /// <inheritdoc />
-    public override IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => Store.Read(SyncSchedule.IncrementalTriggers);
+    /// <remarks>Jellyfin asks while it starts, so the defaults stand in while the settings cannot be read.</remarks>
+    public override IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
+        => Store.ReadOr(SyncSchedule.IncrementalTriggers, SyncSchedule.IncrementalTriggers(new PluginConfiguration()));
 
     /// <inheritdoc />
     protected override Task<SyncStartResult> RunAsync(CancellationToken cancellationToken) => _sync.RunIncrementalAsync(cancellationToken);

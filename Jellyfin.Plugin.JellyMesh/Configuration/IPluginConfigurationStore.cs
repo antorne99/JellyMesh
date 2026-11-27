@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.JellyMesh.Configuration;
 public interface IPluginConfigurationStore
 {
     /// <summary>
-    /// Occurs after the settings were saved through the stock plugin endpoint, on the saving thread.
+    /// Occurs after a change of the settings was saved, on the saving thread; not for servers, peers or other state.
     /// </summary>
     event EventHandler? SettingsChanged;
 
@@ -19,6 +19,7 @@ public interface IPluginConfigurationStore
     /// <typeparam name="T">The result type.</typeparam>
     /// <param name="read">Projects the configuration to a detached result.</param>
     /// <returns>The result of <paramref name="read"/>.</returns>
+    /// <exception cref="Storage.StoreSuspendedException">The configuration cannot be read yet: callers fail closed, never on defaults.</exception>
     T Read<T>(Func<PluginConfiguration, T> read);
 
     /// <summary>

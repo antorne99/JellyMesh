@@ -13,6 +13,7 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
@@ -23,6 +24,7 @@ public sealed class ServerStubRenamerTests : IDisposable
     private static readonly Guid _other = Guid.Parse("5e6f7a8b-0000-4000-8000-000000000002");
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-rename-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
@@ -42,7 +44,8 @@ public sealed class ServerStubRenamerTests : IDisposable
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
         _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _server, Name = "Casa" });
         _store.Configuration.Servers.Add(new RemoteServerConfig { Id = _other, Name = "Altro" });
-        _registry = new StubRegistry(Path.Combine(_data, "plugin"), _store, new CapturingLogger<StubRegistry>());
+        _database = new TestDatabase(Path.Combine(_data, "plugin"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
         _library.Setup(library => library.GetNewItemId(It.IsAny<string>(), It.IsAny<Type>())).Returns((string key, Type type) => IdOf(key, type));
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _items.GetValueOrDefault(id));
         _carrier.Setup(carrier => carrier.CarryAsync(It.IsAny<IReadOnlyList<WatchStateMove>>(), It.IsAny<CancellationToken>()))
@@ -79,6 +82,7 @@ public sealed class ServerStubRenamerTests : IDisposable
     public void Dispose()
     {
         _registry.Dispose();
+        _database.Dispose();
         if (Directory.Exists(_data))
         {
             Directory.Delete(_data, true);
@@ -180,6 +184,33 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal("Casa", _registry.State.Labels[_server]);
     }
 
+    // Row 564: only a saved label over 40 bytes, without the GUID digits, is renamed at start.
+    [Fact]
+    public async Task OnlyTheServersWithASavedLabelOverTheLimitAreListed()
+    {
+        await SeedAsync(Film("f", FilmPath("Casa")));
+        await SaveAsync(_registry.State with { Labels = new Dictionary<Guid, string> { [_server] = new string('Ж', 21), [_other] = new string('Ж', 20) + " 5e6f7a8b" } });
+
+        Assert.Equal([_server], _renamer.LongLabels());
+    }
+
+    [Fact]
+    public async Task ASavedLabelOverTheLimitMovesToItsCutLabelUnderTheSameName()
+    {
+        var name = new string('Ж', 30);
+        await SeedAsync(Film("f", FilmPath(name)), Film("o", FilmPath("Altro", _other)));
+        await SaveAsync(_registry.State with { Labels = new Dictionary<Guid, string> { [_server] = name, [_other] = "Altro" } });
+        Write(FilmPath(name), "url-f");
+
+        Assert.Equal(1, await _renamer.RelabelAsync(_server, name, CancellationToken.None));
+
+        Assert.Equal(new string('Ж', 20), _registry.State.Labels[_server]);
+        Assert.Equal("url-f", Read(FilmPath(new string('Ж', 20))));
+        Assert.True(File.Exists(Full(FilmPath(name))));
+        Assert.Equal(FilmPath(name), _registry.State.Renames.Single().OldPath);
+        Assert.Empty(_renamer.LongLabels());
+    }
+
     [Fact]
     public async Task ALabelTakenByAnotherServerGetsTheGuidDigits()
     {
@@ -237,7 +268,7 @@ public sealed class ServerStubRenamerTests : IDisposable
         await _renamer.FinishAsync(CancellationToken.None);
 
         var move = _carries.Single().Single();
-        Assert.Equal((old.Id, "f", FilmPath("Casa"), true), (move.FromItemId, move.FromStubId, move.FromPath, move.RemovesOldItem));
+        Assert.Equal((old.Id, "f", FilmPath("Casa"), true, true), (move.FromItemId, move.FromStubId, move.FromPath, move.RemovesOldItem, move.IsPureRename));
         Assert.Equal([new WatchStateTarget(renamed.Id, _server)], move.Targets);
         Assert.False(File.Exists(Full(FilmPath("Casa"))));
         Assert.True(File.Exists(Full(FilmPath("Mare"))));

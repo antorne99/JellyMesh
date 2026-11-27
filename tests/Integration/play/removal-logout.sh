@@ -56,7 +56,7 @@ connect() { # connect -> the id of the remote added again, synced, logged in and
   id=$(add_remote local remote "http://host.docker.internal:$(port_of remote)" jellymesh)
   import_all local "$id"
   sync_now local
-  link_folder local Film "$(server_folder "$id")/Film" >/dev/null
+  link_folder local Film "$(type_folder "$id" Film)" >/dev/null
   scan local
   echo "$id"
 }
@@ -111,7 +111,8 @@ docker run --rm --name "$PREFIX-sysctl" --privileged --network "container:$PREFI
   'echo "4096 16384 65536" >/proc/sys/net/ipv4/tcp_rmem && echo "4096 16384 65536" >/proc/sys/net/ipv4/tcp_wmem'
 login local
 login remote
-settings local '.FederatedFolderPath = "/federata"' >/dev/null
+# The admin links the folders by hand, so JellyMesh makes no library for the servers.
+settings local '.FederatedFolderPath = "/federata" | .NewServerLibraryMode = "None"' >/dev/null
 
 echo "== a live removal ends the streams, then the login"
 id=$(connect)

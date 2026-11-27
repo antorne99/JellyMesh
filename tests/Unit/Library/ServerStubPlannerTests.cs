@@ -10,10 +10,11 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
+[Collection(TimedTests.Name)]
 public class ServerStubPlannerTests
 {
-    private const string Library = "films";
-    private const string Shows = "shows";
+    private const string Library = TestLibraries.Films;
+    private const string Shows = TestLibraries.Shows;
 
     private static readonly Guid _serverA = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
     private static readonly Guid _serverB = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000000");
@@ -105,6 +106,7 @@ public class ServerStubPlannerTests
         StubState? state = null,
         IReadOnlyList<RemoteServerInfo>? servers = null,
         LocalSeries? localSeries = null,
+        Func<Guid, string, TypeFolder, string>? placementOf = null,
         Func<string, bool>? isOnDisk = null)
     {
         var snapshot = new IndexSnapshot { Version = IndexSnapshot.CurrentVersion, Health = IndexHealth.Ok, Servers = catalogs };
@@ -117,9 +119,20 @@ public class ServerStubPlannerTests
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
             _ => localSeries)
         {
+            PlacementOf = placementOf ?? StubPlanInput.DefaultPlacement,
             IsOnDisk = isOnDisk ?? (_ => true)
         });
     }
+
+    private static StubEntry OldServerStub(string id, Guid server, string itemId) => new()
+    {
+        Id = id,
+        Kind = StubKind.Movie,
+        ServerId = server,
+        RelativePath = FederatedPaths.MovieStub(server, id + " (2019)", "Casa"),
+        IdentityKey = "k",
+        Sources = [new StubSource(server, itemId, itemId) { LibraryId = Library }]
+    };
 
     private static StubWork On(StubPlan plan, Guid server) => Assert.Single(plan.Stubs, stub => stub.Entry.ServerId == server);
 
@@ -127,6 +140,199 @@ public class ServerStubPlannerTests
         => (group.Id, group.IdentityKey, string.Join(',', group.StubIds.Order()), string.Join(',', group.LocalItemIds), group.PrimaryStubId);
 
     private static ResolvedContent Local(ResolvedContent content, params Guid[] localIds) => content with { IsLocal = true, LocalItemIds = localIds };
+
+    // Plans series of two episodes each on one server, and checks that each got its series and episodes.
+    private static void PlanSeries(int count)
+    {
+        var items = new List<IndexedItem>();
+        var contents = new List<ResolvedContent>();
+        for (var series = 0; series < count; series++)
+        {
+            var seriesId = "s" + series;
+            items.Add(SeriesItem(seriesId, "Show " + series));
+            for (var number = 1; number <= 2; number++)
+            {
+                var episodeId = seriesId + "e" + number;
+                items.Add(EpisodeItem(episodeId, seriesId, number) with { SeriesName = "Show " + series });
+                contents.Add(new ResolvedContent(
+                    new ContentIdentity("show" + series + "|S1E" + number, "show" + series, ContentKind.Episode, MatchKind.ProviderId, 1, number),
+                    false,
+                    null,
+                    [])
+                {
+                    RemoteItems = [OnA(episodeId)]
+                });
+            }
+        }
+
+        var plan = Plan(contents, [Catalog(_serverA, [.. items])], servers: [Server(_serverA, "Casa")]);
+
+        Assert.Equal(count, plan.Series.Count);
+        Assert.Equal(count * 2, plan.Stubs.Count);
+    }
+
+    // The processor time the current thread spends on a run, which other threads and processes do not add to.
+    private static TimeSpan ProcessorTime(Action run)
+    {
+        var before = ThreadProcessorTime();
+        run();
+        return ThreadProcessorTime() - before;
+    }
+
+    // The time the current thread has run on a processor, from Linux's schedstat in nanoseconds; elsewhere the process's.
+    private static TimeSpan ThreadProcessorTime()
+    {
+        const string Schedstat = "/proc/thread-self/schedstat";
+        if (File.Exists(Schedstat))
+        {
+            var nanoseconds = long.Parse(File.ReadAllText(Schedstat).Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture);
+            return TimeSpan.FromTicks(nanoseconds / 100);
+        }
+
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return process.TotalProcessorTime;
+    }
+
+    // Planning 8000 series takes under 30 times the least processor time of 1000, measured on the planning thread only
+    // (row 564).
+    [Fact]
+    public void PlanningEightTimesTheSeriesTakesAboutEightTimesAsLong()
+    {
+        PlanSeries(1000);
+        PlanSeries(8000);
+        var small = TimeSpan.MaxValue;
+        var large = TimeSpan.MaxValue;
+        for (var round = 0; round < 3; round++)
+        {
+            var time = ProcessorTime(() => PlanSeries(1000));
+            small = time < small ? time : small;
+            time = ProcessorTime(() => PlanSeries(8000));
+            large = time < large ? time : large;
+        }
+
+        Assert.True(large < small * 30, small + " for 1000 series, " + large + " for 8000");
+    }
+
+    [Fact]
+    public void ATitleInTwoLibrariesOfOneLocalLibraryGetsOneStubWithTheOtherCopyAsASource()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"), OnA("n"))],
+            [Catalog(_serverA, Film("m", "Film", Version("m2160", 2160)), Film("n") with { LibraryId = TestLibraries.FilmsB })]);
+
+        var stub = On(plan, _serverA);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), stub.Entry.RelativePath);
+        Assert.Equal([("m", Library), ("n", TestLibraries.FilmsB)], stub.Entry.Sources.Select(source => (source.ItemId, source.LibraryId)));
+    }
+
+    [Fact]
+    public void ATitleInTwoLibrariesOfDifferentLocalLibrariesGetsOneStubInEachFolder()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"), OnA("n"))],
+            [Catalog(_serverA, Film("m", "Film", Version("m2160", 2160)), Film("n") with { LibraryId = TestLibraries.FilmsB })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(
+            [
+                (Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), "m"),
+                (Path.Combine(A, TestLibraries.FilmsB, "Film", "Film (2020)", "Film (2020) - Casa.strm"), "n")
+            ],
+            plan.Stubs.Select(stub => (stub.Entry.RelativePath, Assert.Single(stub.Entry.Sources).ItemId)).Order());
+        Assert.Equal(2, plan.Stubs.Select(stub => stub.Entry.Id).Distinct().Count());
+    }
+
+    [Fact]
+    public void AnItemInSeveralLibrariesOfDifferentLocalLibrariesGetsAStubInEachFolder()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"))],
+            [Catalog(_serverA, Film("m") with { LibraryId = TestLibraries.Films, OtherLibraryIds = [TestLibraries.FilmsB] })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(
+            [Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), Path.Combine(A, TestLibraries.FilmsB, "Film", "Film (2020)", "Film (2020) - Casa.strm")],
+            plan.Stubs.Select(stub => stub.Entry.RelativePath).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void ATitleOfALibraryWithoutAValidIdHasNoStub()
+    {
+        var plan = Plan(
+            [Title("k", OnA("m"))],
+            [Catalog(_serverA, Film("m") with { LibraryId = "../films" })]);
+
+        Assert.Empty(plan.Stubs);
+        Assert.Equal(1, plan.Unplaceable);
+    }
+
+    [Fact]
+    public void AStubOfTheServerFoldersStaysAsItIsWhileItsTitleAndNewOnesGoToTheRemoteLibraryLayout()
+    {
+        // §10 row 444: the new layout is written beside the old one, which plays as before with no new titles (Q49).
+        var old = OldServerStub("old", _serverA, "o");
+
+        var plan = Plan(
+            [Title("old", OnA("o")), Title("k", OnB("z"))],
+            [Catalog(_serverA, Film("o", "Old") with { ProductionYear = 2019 }), Catalog(_serverB, Film("z"))],
+            StubState.Empty with { Stubs = [old] });
+
+        Assert.Equal(Path.Combine(A, Library, "Film", "Old (2019)", "Old (2019) - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
+        Assert.Equal(Path.Combine(B, Library, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), On(plan, _serverB).Entry.RelativePath);
+        Assert.Contains(old, plan.State.Stubs);
+        Assert.Empty(plan.Removals);
+        Assert.Equal(0, plan.MergedStubs);
+    }
+
+    [Fact]
+    public void AStubOfTheServerFoldersWhoseTitleIsGoneStaysForTheMigration()
+    {
+        var old = OldServerStub("old", _serverA, "gone");
+
+        var plan = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], StubState.Empty with { Stubs = [old] });
+
+        Assert.Contains(old, plan.State.Stubs);
+        Assert.Empty(plan.Removals);
+    }
+
+    [Fact]
+    public void StubsOfTheServerFoldersLeaveTheirVersionGroupForTheNewStubs()
+    {
+        // D12: the old stubs play as before and stay out of the groups, so a carry never targets one of them.
+        var local = Guid.NewGuid();
+        var oldA = OldServerStub("oldA", _serverA, "m");
+        var oldB = OldServerStub("oldB", _serverB, "z");
+        var group = new VersionGroup { Id = "g", IdentityKey = "k", StubIds = ["oldA", "oldB"], LocalItemIds = [local] };
+
+        var plan = Plan(
+            [Local(Title("k", OnA("m"), OnB("z")), local)],
+            [Catalog(_serverA, Film("m")), Catalog(_serverB, Film("z"))],
+            StubState.Empty with { Stubs = [oldA, oldB], Groups = [group] });
+
+        var kept = Assert.Single(plan.State.Groups);
+        Assert.Equal(new[] { On(plan, _serverA).Entry.Id, On(plan, _serverB).Entry.Id }.Order(), kept.StubIds.Order());
+        Assert.Equal([local], kept.LocalItemIds);
+        Assert.Contains(oldA, plan.State.Stubs);
+        Assert.Contains(oldB, plan.State.Stubs);
+    }
+
+    [Fact]
+    public void AFlatInstallGoesStraightToTheRemoteLibraryLayout()
+    {
+        // From 0.4 the migration is one step: no new stub in the 0.5 server folders.
+        var flat = new StubEntry
+        {
+            Id = "flat",
+            Kind = StubKind.Movie,
+            RelativePath = Path.Combine("Film", "Film (2020)", "Film (2020).strm"),
+            IdentityKey = "k",
+            Sources = [new StubSource(_serverA, "m", "m") { LibraryId = Library }]
+        };
+
+        var plan = Plan([Title("k", OnA("m"))], [Catalog(_serverA, Film("m"))], StubState.Empty with { Stubs = [flat] });
+
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
+    }
 
     [Fact]
     public void TheBestCopyOfAServerIsItsStubAndItsOtherCopiesAreInternalSources()
@@ -160,9 +366,9 @@ public class ServerStubPlannerTests
 
         var series = Assert.Single(plan.Series);
         Assert.Equal(_serverA, series.Entry.ServerId);
-        Assert.Equal(Path.Combine(A, "Serie", "Show (2020)"), series.Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Shows, "Serie", "Show (2020)"), series.Entry.RelativePath);
         Assert.Equal("Show", series.Metadata.Title);
-        Assert.Equal(Path.Combine(A, "Serie", "Show (2020)", "Season 01", "Show S01E07 - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Shows, "Serie", "Show (2020)", "Season 01", "Show S01E07 - Casa.strm"), On(plan, _serverA).Entry.RelativePath);
         Assert.Equal(series.Entry.Id, On(plan, _serverA).Entry.SeriesStubId);
     }
 
@@ -174,11 +380,11 @@ public class ServerStubPlannerTests
         Assert.Equal(2, plan.Stubs.Count);
         var onA = On(plan, _serverA);
         var onB = On(plan, _serverB);
-        Assert.Equal(Path.Combine(A, "Film", "Film (2020)", "Film (2020) - Casa.strm"), onA.Entry.RelativePath);
-        Assert.Equal(Path.Combine(B, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), onB.Entry.RelativePath);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "Film (2020) - Casa.strm"), onA.Entry.RelativePath);
+        Assert.Equal(Path.Combine(B, Library, "Film", "Film (2020)", "Film (2020) - Ufficio.strm"), onB.Entry.RelativePath);
         Assert.Equal([(_serverA, "m")], onA.Entry.Sources.Select(source => (source.ServerId, source.ItemId)));
         Assert.Equal([(_serverB, "z")], onB.Entry.Sources.Select(source => (source.ServerId, source.ItemId)));
-        Assert.Equal(Path.Combine(A, "Film", "Film (2020)", "movie.nfo"), onA.NfoPath);
+        Assert.Equal(Path.Combine(A, Library, "Film", "Film (2020)", "movie.nfo"), onA.NfoPath);
         Assert.NotEqual(onA.Entry.Id, onB.Entry.Id);
     }
 
@@ -339,7 +545,7 @@ public class ServerStubPlannerTests
     {
         var catalogs = new[] { Catalog(_serverA, Film("m")) };
         var first = Plan([Title("k", OnA("m"))], catalogs);
-        var kept = Path.Combine(A, "Film", new string('漢', 120), "x.strm");
+        var kept = Path.Combine(A, Library, "Film", new string('漢', 120), "x.strm");
         var state = first.State with { Stubs = [first.State.Stubs[0] with { RelativePath = kept, ContentHash = contentHash }] };
 
         var stub = Assert.Single(Plan([Title("k", OnA("m"))], catalogs, state, isOnDisk: _ => isOnDisk).State.Stubs);
@@ -348,19 +554,112 @@ public class ServerStubPlannerTests
         Assert.Equal(moves ? first.State.Stubs[0].RelativePath : kept, stub.RelativePath);
     }
 
+// Row 555 in the split titles of 0.6: every name taken from a title is cut in bytes.
     [Fact]
-    public void AStubKeepsItsLongNameWhenTheNewOneIsOfAnotherStub()
+    public void ASplitTitleWithAVeryLongNameFitsInEachFolder()
+    {
+        var title = new string('漢', 500);
+        var plan = Plan(
+            [Title("k", OnA("m"), OnA("n"))],
+            [Catalog(_serverA, Film("m", title), Film("n", title) with { LibraryId = TestLibraries.FilmsB })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.All(plan.Stubs, stub =>
+        {
+            Assert.True(FederatedPaths.FitsInNames(stub.Entry.RelativePath));
+            Assert.Equal(new string('漢', 40) + " (2020)", Path.GetFileName(Path.GetDirectoryName(stub.Entry.RelativePath)));
+        });
+    }
+
+    [Fact]
+    public void ASplitSeriesWithAVeryLongNameFitsInEachFolder()
+    {
+        var title = new string('Ж', 500);
+        var plan = Plan(
+            [EpisodeTitle(1, OnA("e"), OnA("f"))],
+            [Catalog(
+                _serverA,
+                SeriesItem("s", title),
+                EpisodeItem("e", "s", 1) with { SeriesName = title },
+                SeriesItem("t", title) with { LibraryId = TestLibraries.ShowsB },
+                EpisodeItem("f", "t", 1) with { SeriesName = title, LibraryId = TestLibraries.ShowsB })],
+            placementOf: (_, library, type) => library + type.Name);
+
+        Assert.Equal(2, plan.Stubs.Count);
+        Assert.Equal(2, plan.Series.Count);
+        Assert.All(plan.Stubs, stub => Assert.True(FederatedPaths.FitsInNames(stub.Entry.RelativePath)));
+        Assert.All(plan.Series, series => Assert.Equal(new string('Ж', 60) + " (2020)", Path.GetFileName(series.Entry.RelativePath)));
+    }
+
+    [Fact]
+    public void ASplitStubThatWasNeverWrittenLeavesItsLongName()
+    {
+        var catalogs = new[] { Catalog(_serverA, Film("m"), Film("n") with { LibraryId = TestLibraries.FilmsB }) };
+        var contents = new[] { Title("k", OnA("m"), OnA("n")) };
+        Func<Guid, string, TypeFolder, string> split = (_, library, type) => library + type.Name;
+        var first = Plan(contents, catalogs, placementOf: split);
+        var state = first.State with
+        {
+            Stubs = first.State.Stubs.Select(stub => stub with { RelativePath = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!, new string('漢', 120), "x.strm") }).ToList()
+        };
+
+        var plan = Plan(contents, catalogs, state, placementOf: split, isOnDisk: _ => false);
+
+        Assert.Equal(
+            first.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order(),
+            plan.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order());
+    }
+
+    [Fact]
+    public void ASplitSeriesThatWasNeverWrittenLeavesItsLongName()
+    {
+        var catalogs = new[]
+        {
+            Catalog(
+                _serverA,
+                SeriesItem("s"),
+                EpisodeItem("e", "s", 1),
+                SeriesItem("t") with { LibraryId = TestLibraries.ShowsB },
+                EpisodeItem("f", "t", 1) with { LibraryId = TestLibraries.ShowsB })
+        };
+        var contents = new[] { EpisodeTitle(1, OnA("e"), OnA("f")) };
+        Func<Guid, string, TypeFolder, string> split = (_, library, type) => library + type.Name;
+        var first = Plan(contents, catalogs, placementOf: split);
+        var longNames = first.State.Series.ToDictionary(series => series.RelativePath, series => Path.Combine(Path.GetDirectoryName(series.RelativePath)!, new string('漢', 120)));
+        string Long(string path) => longNames.Aggregate(path, (moved, folder) => moved.Replace(folder.Key, folder.Value, StringComparison.Ordinal));
+        var state = first.State with
+        {
+            Stubs = first.State.Stubs.Select(stub => stub with { RelativePath = Long(stub.RelativePath) }).ToList(),
+            Series = first.State.Series.Select(series => series with { RelativePath = Long(series.RelativePath) }).ToList()
+        };
+
+        var plan = Plan(contents, catalogs, state, placementOf: split, isOnDisk: _ => false);
+
+        Assert.Equal(
+            first.State.Series.Select(series => (series.Id, series.RelativePath)).Order(),
+            plan.State.Series.Select(series => (series.Id, series.RelativePath)).Order());
+        Assert.Equal(
+            first.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order(),
+            plan.State.Stubs.Select(stub => (stub.Id, stub.RelativePath)).Order());
+    }
+
+    // The server folders give a taken name a suffix, so the stub leaves its long name for a free one.
+    [Fact]
+    public void AStubLeavesItsLongNameForAFreeOneWhenTheShortOneIsOfAnotherStub()
     {
         var catalogs = new[] { Catalog(_serverA, SeriesItem("s"), EpisodeItem("e", "s", 1)) };
         var first = Plan([EpisodeTitle(1, OnA("e"))], catalogs);
         var episode = Assert.Single(first.State.Stubs);
-        var kept = Path.Combine(A, "Serie", new string('漢', 120), "Season 01", "x.strm");
+        var kept = Path.Combine(A, Shows, "Serie", new string('漢', 120), "Season 01", "x.strm");
         var other = episode with { Id = "other", IdentityKey = "other", ContentHash = "hash", Sources = [] };
         var state = first.State with { Stubs = [episode with { RelativePath = kept }, other] };
 
-        var plan = Plan([EpisodeTitle(1, OnA("e"))], catalogs, state, isOnDisk: _ => false);
+        var moved = Assert.Single(Plan([EpisodeTitle(1, OnA("e"))], catalogs, state, isOnDisk: _ => false).Stubs).Entry.RelativePath;
 
-        Assert.Equal(kept, Assert.Single(plan.Stubs).Entry.RelativePath);
+        Assert.NotEqual(other.RelativePath, moved);
+        Assert.Equal(Path.GetDirectoryName(other.RelativePath), Path.GetDirectoryName(moved));
+        Assert.True(FederatedPaths.FitsInNames(moved));
     }
 
     [Fact]
@@ -369,7 +668,7 @@ public class ServerStubPlannerTests
         var catalogs = new[] { Catalog(_serverA, Film("m", new string('漢', 120))) };
         var servers = new[] { Server(_serverA, new string('漢', 40)) };
         var first = Plan([Title("k", OnA("m"))], catalogs, servers: servers);
-        var kept = Path.Combine(A, "Film", new string('漢', 120), "x.strm");
+        var kept = Path.Combine(A, Library, "Film", new string('漢', 120), "x.strm");
         var state = first.State with
         {
             Stubs = [first.State.Stubs[0] with { RelativePath = kept }],

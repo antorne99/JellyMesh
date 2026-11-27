@@ -51,7 +51,7 @@ public sealed class PeerPlaybackInfoFilter : IAsyncActionFilter
 
         var http = context.HttpContext;
         var isPlaybackInfo = PeerRoutes.Classify(context.ActionDescriptor as ControllerActionDescriptor, http.Request.Method) == PeerRouteKind.PlaybackInfo;
-        if (!isPlaybackInfo || await _peers.FindCallerAsync(http).ConfigureAwait(false) is not { } caller)
+        if (!isPlaybackInfo || await _peers.FindStockCallerAsync(http).ConfigureAwait(false) is not { } caller)
         {
             await next().ConfigureAwait(false);
             return;

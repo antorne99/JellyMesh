@@ -14,6 +14,7 @@ using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using Moq;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Xunit;
 using LinkedChildType = MediaBrowser.Controller.Entities.LinkedChildType;
 
@@ -29,6 +30,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     private static readonly Guid _serverB = Guid.NewGuid();
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "jellymesh-carrier-" + Guid.NewGuid().ToString("N"));
+    private readonly TestDatabase _database;
     private readonly InMemoryConfigurationStore _store = new();
     private readonly StubRegistry _registry;
     private readonly Mock<ILibraryManager> _library = new();
@@ -57,8 +59,9 @@ public sealed class WatchStateCarrierTests : IDisposable
     public WatchStateCarrierTests()
     {
         _store.Configuration.FederatedFolderPath = Path.Combine(_data, "federata");
-        _registry = new StubRegistry(Path.Combine(_data, "registry"), _store, new CapturingLogger<StubRegistry>());
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _database = new TestDatabase(Path.Combine(_data, "registry"));
+        _registry = new StubRegistry(_database, _store, new CapturingLogger<StubRegistry>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         _library.Setup(library => library.GetItemById(It.IsAny<Guid>())).Returns((Guid id) => _failingLookups.Contains(id) ? throw new IOException("/secret") : _items.GetValueOrDefault(id));
         _library.Setup(library => library.GetItemById<BaseItem>(It.IsAny<Guid>(), It.IsAny<User>()))
@@ -105,6 +108,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         _registry.Dispose();
         _log.Dispose();
+        _database.Dispose();
         _cancellation.Dispose();
         if (Directory.Exists(_data))
         {
@@ -285,6 +289,192 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Equal(300, Row(_mario, renamed).PlaybackPositionTicks);
         Assert.Equal(2, Row(_mario, renamed).PlayCount);
         Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+// Row 572: the old row goes whole onto the new stub of a pure rename, over the row Jellyfin reattached by key.
+    [Fact]
+    public async Task ARenameCopiesNotWatchedOverTheRowJellyfinReattached()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.PlaybackPositionTicks = 500;
+        reattached.LastPlayedDate = _older;
+        reattached.IsFavorite = true;
+        reattached.Rating = 7;
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        var row = Row(_mario, renamed);
+        Assert.Equal((false, 0, 0L, (DateTime?)null, false, (double?)null), (row.Played, row.PlayCount, row.PlaybackPositionTicks, row.LastPlayedDate, row.IsFavorite, row.Rating));
+        Assert.Equal(renamed.Id.ToString("N"), row.Key);
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+    [Fact]
+    public async Task ARenameCopiesACountWithNoDateOverADatedReattachedRow()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.LastPlayedDate = _older;
+
+        await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal((true, 2, (DateTime?)null), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
+    [Fact]
+    public async Task ARenameKeepsADatedPlayWithItsPositionFavoriteAndRating()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        row.PlaybackPositionTicks = 300;
+        row.LastPlayedDate = _newer;
+        row.IsFavorite = true;
+        row.Rating = 8;
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.LastPlayedDate = _newest;
+
+        await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        var copied = Row(_mario, renamed);
+        Assert.Equal((true, 2, 300L, (DateTime?)_newer, true, (double?)8), (copied.Played, copied.PlayCount, copied.PlaybackPositionTicks, copied.LastPlayedDate, copied.IsFavorite, copied.Rating));
+    }
+
+    [Fact]
+    public async Task ARenameSavesOnlyTheRowsThatDiffer()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        Row(_mario, old).IsFavorite = true;
+
+        await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal([(_mario.Id, renamed.Id, UserDataSaveReason.Import)], _saves);
+    }
+
+    [Fact]
+    public async Task ARenameLeavesNoUserWithAnEmptyRowWhoCannotSeeTheNewStub()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        Row(_mario, old).IsFavorite = true;
+        _hidden.Add((_luigi.Id, renamed.Id));
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Equal([old.Id], report.ForgettableOldItemIds);
+    }
+
+    [Fact]
+    public async Task ASecondRunOfARenameDoesNotOverwriteWhatTheUserDidOnTheNewStub()
+    {
+        // The old file could not go, so the next round carries again (decisions 155, 187).
+        var (old, oldStub, renamed) = Renamed();
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        var move = RenameMove(old, oldStub, renamed);
+        await CarryAsync(move);
+        Assert.False(Row(_mario, renamed).Played);
+
+        Row(_mario, renamed).Played = true;
+        Row(_mario, renamed).PlayCount = 1;
+        Row(_mario, renamed).LastPlayedDate = _newest;
+        _saves.Clear();
+        await RestartAsync();
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.Equal((true, 1, (DateTime?)_newest), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
+    // Row 575: the record of a manual merge does not stop the whole-row copy of a pure rename.
+    [Fact]
+    public async Task ARenameOfAMergedTitleCopiesNotWatchedOverTheRowJellyfinReattached()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        _log.Record(_mario.Id, old.Id, _older, WatchStateCarryOperation.Merge);
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+        reattached.LastPlayedDate = _older;
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Equal((false, 0, (DateTime?)null), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+        Assert.True(_log.TryFind(_mario.Id, old.Id, out _, out var operation));
+        Assert.Equal(WatchStateCarryOperation.Rename, operation);
+    }
+
+    [Fact]
+    public async Task ASecondRunOfTheRenameOfAMergedTitleDoesNotOverwriteWhatTheUserDid()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        _log.Record(_mario.Id, old.Id, _older, WatchStateCarryOperation.Merge);
+        var move = RenameMove(old, oldStub, renamed);
+        await CarryAsync(move);
+        Assert.False(Row(_mario, renamed).Played);
+
+        // A merge carry between the two runs leaves the record of the rename.
+        _log.Record(_mario.Id, old.Id, _newer, WatchStateCarryOperation.Merge);
+        Row(_mario, renamed).Played = true;
+        Row(_mario, renamed).PlayCount = 1;
+        Row(_mario, renamed).LastPlayedDate = _newest;
+        _saves.Clear();
+        await RestartAsync();
+        var report = await CarryAsync(move);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.Empty(_saves);
+        Assert.Equal((true, 1, (DateTime?)_newest), (Row(_mario, renamed).Played, Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
+    }
+
+    [Fact]
+    public async Task ARecordOfNoKnownOperationStopsTheWholeRowCopyAsBefore()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        await _database.ExecuteAsync($"INSERT INTO watch_state_carries (user_id, item_id, last_played_ticks) VALUES ('{_mario.Id:N}', '{old.Id:N}', NULL);");
+        await RestartAsync();
+        var reattached = Row(_mario, renamed);
+        reattached.Played = true;
+        reattached.PlayCount = 1;
+
+        var report = await CarryAsync(RenameMove(old, oldStub, renamed));
+
+        Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
+        Assert.DoesNotContain(_saves, save => save.User == _mario.Id);
+        Assert.True(Row(_mario, renamed).Played);
+    }
+
+    [Fact]
+    public async Task AMoveThatIsNotAPureRenameKeepsTheMostRecentRow()
+    {
+        var (old, oldStub, renamed) = Renamed();
+        var row = Row(_mario, old);
+        row.Played = true;
+        row.PlayCount = 2;
+        var newer = Row(_mario, renamed);
+        newer.Played = true;
+        newer.PlayCount = 1;
+        newer.LastPlayedDate = _older;
+
+        await CarryAsync(RemovingMove(old, oldStub, (renamed, _serverA)));
+
+        Assert.Equal((1, (DateTime?)_older), (Row(_mario, renamed).PlayCount, Row(_mario, renamed).LastPlayedDate));
     }
 
     [Fact]
@@ -653,9 +843,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         _log.Dispose();
-        Directory.CreateDirectory(_data);
-        await File.WriteAllTextAsync(Path.Combine(_data, "log"), "in the way");
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        // The log alone fails, on a database of its own: the stub registry still reads and writes.
+        using var logDatabase = new TestDatabase();
+        _log = new WatchStateCarryLog(logDatabase, new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.EnsureLoaded());
+        logDatabase.Suspended = true;
 
         var move = Move(old, oldStub, (a, _serverA));
 
@@ -670,11 +862,11 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
 
-        File.Delete(Path.Combine(_data, "log"));
+        logDatabase.Suspended = false;
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
-        Assert.True(File.Exists(Path.Combine(_data, "log", WatchStateCarryLog.FileName)));
+        Assert.Equal(1, logDatabase.Count("watch_state_carries"));
     }
 
     [Fact]
@@ -714,7 +906,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Contains(_carrierLogger.Lines, line => line.Contains(nameof(IOException), StringComparison.Ordinal));
         Assert.Contains(_carrierLogger.Lines, line => line.Contains("secret", StringComparison.Ordinal));
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, first.Id, out _));
         Assert.True(_log.TryFind(_mario.Id, second.Id, out _));
     }
@@ -767,20 +959,17 @@ public sealed class WatchStateCarrierTests : IDisposable
         await CarryAsync(Move(old, oldStub, (a, _serverA)));
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
-        var folder = Path.Combine(_data, "log");
-        var file = Path.Combine(folder, WatchStateCarryLog.FileName);
-        var content = await File.ReadAllTextAsync(file);
         _log.Dispose();
-        var failing = true;
-        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>(), path => failing ? throw new IOException("busy") : File.OpenRead(path));
+        _database.Suspended = true;
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         var report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
 
         Assert.Equal(WatchStateMoveStatus.Failed, report.Moves.Single().Status);
         Assert.Empty(_saves);
-        Assert.Equal(content, await File.ReadAllTextAsync(file));
+        Assert.Equal(1, _database.Count("watch_state_carries"));
 
-        failing = false;
+        _database.Suspended = false;
         report = await CarryAsync(Move(old, oldStub, (a, _serverA)));
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -842,7 +1031,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Row(_mario, a).Rating = null;
         _cancellingSaves.Clear();
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         var report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -865,7 +1054,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
         Assert.True(Row(_luigi, a).IsFavorite);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_luigi.Id, old.Id, out _));
     }
 
@@ -966,7 +1155,7 @@ public sealed class WatchStateCarrierTests : IDisposable
 
         Assert.Equal([old.Id], report.ForgettableOldItemIds);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
 
         Row(_mario, a).IsFavorite = false;
@@ -1013,7 +1202,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         Gone(old);
         await ForgetRemovedAsync(report.ForgettableOldItemIds);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
 
         Assert.Equal([old.Id], report.ForgettableOldItemIds);
         Assert.False(_log.TryFind(_mario.Id, old.Id, out _));
@@ -1086,9 +1275,11 @@ public sealed class WatchStateCarrierTests : IDisposable
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         _log.Dispose();
-        Directory.CreateDirectory(_data);
-        await File.WriteAllTextAsync(Path.Combine(_data, "log"), "in the way");
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        // The log alone fails, on a database of its own: the stub registry still reads and writes.
+        using var logDatabase = new TestDatabase();
+        _log = new WatchStateCarryLog(logDatabase, new CapturingLogger<WatchStateCarryLog>());
+        Assert.True(_log.EnsureLoaded());
+        logDatabase.Suspended = true;
         var move = RemovingMove(old, oldStub, (a, _serverA));
 
         var report = await CarryAsync(move);
@@ -1100,7 +1291,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         // A run again does not put back the favorite the user took off meanwhile.
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
-        File.Delete(Path.Combine(_data, "log"));
+        logDatabase.Suspended = false;
         report = await CarryAsync(move);
 
         Assert.Equal(WatchStateMoveStatus.Carried, report.Moves.Single().Status);
@@ -1124,7 +1315,7 @@ public sealed class WatchStateCarrierTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CarryAsync(move, RemovingMove(other, otherStub, (b, _serverA))));
 
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
         Row(_mario, a).IsFavorite = false;
         _saves.Clear();
@@ -1266,25 +1457,23 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
-    public async Task ForgettingWhoseSaveFailsKeepsTheRecordsOnDisk()
+    public async Task ForgettingWhoseSaveFailsKeepsTheRecordsInTheDatabase()
     {
         var (old, oldStub) = Old();
         var a = Movie(_serverA);
         Row(_mario, old).IsFavorite = true;
         var move = RemovingMove(old, oldStub, (a, _serverA));
         var report = await CarryAsync(move);
-        var folder = Path.Combine(_data, "log");
-        var blocker = Path.Combine(folder, WatchStateCarryLog.FileName + ".tmp");
-        Directory.CreateDirectory(blocker);
+        _database.Suspended = true;
         Gone(old);
 
         Assert.Empty(await ForgetRemovedAsync(report.ForgettableOldItemIds));
 
         Assert.Contains(_carrierLogger.Lines, line => line.Contains("forgetting", StringComparison.Ordinal));
         Assert.DoesNotContain(_carrierLogger.Lines, line => line.Contains(_data, StringComparison.Ordinal));
-        Directory.Delete(blocker);
+        _database.Suspended = false;
         _log.Dispose();
-        _log = new WatchStateCarryLog(folder, new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
         Assert.True(_log.TryFind(_mario.Id, old.Id, out _));
         _items[old.Id] = old;
         Row(_mario, a).IsFavorite = false;
@@ -1330,6 +1519,34 @@ public sealed class WatchStateCarrierTests : IDisposable
     }
 
     [Fact]
+    public void OnlyAMoveMadeAsAPureRenameCopiesTheWholeRow()
+    {
+        var (old, oldStub) = Old();
+        var target = new WatchStateTarget(Guid.NewGuid(), _serverA);
+
+        var rename = WatchStateMove.OfRename(oldStub, old.Id, target);
+
+        Assert.True(rename.IsPureRename);
+        Assert.True(rename.RemovesOldItem);
+        Assert.Equal([target], rename.Targets);
+        Assert.False(WatchStateMove.Of(oldStub, old.Id, [target], removesOldItem: true).IsPureRename);
+        Assert.False(WatchStateMove.OfMerge(oldStub, old.Id, [target]).IsPureRename);
+    }
+
+    [Fact]
+    public void EachMoveSaysWhichOperationMadeIt()
+    {
+        var (old, oldStub) = Old();
+        var (series, seriesStub) = OldSeries();
+        var target = new WatchStateTarget(Guid.NewGuid(), _serverA);
+
+        Assert.Equal(WatchStateCarryOperation.Rename, WatchStateMove.OfRename(oldStub, old.Id, target).Operation);
+        Assert.Equal(WatchStateCarryOperation.Merge, WatchStateMove.OfMerge(oldStub, old.Id, [target]).Operation);
+        Assert.Equal(WatchStateCarryOperation.Migration, WatchStateMove.Of(oldStub, old.Id, [target], removesOldItem: true).Operation);
+        Assert.Equal(WatchStateCarryOperation.Migration, WatchStateMove.OfSeries(seriesStub, series.Id, [target]).Operation);
+    }
+
+    [Fact]
     public void TheServersOfAMoveFollowTheSourcesOfTheOldStubBestFirst()
     {
         var stub = new StubEntry
@@ -1354,6 +1571,20 @@ public sealed class WatchStateCarrierTests : IDisposable
     // A move whose old item is removed right after, as a rename or the automatic migration (decision 179).
     private static WatchStateMove RemovingMove(BaseItem from, StubEntry stub, params (BaseItem Item, Guid? Server)[] versions) =>
         WatchStateMove.Of(stub, from.Id, versions.Select(version => new WatchStateTarget(version.Item.Id, version.Server)).ToList(), removesOldItem: true);
+
+    // The move of a pure rename: the same stub under a new file name (row 572).
+    private static WatchStateMove RenameMove(BaseItem from, StubEntry stub, BaseItem renamed) =>
+        WatchStateMove.OfRename(stub, from.Id, new WatchStateTarget(renamed.Id, _serverA));
+
+    // An old stub and its renamed item, owned by the old item until its file goes, as after the scan of a rename.
+    private (Video Old, StubEntry OldStub, Movie Renamed) Renamed()
+    {
+        var (old, oldStub) = Old();
+        var renamed = Movie(_serverA);
+        renamed.OwnerId = old.Id;
+        renamed.SetPrimaryVersionId(old.Id);
+        return (old, oldStub, renamed);
+    }
 
     private static void Link(Video primary, Video alternate)
     {
@@ -1382,7 +1613,7 @@ public sealed class WatchStateCarrierTests : IDisposable
     {
         await _log.SaveAsync(CancellationToken.None);
         _log.Dispose();
-        _log = new WatchStateCarryLog(Path.Combine(_data, "log"), new CapturingLogger<WatchStateCarryLog>());
+        _log = new WatchStateCarryLog(_database, new CapturingLogger<WatchStateCarryLog>());
     }
 
     // The old flat stub and its item.

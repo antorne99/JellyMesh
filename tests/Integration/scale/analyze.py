@@ -4,9 +4,10 @@
 usage: analyze.py <work folder>
 
 A sync runs from LastStartedUtc to LastFinishedUtc of /JellyMesh/Admin/Sync. Inside it, the read ends with the plugin's
-"Read N ... entries" log line, the index is saved when federation-index.json gets its new mtime, and the
-materialization ends with the "Materialized the federated folder" line, or with "Nothing changed since the last sync"
-when the sync skips it and the version links. The fake's request log says what was asked for
+"Read N ... entries" log line, and the materialization ends with the "Materialized the federated folder" line, or with
+"Nothing changed since the last sync" when the sync skips it and the version links. The index is saved in the plugin's
+SQLite store (jellymesh.db and its -wal log), whose files say nothing about when, so the materialization counts from the
+end of the read with the index save in it. The fake's request log says what was asked for
 and how long the fake itself took to answer.
 """
 import datetime
@@ -103,7 +104,7 @@ def sum_reads(read_lines):
     return f"Read {' + '.join(map(str, counts))} entries from {len(read_lines)} servers"
 
 
-def report(phase, previous_files):
+def report(phase):
     status_text = read(f"{phase}-status.json")
     if not status_text:
         return None
@@ -119,23 +120,34 @@ def report(phase, previous_files):
     read_line = read_lines[-1] if read_lines else None
     done_line = next((entry for entry in in_logs if entry[3].startswith(("Materialized the federated folder", "Nothing changed since the last sync"))), None)
     link_line = next((entry for entry in in_logs if entry[3].startswith("Linked the versions of the titles")), None)
-    index = files_of(phase).get("federation-index.json")
-    index_saved = index[1] if index and previous_files.get("federation-index.json") != index and start <= index[1] <= end + 1000 else None
-    stubs = files_of(phase).get("federated-stubs.json")
     in_samples = [s for s in samples if start <= s[0] <= end]
     memory = memory_of(phase)
     tree = tree_of(phase)
 
     read_end = read_line[0] if read_line else (items[-1][0] if items else None)
-    materialize_start = index_saved or read_end
+    materialize_start = read_end
     materialize_end = done_line[0] if done_line else end
     lines = [
         f"## {phase}",
         f"wall time (LastStartedUtc to LastFinishedUtc) {seconds(end - start)}",
         f"  read of the catalog                      {seconds(read_end - start) if read_end else '-'}"
         f"  ({len(items)} /Items calls, {sum(r[2] for r in items) / 1048576:.1f} MiB, fake busy {seconds(sum(r[1] for r in items))})",
-        f"  index save after the read                {seconds(index_saved - read_end) if index_saved and read_end else 'no write'}",
-        f"  materialization                          {seconds(materialize_end - materialize_start) if materialize_start else '-'}",
+    ]
+    # A full read of each server starts with its first page of films, so the pages split by server there.
+    segments = []
+    for r in items:
+        if r[3] == "items-Movie 0" or not segments:
+            segments.append([])
+        segments[-1].append(r)
+    if len(segments) > 1:
+        for n, segment in enumerate(segments, 1):
+            end_ms = segment[-1][0] + segment[-1][1]
+            following = segments[n][0][0] if n < len(segments) else read_end
+            lines.append(f"    server {n}: pages {seconds(end_ms - segment[0][0])} ({len(segment)} calls, "
+                         f"{(end_ms - segment[0][0]) / len(segment):.0f} ms a call, fake busy {seconds(sum(r[1] for r in segment))}), "
+                         f"then {seconds(following - end_ms) if following else '-'} to the {'next server' if n < len(segments) else 'read log line'}")
+    lines += [
+        f"  materialization, with the index save     {seconds(materialize_end - materialize_start) if materialize_start else '-'}",
         f"    image downloads                        {len(images)}"
         + (f", first to last {seconds(images[-1][0] - images[0][0])}, fake busy {seconds(sum(r[1] for r in images))}" if images else ""),
         f"    from read end to first image           {seconds(images[0][0] - read_end) if images and read_end else '-'}",
@@ -150,8 +162,10 @@ def report(phase, previous_files):
         lines.append(f"memory, docker stats peak sample          {max(s[1] for s in in_samples)} MiB (at start {in_samples[0][1]} MiB)")
         lines.append(f"memory, process RSS peak sample           {max(s[4] for s in in_samples)} MiB")
     lines.append(f"memory, process VmHWM after the phase     {memory.get('VmHWM', '-')} MiB (cgroup memory.peak {memory.get('cgroup-peak', '-')} MiB, page cache included)")
-    lines.append(f"federation-index.json                     {index[0] / 1048576:.1f} MiB" if index else "federation-index.json                     -")
-    lines.append(f"federated-stubs.json                      {stubs[0] / 1048576:.1f} MiB" if stubs else "federated-stubs.json                      -")
+    files = files_of(phase)
+    database, log = files.get("jellymesh.db"), files.get("jellymesh.db-wal")
+    lines.append(f"jellymesh.db                              {database[0] / 1048576:.1f} MiB" if database else "jellymesh.db                              -")
+    lines.append(f"jellymesh.db-wal                          {log[0] / 1048576:.1f} MiB" if log else "jellymesh.db-wal                          -")
     groups = (read(f"{phase}-groups.txt") or "").strip()
     if groups:
         lines.append(f"version groups in the registry            {groups}")
@@ -162,7 +176,7 @@ def report(phase, previous_files):
     servers = status.get("Servers") or []
     lines.append("servers                                   " + "; ".join(
         f"{s.get('State')} failure={s.get('Failure')} movies={s.get('Movies')} series={s.get('Series')} episodes={s.get('Episodes')}" for s in servers))
-    return "\n".join(lines), files_of(phase)
+    return "\n".join(lines)
 
 
 print(f"# Scale run in {WORK}")
@@ -172,7 +186,6 @@ if remotes > 1:
     print(f"{remotes} remote servers with that catalog each")
 idle = memory_of("idle")
 print(f"idle before the first sync: VmHWM {idle.get('VmHWM', '-')} MiB, VmRSS {idle.get('VmRSS', '-')} MiB\n")
-previous = files_of("idle")
 for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-scanned", "incremental-scanned-again",
               "incremental-scanned-third", "nightly-scanned", "incremental-after-nightly"):
     if phase == "scan":
@@ -186,9 +199,7 @@ for phase in ("first", "incremental", "repeat", "nightly", "scan", "incremental-
             if scan_samples:
                 print(f"memory, docker stats peak sample          {max(s[1] for s in scan_samples)} MiB")
             print(f"memory, process VmHWM after               {memory.get('VmHWM', '-')} MiB\n")
-            previous = files_of("scan")
         continue
-    result = report(phase, previous)
-    if result:
-        text, previous = result
+    text = report(phase)
+    if text:
         print(text + "\n")

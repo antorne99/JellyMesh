@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -43,6 +44,11 @@ public sealed class SyncScheduleService : BackgroundService
         _logger = logger;
         _migration = migration;
     }
+
+    /// <summary>
+    /// Gets or sets the pause between two tries to read the settings at start.
+    /// </summary>
+    internal TimeSpan StoreRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <inheritdoc />
     public override Task StartAsync(CancellationToken cancellationToken)
@@ -98,13 +104,30 @@ public sealed class SyncScheduleService : BackgroundService
             await Task.Delay(_taskLookupDelay, cancellationToken).ConfigureAwait(false);
         }
 
-        ApplySchedule();
+        // The store already said why it cannot read the settings; the schedule waits for them.
+        while (!TryApplySchedule())
+        {
+            await Task.Delay(StoreRetryDelay, cancellationToken).ConfigureAwait(false);
+        }
 
         // An interval trigger waits an hour if its task never ran, whatever the interval, so the first run is started here.
         // So is the sync a migration waiting at the carry needs, once per start (§10 row 420).
         if (WorkerOf<IncrementalSyncTask>() is { } worker && (worker.LastExecutionResult is null || MigrationWaits()))
         {
             _taskManager.QueueScheduledTask<IncrementalSyncTask>(new TaskOptions());
+        }
+    }
+
+    private bool TryApplySchedule()
+    {
+        try
+        {
+            ApplySchedule();
+            return true;
+        }
+        catch (StoreSuspendedException)
+        {
+            return false;
         }
     }
 

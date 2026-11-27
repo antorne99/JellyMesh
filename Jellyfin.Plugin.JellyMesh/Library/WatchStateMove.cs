@@ -42,6 +42,17 @@ public sealed record WatchStateMove
     public bool RemovesOldItem { get; private init; }
 
     /// <summary>
+    /// Gets the operation the move comes from, which its carry records keep (row 575).
+    /// </summary>
+    public WatchStateCarryOperation Operation { get; private init; } = WatchStateCarryOperation.Migration;
+
+    /// <summary>
+    /// Gets a value indicating whether the move is a pure rename: the same stub under a new file name, whose new item takes
+    /// the whole row of the old one at the first carry, over the row Jellyfin reattached to it by key (§10 row 572).
+    /// </summary>
+    public bool IsPureRename => Operation == WatchStateCarryOperation.Rename;
+
+    /// <summary>
     /// Gets the new items: for a film or an episode the new versions, the local copy included if there is one, and the
     /// new stubs never linked with them (D3); for a series its new series stubs.
     /// </summary>
@@ -76,6 +87,16 @@ public sealed record WatchStateMove
     }
 
     /// <summary>
+    /// Makes the move of a stub that a server rename gave a new file name, removed right after (F14, §10 row 572).
+    /// </summary>
+    /// <param name="from">The stub at its old path.</param>
+    /// <param name="fromItemId">The Jellyfin item of the old path.</param>
+    /// <param name="target">The item of the new path.</param>
+    /// <returns>The move.</returns>
+    public static WatchStateMove OfRename(StubEntry from, Guid fromItemId, WatchStateTarget target)
+        => Of(from, fromItemId, [target], removesOldItem: true) with { Operation = WatchStateCarryOperation.Rename };
+
+    /// <summary>
     /// Makes the move of a film stub whose title a manual merge joined with another of the same library: favorite, rating
     /// and play count go to the primary, played to every version, and the position stays (decision 172). The stub may stay
     /// as a version, so the move never says it is removed and its carry records stay (decisions 155, 179, 187).
@@ -85,7 +106,7 @@ public sealed record WatchStateMove
     /// <param name="targets">The versions of the merged title; the stub itself is left out of them.</param>
     /// <returns>The move.</returns>
     public static WatchStateMove OfMerge(StubEntry from, Guid fromItemId, IReadOnlyList<WatchStateTarget> targets)
-        => Of(from, fromItemId, targets) with { CarriesPosition = false };
+        => Of(from, fromItemId, targets) with { CarriesPosition = false, Operation = WatchStateCarryOperation.Merge };
 
     /// <summary>
     /// Makes the move of an old series stub, whose favorite and rating go to each new series stub (decision 150).

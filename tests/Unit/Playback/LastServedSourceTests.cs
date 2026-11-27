@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Jellyfin.Plugin.JellyMesh.Tests.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -115,36 +117,27 @@ public sealed class LastServedSourceTests
     }
 
     [Fact]
-    public async Task The_record_on_disk_survives_a_restart_and_holds_no_address_and_no_token()
+    public async Task The_record_in_the_database_survives_a_restart_and_holds_no_address_and_no_token()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "jellymesh-last-served-" + Guid.NewGuid().ToString("N"));
-        try
+        using var database = new TestDatabase();
+        var source = PlaybackValues.Source("remote-item-sentinel");
+        using (var store = new LastServedSourceStore(database, NullLogger<LastServedSourceStore>.Instance))
         {
-            var source = PlaybackValues.Source("remote-item-sentinel");
-            using (var store = new LastServedSourceStore(folder, NullLogger<LastServedSourceStore>.Instance))
-            {
-                var fixture = new CoordinatorFixture(store);
-                await fixture.OpenAsync(PlaybackValues.Stub(source));
-            }
-
-            using var restarted = new LastServedSourceStore(folder, NullLogger<LastServedSourceStore>.Instance);
-            var text = await File.ReadAllTextAsync(Path.Combine(folder, LastServedSourceStore.FileName));
-
-            Assert.Equal(source.ServerId, restarted.Find(_user.UserId, "stub"));
-            Assert.DoesNotContain(PlaybackValues.RemoteToken, text, StringComparison.Ordinal);
-            Assert.DoesNotContain(PlaybackValues.LocalToken, text, StringComparison.Ordinal);
-            Assert.DoesNotContain(PlaybackValues.RemotePlaySession, text, StringComparison.Ordinal);
-            Assert.DoesNotContain(PlaybackValues.RemoteDevice, text, StringComparison.Ordinal);
-            Assert.DoesNotContain("tailnet", text, StringComparison.Ordinal);
-            Assert.DoesNotContain("remote-item-sentinel", text, StringComparison.Ordinal);
+            var fixture = new CoordinatorFixture(store);
+            await fixture.OpenAsync(PlaybackValues.Stub(source));
         }
-        finally
-        {
-            if (Directory.Exists(folder))
-            {
-                Directory.Delete(folder, true);
-            }
-        }
+
+        using var restarted = new LastServedSourceStore(database, NullLogger<LastServedSourceStore>.Instance);
+        var file = Path.Combine(database.Folder, PluginDatabase.FileName);
+        var text = await File.ReadAllTextAsync(file) + await File.ReadAllTextAsync(file + "-wal");
+
+        Assert.Equal(source.ServerId, restarted.Find(_user.UserId, "stub"));
+        Assert.DoesNotContain(PlaybackValues.RemoteToken, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(PlaybackValues.LocalToken, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(PlaybackValues.RemotePlaySession, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(PlaybackValues.RemoteDevice, text, StringComparison.Ordinal);
+        Assert.DoesNotContain("remote.invalid", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("remote-item-sentinel", text, StringComparison.Ordinal);
     }
 }
 

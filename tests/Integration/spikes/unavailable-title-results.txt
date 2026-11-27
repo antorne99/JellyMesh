@@ -706,28 +706,28 @@ wrong token                                          401
 user without the library                             404  {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-<hex>-60f0364e2
 same user, id that does not exist                    404  {"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"traceId":"00-<hex>-262022ee3
 refusal branch reached by those calls: 0 (expected 0)
-user with the library                                503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+user with the library                                503  {"Message":"Server non raggiungibile (remoto-segreto.sentinel.invalid)"}
     ^ body carries the remote name
 --- user with EnableMediaPlayback=false
 stock answer, no filter involved                     200  {"MediaSources":[{"Protocol":"Http","Id":"<hex>","Path":"http://127.0.0.1:8096/JellyMesh/Play/film-online","Type":"Default"
 {"ErrorCode":null,"sources":1,"directPlay":true}
-filter refusing as offline                           503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+filter refusing as offline                           503  {"Message":"Server non raggiungibile (remoto-segreto.sentinel.invalid)"}
     ^ body carries the remote name
 --- late failure, what the server passes on from the play endpoint
-server proxies a 503                                 503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+server proxies a 503                                 503  {"Message":"Server non raggiungibile (remoto-segreto.sentinel.invalid)"}
     ^ body carries the remote name
-same, no token                                       503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+same, no token                                       503  {"Message":"Server non raggiungibile (remoto-segreto.sentinel.invalid)"}
     ^ body carries the remote name
-play endpoint itself, no token (spike only)          503  {"Message":"Server non raggiungibile (remoto-segreto.tailnet-sentinel.ts.net)"}
+play endpoint itself, no token (spike only)          503  {"Message":"Server non raggiungibile (remoto-segreto.sentinel.invalid)"}
     ^ body carries the remote name
 stock static stream of a live stub, no token         206 1000 bytes
 --- unfiltered dead target with the remote name in the .strm (never in JellyMesh)
-PlaybackInfo                                         200  {"MediaSources":[{"Protocol":"Http","Id":"<hex>","Path":"http://remoto-segreto.tailnet-sentinel.ts.net:8096/Videos/x/stream
+PlaybackInfo                                         200  {"MediaSources":[{"Protocol":"Http","Id":"<hex>","Path":"http://remoto-segreto.sentinel.invalid:8096/Videos/x/stream
     ^ body carries the remote name
 static stream, unresolvable host                     500  Error processing request.
 item for a non admin                                 200  {"Name":"JM Segreto (2026)","ServerId":"<hex>","Id":"<hex>","Etag":"ddd075ab4e95c1a24a4f34edc263
     ^ body carries the remote name
-["http://remoto-segreto.tailnet-sentinel.ts.net:8096/Videos/x/stream"]
+["http://remoto-segreto.sentinel.invalid:8096/Videos/x/stream"]
 server log lines naming the remote: 3
 --- DTO rewrite reaches the API (item=placeholder,virtual,playaccess)
 {"Name":"JM Offline","IsPlaceHolder":true,"LocationType":"Virtual","PlayAccess":"None"}

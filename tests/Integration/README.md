@@ -134,6 +134,7 @@ Observed while building this environment, on Jellyfin 12.4.0.
 - **Episodes:** `ProviderIds` is empty on the test episodes, so identity has to come from the parent series plus season and episode numbers, as §4.1 expects.
 - **Files with several episodes:** `S01E01-E02` sets `IndexNumberEnd` on a video file and on a `.strm`, and a list always carries it, whatever `Fields` asks for. The name becomes `Episodio 1 / Episodio 2`, and only one item exists. NextUp treats it as both: once it is played, the next item is `E03`.
 - **`.nfo` of several episodes:** `<episodenumberend>` sets `IndexNumberEnd` even when the file name holds one number, and `<lockdata>` keeps it. Several `<episodedetails>` blocks work too, joining their titles. "Replace all metadata" on an unlocked item keeps `IndexNumber` but clears `IndexNumberEnd`, so the stub provider restores it, also on a stub whose file name holds one number.
+- **Watch state shared by key:** two episodes with the same user data key, such as `S01E01-E02` and `S01E01` of series with the same series ID, can exchange their watch state when a library holding both is deleted and a scan follows. On a server without the plugin it happened in 7 runs out of 7, in a random direction; a control pair with two series IDs, 0 out of 7. JellyMesh writes nothing to them. Accepted as a Jellyfin limit (§10 row 557): `libraries/split.sh` reports it as `KNOWN` and does not count it as a failure.
 
 These observations led to the three decisions recorded in §10 of the plan: a 5% bitrate tolerance, removing the year from `Name`, and using Jellyfin's video bitrate uncorrected.
 
@@ -179,7 +180,7 @@ bash playback/direct1.sh          # the direct-play fixture, then direct3.sh
 bash playback/final.sh            # the whole proof in order, then final2.sh, final3.sh and final4.sh
 ```
 
-`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`.
+`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
 
 ### `provider/`
 
@@ -255,6 +256,18 @@ MEDIA=<main checkout>/tests/Integration/media bash play/keyfile.sh
 MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-last] [PORT=18436] bash play/last-served.sh
 ```
 
+`store.sh` proves integration tests 3 and 4 of the 0.6 spec on the plugin database. The stock `/Plugins/{id}/Configuration` answers 404 and writes no XML, while the settings save and read through `/JellyMesh/Admin/Settings`. The nightly reconciliation makes a copy readable by its owner only; a setting changed after it, then a damaged `jellymesh.db`, start again from the copy with the restore banner, the damaged file set aside, the saved password working, and the banner gone once dismissed. A schema newer than the build leaves the file as it was, answers 503 to users who are not admins and refuses a sync. A data folder Jellyfin cannot write, with Jellyfin run as user 1000, leaves JellyMesh unavailable until "Retry" finds it writable. It makes `$PREFIX-local` and `$PREFIX-remote` (default `jm-store`, on `PORT` and the next one, default 18530) and removes them at the end unless `KEEP=1`.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-store] [PORT=18530] bash play/store.sh
+```
+
+`data-migration.sh` proves integration test 2 of the 0.6 spec: the data of 0.5 and of 0.4 moves into the plugin database. For each tag in `CASES` (default `v0.5.0.2 v0.4.3.0`) it builds that release in `jellymesh-sdk` from `git archive`, sets a consumer up on it with two servers with saved passwords, a connected JellyMesh server, a manual merge and a changed setting, and on 0.5 the watch state kept from a removed server. After installing this build it checks the database is healthy, the same servers, connected server, merge, setting and folder are there, a sync logs in with the saved passwords, the XML and the old files are in `migrated-0.5`, owner-only, for 30 days, the passwords are stored encrypted, and on 0.5 the kept watch state comes back when the removed server is added again. The 0.5 case then goes back to 0.5 by hand, as the main README describes, and checks the same servers, connected server, merge and setting, and a sync that logs in with the saved passwords. It makes `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` and `$PREFIX-gone` (default `jm-data-migration`, on `PORT` and the next three, default 18540) and removes them at the end unless `KEEP=1`.
+
+```sh
+MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-data-migration] [PORT=18540] [CASES="v0.5.0.2 v0.4.3.0"] bash play/data-migration.sh
+```
+
 ### `merge/`
 
 Proves manual merges on the per-server layout (decision 20, Q23), on two stock remotes and a consumer whose Film library holds both server folders. Copies of one server keep one stub, which takes the state of the other; copies of two servers and a local copy become versions, linked as soon as the merge is saved; a new stub is linked by the scan that makes its item (Q145). The containers are `$PREFIX-local`, `$PREFIX-remote` and `$PREFIX-peer` (default `jm-merge`, on `PORT` and the next two, default 18441). Checks marked `PENDING (row 144)` wait for the thorough detach that dissolves a group after an undo.
@@ -263,6 +276,7 @@ Proves manual merges on the per-server layout (decision 20, Q23), on two stock r
 export MEDIA=<main checkout>/tests/Integration/media [PREFIX=jm-merge] [PORT=18441]
 bash merge/up.sh                  # the two remotes, a consumer, a chain of contradicting IDs
 bash merge/run.sh                 # list, merge, restart, a copy that changes or goes away, a new stub, undo, the page, a local copy
+bash merge/rename.sh              # instead of run.sh: a server renamed over a merged title it marked not watched (row 575)
 bash merge/down.sh                # removes containers, volumes and scratch files
 ```
 
@@ -288,7 +302,7 @@ bash ui/down.sh                   # removes containers, volumes, network and scr
 
 `check.sh` moves the servers through the other states and puts them back, and also repairs what an interrupted run left. To stay in one by hand, use `bash ui/state.sh offline` and `online` for a remote (`stock` by default), `nokey` to delete the credential key file (on `fresh` by default), `blockkey` to put a folder where the key file goes (on `first` by default), and `key` to fix either, entering the logins again. Screenshots go to `$WORK/web/shots`, named after the state and the width, and the results to `$WORK/web/check.out`.
 
-The browser runs on the private network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
+The browser runs on the Docker network of these servers and reaches them by container name. Through `host.docker.internal` a few new connections stayed in `SYN_SENT` for 7 to 45 seconds on Docker Desktop while the server answered others in milliseconds, which failed about one run in three with `urlopen timed out`.
 
 Selectors, button texts and the way to read an outcome live only in `uipage.py`, so a page that changes shape needs changes there. Confirmations are the Jellyfin dialog, read with `wait_confirm` and answered with `answer_confirm`, and a browser dialog counts as a script error. To look at the page some other way, write a script that imports `uipage` and run it with `pw` from `lib.sh`:
 
@@ -328,7 +342,7 @@ It runs every check and exits 1 if any fails, with the reason and, when the serv
 
 The server is the `release-12-1` service of `docker-compose.yml`, on port 8099 (`RELEASE_PORT`). Its `release` profile keeps it out of `docker compose up`. The script creates it with fresh `jellymesh-test_release-12-1-*` volumes, puts the plugin in `/config/plugins` before the first start, and removes the container and volumes at the end (`KEEP=1` leaves it running). It touches no other service of the stack. The service sets `JELLYMESH_FEDERATED_ROOT` to a tmpfs, because the first sync and the post-scan task do nothing without a federated folder.
 
-0.5 opens `watch-state.db` only when the file exists, so the script seeds an empty one in the plugin's data folder and checks SQLite wrote its schema there. With 0.5.0.2 that happens in the first sync after the start, so no scan is needed. When a release makes its own database at start, as `jellymesh.db` in 0.6, set `STORE_FILE` and `SEED_STORE=0`, or change their defaults in the script.
+From 0.6 the plugin makes `jellymesh.db` at start, and the script checks it opens there, with no seeding (`STORE_FILE=jellymesh.db`, `SEED_STORE=0`, the defaults). 0.5 opens `watch-state.db` only when the file exists: for a 0.5 zip set `STORE_FILE=watch-state.db SEED_STORE=1`, so the script seeds an empty one in the plugin's data folder and checks SQLite wrote its schema there. With 0.5.0.2 that happens in the first sync after the start, so no scan is needed.
 
 The zip of v0.5.0.1, built from its tag, fails: it asks for `Microsoft.Data.Sqlite` 10.0.14.0, and Jellyfin 12.1 stops at start with `FileNotFoundException` for that assembly, so the plugin and its store are not checked. The 0.5.0.2 zip with `targetAbi` 99.0.0.0 fails the plugin check (`Skipping disabled plugin`) and the store check. With `STORE_FILE=jellymesh.db SEED_STORE=0` the 0.5.0.2 zip fails the store check, as it should.
 

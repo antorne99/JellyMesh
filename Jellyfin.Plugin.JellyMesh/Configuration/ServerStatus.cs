@@ -47,4 +47,9 @@ public sealed record ServerStatus(
     /// Gets the state of the rename of this server.
     /// </summary>
     public ServerRenameState? Rename { get; init; }
+
+    /// <summary>
+    /// Gets, after a save that did not need the remote, why it could not be read; <see cref="RemoteFailure.None"/> otherwise (D28).
+    /// </summary>
+    public RemoteFailure RemoteWarning { get; init; }
 }

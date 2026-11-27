@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Provider;
+using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.MediaInfo;
@@ -28,7 +29,7 @@ public class PeerGuardFilterTests
 
     public PeerGuardFilterTests()
     {
-        _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer);
+        _filter = new PeerGuardFilter(_fixture.Directory, _fixture.Catalog, _fixture.Slots, _fixture.Closer, _fixture.Database.Object);
     }
 
     private static string Route(Guid id) => id.ToString("N");
@@ -42,7 +43,7 @@ public class PeerGuardFilterTests
     // The legacy params query parameter with the play session in field 20, the one stock reads over PlaySessionId.
     private static string LegacyParams(string playSession) => "params=" + Uri.EscapeDataString(new string(';', 20)) + playSession;
 
-    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, string method, Guid? item, string query = "", Action? during = null, Action<DefaultHttpContext>? ends = null, Exception? failure = null, Dictionary<string, StringValues>? decoded = null)
+    private async Task<(ResourceExecutingContext Context, bool Ran)> RunAsync(ControllerActionDescriptor action, string method, Guid? item, string query = "", Action? during = null, Action<DefaultHttpContext>? ends = null, Exception? failure = null, Dictionary<string, StringValues>? decoded = null, string? playSession = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = method;
@@ -56,6 +57,11 @@ public class PeerGuardFilterTests
         if (item is { } id)
         {
             route.Values["itemId"] = Route(id);
+        }
+
+        if (playSession is not null)
+        {
+            route.Values["playSessionId"] = playSession;
         }
 
         var context = new ResourceExecutingContext(new ActionContext(http, route, action), new List<IFilterMetadata>(), new List<IValueProviderFactory>());
@@ -117,6 +123,92 @@ public class PeerGuardFilterTests
         Assert.True(ran);
     }
 
+    // Nothing outside the peers table marks a peer, so this filter lets everyone by; StoreNotLoadedFilter stops non-admins (D32).
+    [Fact]
+    public async Task While_the_peers_cannot_be_read_a_local_user_passes_untouched()
+    {
+        _fixture.Caller = new Jellyfin.Database.Implementations.Entities.User("mario", "auth", "reset");
+        _fixture.Store.Unavailable = true;
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Items", "GetItems"), "GET", null);
+
+        Assert.True(ran);
+        Assert.Null(context.Result);
+    }
+
+    // While the database cannot be used a peer has no access, and what it already plays goes on (row 524).
+    [Theory]
+    [InlineData("MediaInfo", "GetPostedPlaybackInfo", "POST")]
+    [InlineData("Videos", "GetVideoStream", "GET")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment", "GET")]
+    [InlineData("Subtitle", "GetSubtitle", "GET")]
+    [InlineData("Image", "GetItemImage", "GET")]
+    [InlineData("MediaSegments", "GetItemSegments", "GET")]
+    [InlineData("User", "GetCurrentUser", "GET")]
+    [InlineData("HlsSegment", "StopEncodingProcess", "DELETE")]
+    [InlineData("Items", "GetItems", "GET")]
+    public async Task With_the_database_damaged_a_peer_gets_503(string controller, string action, string method)
+    {
+        _fixture.Health = new StoreHealth(StoreState.Damaged, "test");
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock(controller, action), method, ProviderFixture.SharedItem, "?PlaySessionId=unknown");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(nameof(ProviderController.GetLibraries), "GET")]
+    [InlineData(nameof(ProviderController.GetChanges), "GET")]
+    [InlineData(nameof(ProviderController.RenewStream), "PUT")]
+    [InlineData(nameof(ProviderController.ReleaseStream), "DELETE")]
+    public async Task With_the_database_damaged_the_provider_api_answers_503(string action, string method)
+    {
+        _fixture.Health = new StoreHealth(StoreState.Damaged, "test");
+
+        var (context, ran) = await RunAsync(ProviderFixture.Plugin<ProviderController>(action), method, null);
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task With_the_database_damaged_a_peer_goes_on_with_the_stream_it_plays()
+    {
+        var reservation = _fixture.Slots.TryReserve(_fixture.Peer.Id, 1, null)!;
+        _fixture.Slots.Confirm(_fixture.Peer.Id, reservation, "play", ProviderFixture.SharedItem);
+        _fixture.Health = new StoreHealth(StoreState.Damaged, "test");
+
+        Assert.True((await StreamAsync()).Ran);
+        Assert.True((await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", ProviderFixture.SharedItem, "?" + LegacyParams("play"))).Ran);
+        Assert.True((await RunAsync(ProviderFixture.Stock("Subtitle", "GetSubtitle"), "GET", ProviderFixture.SharedItem)).Ran);
+        Assert.True((await RunAsync(ProviderFixture.Plugin<ProviderController>(nameof(ProviderController.RenewStream)), "PUT", null, playSession: "play")).Ran);
+        Assert.True((await RunAsync(ProviderFixture.Plugin<ProviderController>(nameof(ProviderController.ReleaseStream)), "DELETE", null, playSession: "play")).Ran);
+        Assert.True((await RunAsync(ProviderFixture.Stock("HlsSegment", "StopEncodingProcess"), "DELETE", null, "?PlaySessionId=play")).Ran);
+    }
+
+    [Fact]
+    public async Task With_the_database_damaged_the_stream_a_peer_plays_opens_no_other_title()
+    {
+        var reservation = _fixture.Slots.TryReserve(_fixture.Peer.Id, 1, null)!;
+        _fixture.Slots.Confirm(_fixture.Peer.Id, reservation, "play", Guid.NewGuid());
+        _fixture.Health = new StoreHealth(StoreState.Damaged, "test");
+
+        var (context, ran) = await RunAsync(ProviderFixture.Stock("Videos", "GetVideoStream"), "GET", ProviderFixture.SharedItem, "?playSessionId=play");
+
+        Assert.False(ran);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ObjectResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task With_the_database_damaged_anyone_who_is_not_a_peer_passes_untouched()
+    {
+        _fixture.Health = new StoreHealth(StoreState.Damaged, "test");
+        _fixture.Caller = new Jellyfin.Database.Implementations.Entities.User("mario", "auth", "reset");
+
+        Assert.True((await RunAsync(ProviderFixture.Stock("Items", "GetItems"), "GET", null)).Ran);
+    }
+
     [Fact]
     public async Task With_no_peers_the_request_is_not_even_looked_at()
     {
@@ -135,6 +227,7 @@ public class PeerGuardFilterTests
     [InlineData("Library", "GetDownload")]
     [InlineData("Search", "GetSearchHints")]
     [InlineData("Configuration", "GetNamedConfiguration")]
+    [InlineData("Image", "GetItemImageInfos")]
     [InlineData("Unknown", "AddedByAFutureJellyfin")]
     public async Task Stock_routes_are_closed_to_a_peer(string controller, string action)
     {
@@ -974,6 +1067,17 @@ public class PeerGuardFilterTests
         Assert.True(ran);
     }
 
+    // The list of image details names the files on this server (row 585); an image by type and index does not.
+    [Theory]
+    [InlineData("GetItemImage")]
+    [InlineData("GetItemImageByIndex")]
+    [InlineData("GetItemImage2")]
+    public async Task An_image_by_type_of_a_shared_item_is_served(string action)
+    {
+        Assert.Equal(PeerRouteKind.Item, PeerRoutes.Classify(ProviderFixture.Stock("Image", action), "GET"));
+        Assert.True((await RunAsync(ProviderFixture.Stock("Image", action), "GET", ProviderFixture.SharedItem)).Ran);
+    }
+
     [Fact]
     public async Task The_media_segments_of_a_shared_item_are_served()
     {
@@ -1227,6 +1331,19 @@ public class PeerPlaybackInfoFilterTests
     private static OkObjectResult Answer(string? playSession = "play", PlaybackErrorCode? error = null)
     {
         return new OkObjectResult(new PlaybackInfoResponse { PlaySessionId = playSession, ErrorCode = error });
+    }
+
+    // This filter lets everyone by while the peers cannot be read; StoreNotLoadedFilter stops non-admins (D32).
+    [Fact]
+    public async Task While_the_peers_cannot_be_read_a_local_user_plays_as_on_stock()
+    {
+        _fixture.Caller = new Jellyfin.Database.Implementations.Entities.User("mario", "auth", "reset");
+        _fixture.Store.Unavailable = true;
+
+        var (context, ran) = await RunAsync(Answer());
+
+        Assert.True(ran);
+        Assert.Null(context.Result);
     }
 
     [Fact]

@@ -15,7 +15,7 @@ public interface ISyncHistory
     IReadOnlyList<SyncRun> Runs { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the file could not be read, so the runs before it were set aside.
+    /// Gets a value indicating whether the database cannot be read for now, so only the runs since show.
     /// </summary>
     bool IsDamaged { get; }
 
@@ -26,6 +26,7 @@ public interface ISyncHistory
     /// <param name="run">The run.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
-    /// <exception cref="System.IO.IOException">The history could not be saved. The run still shows.</exception>
+    /// <exception cref="Jellyfin.Plugin.JellyMesh.Storage.StoreSuspendedException">The database is suspended. The run still shows.</exception>
+    /// <exception cref="Microsoft.Data.Sqlite.SqliteException">The history could not be saved. The run still shows.</exception>
     Task AddAsync(SyncRun run, CancellationToken cancellationToken);
 }

@@ -67,7 +67,8 @@ public abstract class StubMetadataProvider :
     protected abstract ItemUpdateType Run(BaseItem item, MetadataRefreshOptions options, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Tells whether an item is a <c>.strm</c> in the federated folder, even one the registry does not know yet.
+    /// Tells whether an item is a <c>.strm</c> in the federated folder, even one the registry does not know yet. While
+    /// the folder is not known any <c>.strm</c> is, so that none is probed on its signed URL.
     /// </summary>
     /// <param name="item">The item.</param>
     /// <returns>Whether it is.</returns>
@@ -77,6 +78,6 @@ public abstract class StubMetadataProvider :
 
         return item.Path is { } path
             && path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
-            && FederatedPaths.RelativeTo(Store.Read(config => config.FederatedFolderPath), path) is not null;
+            && (Store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.RelativeTo(root, path) is not null);
     }
 }

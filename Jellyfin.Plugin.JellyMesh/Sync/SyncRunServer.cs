@@ -22,4 +22,8 @@ public sealed record SyncRunServer(
     int Updated,
     int Removed,
     int Failed,
-    RemoteFailure? Failure = null);
+    RemoteFailure? Failure = null)
+{
+    /// <summary>Gets what the admin should know without the read having failed, null if nothing.</summary>
+    public SyncRunWarning? Warning { get; init; }
+}

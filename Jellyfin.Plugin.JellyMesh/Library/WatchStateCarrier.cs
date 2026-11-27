@@ -371,7 +371,7 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
         foreach (var user in run.Users)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (_userData.GetUserData(user, from) is not { } old || ModeOf(user, from, old, move.Kind) is not { } mode)
+            if (_userData.GetUserData(user, from) is not { } old || ModeOf(user, from, old, move) is not { } mode)
             {
                 continue;
             }
@@ -379,19 +379,24 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             var (changed, reason) = rows(user, old, mode);
             if (changed is null)
             {
-                skipped.Add(new WatchStateUserSkip(user.Id, reason));
+                // An empty row of a pure rename only clears what the user sees, so one who sees nothing is not left (row 572).
+                if (!(move.IsPureRename && reason == WatchStateUserSkipReason.NoVisibleVersion && !HasAnything(old)))
+                {
+                    skipped.Add(new WatchStateUserSkip(user.Id, reason));
+                }
+
                 continue;
             }
 
             // A favorite or rating already written is not written again, even if a later row fails or the run is cancelled:
             // a later run carries only the watch (decision 155).
-            if (!Save(user, changed, () => RecordFavorite(user, from, mode), cancellationToken))
+            if (!Save(user, changed, () => RecordFavorite(user, from, mode, move.Operation), cancellationToken))
             {
                 skipped.Add(new WatchStateUserSkip(user.Id, WatchStateUserSkipReason.NotSaved));
                 continue;
             }
 
-            _log.Record(user.Id, from.Id, old.LastPlayedDate);
+            _log.Record(user.Id, from.Id, old.LastPlayedDate, move.Operation);
             recorded.Add(user.Id);
         }
 
@@ -399,24 +404,26 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
     }
 
     // Records a first carry with no date once its favorite or rating is saved, so it is not carried again (decision 155).
-    private void RecordFavorite(User user, BaseItem from, WatchStateCarryMode mode)
+    private void RecordFavorite(User user, BaseItem from, WatchStateCarryMode mode, WatchStateCarryOperation operation)
     {
         if (mode == WatchStateCarryMode.First)
         {
-            _log.Record(user.Id, from.Id, null);
+            _log.Record(user.Id, from.Id, null, operation);
         }
     }
 
-    // Null when there is nothing to carry: an empty row, or a carry done with no newer watch since (decision 155).
-    private WatchStateCarryMode? ModeOf(User user, BaseItem from, UserItemData old, WatchStateMoveKind kind)
+    // Null when there is nothing to carry: an empty row, or a carry done with no newer watch since (decision 155). A pure
+    // rename carries an empty row too, and counts only its own record or one of no known operation (rows 572, 575).
+    private WatchStateCarryMode? ModeOf(User user, BaseItem from, UserItemData old, WatchStateMove move)
     {
-        if (!_log.TryFind(user.Id, from.Id, out var carried))
+        if (!_log.TryFind(user.Id, from.Id, out var carried, out var operation)
+            || (move.IsPureRename && operation is { } done && done != WatchStateCarryOperation.Rename))
         {
-            return HasAnything(old) ? WatchStateCarryMode.First : null;
+            return HasAnything(old) || move.IsPureRename ? WatchStateCarryMode.First : null;
         }
 
         // A series holds only favorite and rating, which go once.
-        return kind == WatchStateMoveKind.Title && old.LastPlayedDate is { } watched && (carried is null || watched > carried)
+        return move.Kind == WatchStateMoveKind.Title && old.LastPlayedDate is { } watched && (carried is null || watched > carried)
             ? WatchStateCarryMode.Repeat
             : null;
     }
@@ -453,8 +460,14 @@ public sealed class WatchStateCarrier : IWatchStateCarrier
             }
 
             seen = true;
-            var rows = WatchStateTransfer.Carry(old, lastServer, move.Servers, versions.Select(version => version.Version).ToList(), mode, move.CarriesPosition)
-                .ToHashSet(ReferenceEqualityComparer.Instance);
+
+            // The first carry of a pure rename takes the whole old row; a later one follows decision 155 (row 572).
+            var rows = move.IsPureRename && mode == WatchStateCarryMode.First
+                ? versions.Where(version => version.Version.IsVisible && WatchStateTransfer.CopyWhole(old, version.Version.Data))
+                    .Select(version => version.Version.Data)
+                    .ToHashSet(ReferenceEqualityComparer.Instance)
+                : WatchStateTransfer.Carry(old, lastServer, move.Servers, versions.Select(version => version.Version).ToList(), mode, move.CarriesPosition)
+                    .ToHashSet(ReferenceEqualityComparer.Instance);
             changed.AddRange(versions.Where(version => rows.Contains(version.Version.Data)).Select(version => (version.Item, version.Version.Data)));
         }
 

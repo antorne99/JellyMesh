@@ -75,7 +75,11 @@ public sealed class UnchangedSyncGate : IUnchangedSyncGate, IDisposable
         var generation = _registry.Generation;
         var snapshot = _index.Snapshot;
         var catalogs = snapshot.Servers.OrderBy(catalog => catalog.ServerId).ToList();
-        var (root, isProtected, writesCollections) = _store.Read(config => (config.FederatedFolderPath, config.MetadataProtection, config.FederateCollections));
+        var (root, isProtected, writesCollections, modes) = _store.Read(config => (
+            config.FederatedFolderPath,
+            config.MetadataProtection,
+            config.FederateCollections,
+            config.Servers.DistinctBy(server => server.Id).ToDictionary(server => server.Id, server => server.LibraryMode)));
 
         var text = new StringBuilder();
         text.Append(CultureInfo.InvariantCulture, $"index {snapshot.Health}\n");
@@ -86,7 +90,7 @@ public sealed class UnchangedSyncGate : IUnchangedSyncGate, IDisposable
 
         foreach (var server in _servers.GetServers().OrderBy(server => server.Id))
         {
-            text.Append(CultureInfo.InvariantCulture, $"server {server.Id:N} {server.Mode} {server.Name}\n{string.Join('\n', server.ImportedLibraryIds.Order(StringComparer.Ordinal))}\n");
+            text.Append(CultureInfo.InvariantCulture, $"server {server.Id:N} {server.Mode} {modes.GetValueOrDefault(server.Id)} {server.Name}\n{string.Join('\n', server.ImportedLibraryIds.Order(StringComparer.Ordinal))}\n");
         }
 
         text.Append(CultureInfo.InvariantCulture, $"settings {isProtected} {writesCollections} {root}\n{_urls.Build("probe")}\n");
@@ -148,7 +152,8 @@ public sealed class UnchangedSyncGate : IUnchangedSyncGate, IDisposable
     {
         if (IsTitle(e.Item)
             && (e.UpdateReason.HasFlag(ItemUpdateType.MetadataEdit)
-                || !FederatedPaths.IsInside(_store.Read(config => config.FederatedFolderPath), e.Item.Path)))
+                || _store.ReadOr(config => config.FederatedFolderPath, null) is not { } root
+                || !FederatedPaths.IsInside(root, e.Item.Path)))
         {
             Interlocked.Increment(ref _libraryEvents);
         }

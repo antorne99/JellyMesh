@@ -17,12 +17,13 @@ public interface IManualMergeStore
     IReadOnlyList<ManualMerge> Merges { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the file could not be read, so merges made earlier are not applied.
+    /// Gets a value indicating whether the database cannot be read for now, so merges made earlier are not applied.
     /// </summary>
     bool IsDamaged { get; }
 
     /// <summary>
     /// Changes the merges. The change is saved first and only then made visible.
+    /// It throws <see cref="Jellyfin.Plugin.JellyMesh.Storage.StoreSuspendedException"/> while the database is suspended.
     /// </summary>
     /// <param name="change">Makes the new list from the current one.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

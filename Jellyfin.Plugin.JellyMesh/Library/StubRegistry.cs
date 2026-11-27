@@ -3,33 +3,24 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Remote;
+using Jellyfin.Plugin.JellyMesh.Storage;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.JellyMesh.Library;
 
 /// <summary>
-/// <see cref="IStubRegistry"/> over a file in the plugin data folder. A change is saved first and only then made visible,
-/// and a write replaces the file in one step. If the file is lost the stubs are minted again on the same paths, so the
-/// Jellyfin items and their watch state stay.
+/// <see cref="IStubRegistry"/> in memory, with the tables of the plugin database as its durable copy. A change is
+/// written first, in one transaction, and only then made visible. If the rows are lost the stubs are minted again on
+/// the same paths, so the Jellyfin items and their watch state stay.
 /// </summary>
 public sealed class StubRegistry : IStubRegistry, IDisposable
 {
-    /// <summary>The file name.</summary>
-    public const string FileName = "federated-stubs.json";
-
-    private static readonly JsonSerializerOptions _options = new()
-    {
-        Converters = { new JsonStringEnumConverter() },
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
-    private readonly string _path;
+    private readonly IPluginDatabase _database;
     private readonly IPluginConfigurationStore _store;
     private readonly ILogger<StubRegistry> _logger;
     private readonly ErrorLogLimits _errorLogs;
@@ -37,20 +28,40 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     private volatile Lookup _lookup;
     private long _generation;
 
+    // False while the database could not be read: memory is then not its copy, and nothing is saved over it.
+    private volatile bool _loaded;
+
+    // What the tables hold, to write only what changed; null when that is not known, so the next save writes it all.
+    private StubState? _stored;
+
+    // The database generation the state was read in; another one means it may be stale.
+    private long _readGeneration;
+
+    // The last database generation a lookup asked to read the state again for.
+    private long _askedGeneration;
+
     /// <summary>
-    /// Initializes a new instance of the <see cref="StubRegistry"/> class.
+    /// Initializes a new instance of the <see cref="StubRegistry"/> class, reading the registry from the database.
     /// </summary>
-    /// <param name="folder">The folder of the file.</param>
+    /// <param name="database">The plugin database.</param>
     /// <param name="store">The configuration store.</param>
     /// <param name="logger">The logger.</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
-    public StubRegistry(string folder, IPluginConfigurationStore store, ILogger<StubRegistry> logger, ErrorLogLimits? errorLogs = null)
+    public StubRegistry(IPluginDatabase database, IPluginConfigurationStore store, ILogger<StubRegistry> logger, ErrorLogLimits? errorLogs = null)
     {
+        ArgumentNullException.ThrowIfNull(database);
+
         _errorLogs = errorLogs ?? new ErrorLogLimits();
-        _path = Path.Combine(folder, FileName);
+        _database = database;
         _store = store;
         _logger = logger;
-        _lookup = new Lookup(Load());
+
+        // Built once at startup, before any request; the read runs on a pool thread of its own, so the wait cannot deadlock.
+        _lookup = new Lookup(StubState.Empty, titlesKnown: false);
+        if (LoadAsync(CancellationToken.None).GetAwaiter().GetResult() is { } read)
+        {
+            Publish(read);
+        }
     }
 
     /// <summary>
@@ -64,19 +75,65 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     public long Generation => Interlocked.Read(ref _generation);
 
     /// <inheritdoc />
-    public StubEntry? Find(string stubId) => _lookup.ById.TryGetValue(stubId, out var stub) ? stub : null;
+    public bool IsUnread => !_loaded || _database.Generation != Interlocked.Read(ref _readGeneration);
 
     /// <inheritdoc />
-    public VersionGroup? FindGroup(string stubId) => _lookup.GroupsByStub.TryGetValue(stubId, out var group) ? group : null;
+    public async Task ReloadAsync(CancellationToken cancellationToken)
+    {
+        if (!IsUnread)
+        {
+            return;
+        }
+
+        try
+        {
+            await EnterAsync(cancellationToken).ConfigureAwait(false);
+            Exit();
+        }
+        catch (IOException)
+        {
+            // Logged where it was read.
+        }
+    }
 
     /// <inheritdoc />
-    public VersionGroup? FindGroupOfLocal(Guid itemId) => _lookup.GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
+    public StubEntry? Find(string stubId) => Current().ById.TryGetValue(stubId, out var stub) ? stub : null;
+
+    /// <inheritdoc />
+    public VersionGroup? FindGroup(string stubId) => Current().GroupsByStub.TryGetValue(stubId, out var group) ? group : null;
+
+    /// <inheritdoc />
+    public VersionGroup? FindGroupOfLocal(Guid itemId) => Current().GroupsByLocal.TryGetValue(itemId, out var group) ? group : null;
 
     /// <inheritdoc />
     public bool HasTitlesOf(Guid serverId)
     {
-        var state = _lookup.State;
+        if (Known() is not { State: var state })
+        {
+            return true;
+        }
+
         return state.Stubs.Any(stub => stub.ServerId == serverId) || state.Series.Any(series => series.ServerId == serverId);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string>? TypeFoldersOf(Guid serverId, TypeFolder type)
+    {
+        return Known() is { State: var state } ? StubLayout.TypeFoldersOf(state, serverId, type) : null;
+    }
+
+    /// <inheritdoc />
+    public bool? UsesOlderLayout()
+    {
+        if (Known() is not { State: var state })
+        {
+            return null;
+        }
+
+        return StubLayout.IsLegacy(state)
+            || (state.Stubs.Count == 0 && state.Series.Count == 0
+                && _store.ReadOr(config => config.FederatedFolderPath, null) is { Length: > 0 } root
+                && StubLayout.HasOlderStubFiles(root));
     }
 
     /// <summary>
@@ -106,17 +163,51 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
             return null;
         }
 
-        var folder = _store.Read(config => config.FederatedFolderPath);
+        // Every new item of every library comes here: while the folder is not known, no path is a stub's.
+        if (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } folder)
+        {
+            return null;
+        }
+
         var relative = FederatedPaths.RelativeTo(folder, path);
-        return relative is not null && _lookup.ByPath.TryGetValue(relative, out var stub) ? stub : null;
+        return relative is not null && Current().ByPath.TryGetValue(relative, out var stub) ? stub : null;
     }
 
     /// <summary>
-    /// Takes the lock that materialization and cleanup share: both rewrite the state and the folder.
+    /// Takes the lock that materialization and cleanup share: both rewrite the state and the folder. A registry that could
+    /// not be read is read again first, so the holder starts from what the database holds.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
-    public Task EnterAsync(CancellationToken cancellationToken) => _gate.WaitAsync(cancellationToken);
+    /// <exception cref="IOException">The registry still cannot be read; the lock is not taken, so no one acts on an empty state.</exception>
+    public async Task EnterAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (_loaded && _database.Generation == _readGeneration)
+        {
+            return;
+        }
+
+        LoadedState? read;
+        try
+        {
+            read = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            _gate.Release();
+            throw;
+        }
+
+        if (read is null)
+        {
+            _gate.Release();
+            throw new IOException("The stub registry cannot be read from the database.");
+        }
+
+        Publish(read);
+        Interlocked.Increment(ref _generation);
+    }
 
     /// <summary>
     /// Releases the lock.
@@ -129,30 +220,61 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
     /// <param name="state">The state.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task.</returns>
-    /// <exception cref="IOException">The file could not be written. The current state stays.</exception>
-    public async Task SaveAsync(StubState state, CancellationToken cancellationToken)
+    /// <exception cref="IOException">The database could not be read or written. The current state stays.</exception>
+    public Task SaveAsync(StubState state, CancellationToken cancellationToken) => SaveAsync(state, false, cancellationToken);
+
+    /// <summary>
+    /// Saves the state a full materialization ended with, which holds every title it wrote, so that the registry can tell
+    /// again that a server has none after rows that did not read. The caller holds the lock.
+    /// </summary>
+    /// <param name="state">The state.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    /// <exception cref="IOException">The database could not be read or written. The current state stays.</exception>
+    public Task SaveMaterializedAsync(StubState state, CancellationToken cancellationToken) => SaveAsync(state, true, cancellationToken);
+
+    private async Task SaveAsync(StubState state, bool materialized, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        ArgumentNullException.ThrowIfNull(state);
 
-        var temporary = _path + ".tmp";
-        try
+        if (!_loaded)
         {
-            var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous);
-            await using (stream.ConfigureAwait(false))
+            throw new IOException("The stub registry could not be read from the database, so it is not saved over.");
+        }
+
+        // A state equal to what the tables hold writes nothing, but still counts as a save.
+        if (StubTables.Plan(_stored, state) is { } write)
+        {
+            try
             {
-                await JsonSerializer.SerializeAsync(stream, state, _options, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                RandomAccess.FlushToDisk(stream.SafeFileHandle);
+                var generation = _readGeneration;
+                await _database.WriteAsync(
+                    (connection, transaction) =>
+                    {
+                        // A database opened again since the state was read may not hold what the plan is based on.
+                        if (_database.Generation != generation)
+                        {
+                            throw new StoreSuspendedException("The database was opened again since the stub registry was read.");
+                        }
+
+                        StubTables.Write(connection, transaction, write);
+                    },
+                    cancellationToken).ConfigureAwait(false);
             }
+            catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
+            {
+                // A store that comes back may not hold what it held, so it is read again at the next lock.
+                if (exception is StoreSuspendedException)
+                {
+                    (_loaded, _stored) = (false, null);
+                }
 
-            File.Move(temporary, _path, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporary);
+                throw new IOException("The stub registry could not be saved: " + exception.GetType().Name, exception);
+            }
         }
 
-        _lookup = new Lookup(state);
+        _stored = state;
+        _lookup = new Lookup(state, materialized || _lookup.TitlesKnown);
         Interlocked.Increment(ref _generation);
     }
 
@@ -253,42 +375,79 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
     }
 
-    private StubState Load()
+    // Null when the database is suspended or cannot be read, to be tried again at the next lock. Rows that do not read give
+    // an empty registry, whose stubs are minted again and written whole at the next save.
+    private async Task<LoadedState?> LoadAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(_path))
-        {
-            return StubState.Empty;
-        }
-
+        var generation = _readGeneration;
         try
         {
-            using var stream = File.OpenRead(_path);
-            var state = JsonSerializer.Deserialize<StubState>(stream, _options);
-            if (state?.Version == StubState.CurrentVersion)
-            {
-                return state;
-            }
-
-            if (state?.Version == StubState.FlatLayoutVersion)
-            {
-                return state with { Version = StubState.CurrentVersion };
-            }
-
-            _logger.LogError("The stub registry has an unsupported format. Stubs are minted again at the next sync");
+            var state = await _database.ReadAsync(
+                (connection, transaction) =>
+                {
+                    generation = _database.Generation;
+                    return StubTables.Load(connection, transaction);
+                },
+                cancellationToken).ConfigureAwait(false);
+            return new LoadedState(state, state, generation);
         }
-        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
+        catch (Exception exception) when (exception is StoreSuspendedException or SqliteException)
         {
-            _logger.LogError("Cannot read the stub registry: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            _logger.LogError("Cannot read the stub registry from the database: {Error}. It is empty until the database can be read{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            return null;
+        }
+        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidCastException or InvalidOperationException or OverflowException)
+        {
+            _logger.LogError("The stub registry in the database is damaged: {Error}. Stubs are minted again at the next sync{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            return new LoadedState(StubState.Empty, null, generation);
+        }
+    }
+
+    // Makes a loaded state visible, and only then counts it as read.
+    private void Publish(LoadedState read)
+    {
+        _lookup = new Lookup(read.State, titlesKnown: read.Stored is not null);
+        _stored = read.Stored;
+        Interlocked.Exchange(ref _readGeneration, read.Generation);
+        _loaded = true;
+    }
+
+    // The state in memory. When the database was opened again, it is read again in the background, once for each opening.
+    private Lookup Current()
+    {
+        var generation = _database.Generation;
+        if (generation != Interlocked.Read(ref _readGeneration) && Interlocked.Exchange(ref _askedGeneration, generation) != generation)
+        {
+            _ = Task.Run(ReloadInBackgroundAsync);
         }
 
-        return StubState.Empty;
+        return _lookup;
     }
+
+    // The state in memory when it holds every title of the database, null otherwise.
+    private Lookup? Known() => !IsUnread && _lookup is { TitlesKnown: true } lookup ? lookup : null;
+
+    private async Task ReloadInBackgroundAsync()
+    {
+        try
+        {
+            await ReloadAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError("Cannot read the stub registry again: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+        }
+    }
+
+    // A state, what the tables hold if that is known, and the database generation it was read in.
+    private sealed record LoadedState(StubState State, StubState? Stored, long Generation);
 
     private sealed class Lookup
     {
-        public Lookup(StubState state)
+        public Lookup(StubState state, bool titlesKnown)
         {
             State = state;
+            TitlesKnown = titlesKnown;
             ById = state.Stubs.ToFrozenDictionary(stub => stub.Id, StringComparer.Ordinal);
 
             // The old path of a renamed stub finds it too, until its old item is gone; a current path always wins.
@@ -329,6 +488,9 @@ public sealed class StubRegistry : IStubRegistry, IDisposable
         }
 
         public StubState State { get; }
+
+        // False while the state may lack titles still in the folder: read from rows that did not read, or not read at all.
+        public bool TitlesKnown { get; }
 
         public FrozenDictionary<string, StubEntry> ById { get; }
 

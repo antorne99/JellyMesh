@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Tests.Sync;
@@ -195,19 +196,42 @@ public sealed partial class ServerLibraryManagerTests
     public async Task Switching_off_after_the_confirmation_deletes_the_registry_libraries_only()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         fixture.Libraries.Add("Mine on the folder", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
+        fixture.Scans.Steps.Clear();
 
         var request = fixture.Manager.Disable(_serverId, true);
         await request.Job;
 
         Assert.Equal(AutomaticLibrariesOutcome.Started, request.Outcome);
         Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
-        Assert.All(fixture.Libraries.Removed, call => Assert.True(call.Refresh));
+        Assert.All(fixture.Libraries.Removed, call => Assert.False(call.Refresh));
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
         Assert.Equal(["Film", "Mine on the folder"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.False(fixture.Server.AutomaticLibraries);
         Assert.Empty(fixture.Server.AutomaticLibraryRegistry);
+    }
+
+    // Asserts that the deletions took each library out of the users' given and deletion lists, and never out of a blocked one.
+    private static void LeftOnlyGivenLists(Fixture fixture, params string[] names) =>
+        Assert.Equal(
+            names.SelectMany(name => new[] { (name, PreferenceKind.EnabledFolders), (name, PreferenceKind.EnableContentDeletionFromFolders) }).Order(),
+            fixture.Renamer.Removed.Select(removed => (removed.Name, removed.List)).Order());
+
+    [Fact]
+    public async Task Switching_off_keeps_the_blocks_of_the_libraries_it_deletes()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+
+        await fixture.Manager.Disable(_serverId, true).Job;
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
     }
 
     [Fact]
@@ -269,6 +293,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task A_library_already_there_at_switch_on_is_never_taken_for_a_renamed_one()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
@@ -284,6 +311,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task A_library_already_there_at_switch_on_is_never_taken_by_the_name_of_one_in_the_registry()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
@@ -552,16 +582,21 @@ public sealed partial class ServerLibraryManagerTests
     public async Task Removing_the_server_deletes_the_libraries_of_its_registry_with_no_confirmation()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.RenameFromDashboard("Casa - Serie", "Serie di casa");
+        fixture.Scans.Steps.Clear();
 
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
 
         Assert.Equal(["Casa - Film", "Serie di casa"], fixture.Libraries.Removed.Select(call => call.Name));
-        Assert.All(fixture.Libraries.Removed, call => Assert.True(call.Refresh));
+        Assert.All(fixture.Libraries.Removed, call => Assert.False(call.Refresh));
+        Assert.Single(fixture.Scans.Steps, step => step == "scan");
         Assert.Equal(["Mine", "Film"], fixture.Libraries.Folders.Select(folder => folder.Name));
         Assert.Empty(fixture.Store.Configuration.RemovedServerLibraries);
     }
@@ -586,6 +621,9 @@ public sealed partial class ServerLibraryManagerTests
     public async Task A_library_there_at_switch_on_is_not_deleted_with_the_removed_server()
     {
         var fixture = new Fixture();
+
+        // Recorded at a later switch-on, so it is not the exact library a first switch-on adopts.
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Mine", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
@@ -690,7 +728,7 @@ public sealed partial class ServerLibraryManagerTests
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
         var newId = Guid.Parse("9f8e7d6c-5b4a-4321-8765-0fedcba98765");
-        var back = new RemoteServerConfig { Id = newId, Name = "Casa" };
+        var back = Fixture.WithLibraries(new RemoteServerConfig { Id = newId, Name = "Casa" });
         fixture.Store.Update(config => config.Servers.Add(back));
 
         await fixture.Manager.Enable(newId).Job;
@@ -755,7 +793,7 @@ public sealed partial class ServerLibraryManagerTests
         fixture.Libraries.RemoveFailure = new IOException("busy");
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
-        fixture.Store.Configuration.Servers.Add(new RemoteServerConfig { Id = _serverId, Name = "Casa" });
+        fixture.Store.Configuration.Servers.Add(Fixture.WithLibraries(new RemoteServerConfig { Id = _serverId, Name = "Casa" }));
         fixture.Libraries.RemoveFailure = null;
         fixture.Libraries.Folders.Remove(fixture.Libraries.Find("Casa - Film"));
         fixture.Libraries.RemoveFailure = new IOException("busy");
@@ -941,9 +979,9 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
-    public async Task A_creation_whose_name_was_not_released_saves_nothing_more()
+    public async Task A_creation_whose_name_was_not_released_saves_nothing_more_than_its_intent()
     {
-        // Between the two creations only the record of the first one is saved.
+        // Between the two creations only the record of the first one and the intent of the second are saved.
         var fixture = new Fixture();
         var savesAtCreation = new List<int>();
         fixture.Libraries.OnCreate = () => savesAtCreation.Add(fixture.Store.Saves);
@@ -951,7 +989,7 @@ public sealed partial class ServerLibraryManagerTests
         await fixture.Manager.Enable(_serverId).Job;
 
         Assert.Equal(2, savesAtCreation.Count);
-        Assert.Equal(1, savesAtCreation[1] - savesAtCreation[0]);
+        Assert.Equal(2, savesAtCreation[1] - savesAtCreation[0]);
     }
 
     [Fact]
@@ -1065,7 +1103,7 @@ public sealed partial class ServerLibraryManagerTests
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
         fixture.RemoveServer();
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
         var saves = fixture.Store.Saves;
 
@@ -1295,6 +1333,19 @@ public sealed partial class ServerLibraryManagerTests
     }
 
     [Fact]
+    public async Task The_libraries_a_removed_server_left_keep_their_blocks_when_deleted()
+    {
+        var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
+        fixture.RemoveServer();
+
+        await fixture.Manager.DeleteRemovedServerLibraries();
+
+        Assert.Equal(["Casa - Film", "Casa - Serie"], fixture.Libraries.Removed.Select(call => call.Name));
+        LeftOnlyGivenLists(fixture, "Casa - Film", "Casa - Serie");
+    }
+
+    [Fact]
     public async Task A_library_held_while_a_server_is_removed_during_its_creation_waits_for_the_titles_too()
     {
         var fixture = new Fixture();
@@ -1483,7 +1534,7 @@ public sealed partial class ServerLibraryManagerTests
     {
         var fixture = new Fixture();
         await fixture.Manager.Enable(_serverId).Job;
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
         await fixture.Manager.Enable(other.Id).Job;
         Assert.DoesNotContain(fixture.Libraries.IdOf("Casa - Film"), other.PreexistingLibraryIds);
@@ -1503,7 +1554,7 @@ public sealed partial class ServerLibraryManagerTests
         var fixture = new Fixture();
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, "/media/film");
         await fixture.Manager.Enable(_serverId).Job;
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
         await fixture.Manager.Enable(other.Id).Job;
 
@@ -1525,7 +1576,7 @@ public sealed partial class ServerLibraryManagerTests
         fixture.RemoveServer();
         await fixture.Manager.DeleteRemovedServerLibraries();
         fixture.Libraries.RemoveFailure = null;
-        var other = new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = Guid.Parse("1a2b3c4d-0000-4000-8000-000000000002"), Name = "Altro" });
         fixture.Store.Update(config => config.Servers.Add(other));
 
         await fixture.Manager.Enable(other.Id).Job;
@@ -1788,14 +1839,16 @@ public sealed partial class ServerLibraryManagerTests
     {
         public Fixture(string root = Root, string serverName = "Casa")
         {
-            Server = new RemoteServerConfig { Id = _serverId, Name = serverName };
+            Server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = serverName });
             Store.Configuration.FederatedFolderPath = root;
+            Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
             Store.Configuration.Servers.Add(Server);
             var fileSystem = new Mock<IFileSystem>();
             fileSystem.Setup(system => system.GetValidFilename(It.IsAny<string>()))
                 .Returns<string>(name => string.Concat(name.Select(character => ":/\\*?\"<>|".Contains(character, StringComparison.Ordinal) ? ' ' : character)));
             FileSystem = fileSystem.Object;
             Hooks = new HookedStore(Store);
+            Libraries.OnRefresh = () => Scans.Steps.Add("scan");
             Manager = NewManager();
         }
 
@@ -1827,7 +1880,7 @@ public sealed partial class ServerLibraryManagerTests
         public ServerLibraryManager NewManager()
         {
             Renamer.Libraries = Libraries;
-            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, Logger, Clock);
+            return new(Hooks, Libraries.Object, FileSystem, Scans, Materializer.Object, Renamer, Stubs.Object, new LibraryPaths(Libraries.Object, new CapturingLogger<LibraryPaths>()), Logger, Clock, SystemId);
         }
 
         // Like the registry: the server leaves the configuration and its libraries are held in the same save.
@@ -1841,8 +1894,18 @@ public sealed partial class ServerLibraryManagerTests
         // A server put back with the same id, as by a settings file restored by hand.
         public RemoteServerConfig AddServerBack(string name)
         {
-            var server = new RemoteServerConfig { Id = _serverId, Name = name };
+            var server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = name });
             Store.Update(config => config.Servers.Add(server));
+            return server;
+        }
+
+        // A server whose sync imported a film and a series library.
+        public static RemoteServerConfig WithLibraries(RemoteServerConfig server)
+        {
+            server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Films, Name = "Film", CollectionType = "movies" });
+            server.RemoteLibraries.Add(new RemoteLibraryConfig { Id = TestLibraries.Shows, Name = "Serie", CollectionType = "tvshows" });
+            server.ImportedLibraryIds.Add(TestLibraries.Films);
+            server.ImportedLibraryIds.Add(TestLibraries.Shows);
             return server;
         }
     }
@@ -1879,20 +1942,51 @@ public sealed partial class ServerLibraryManagerTests
                         throw CreateFailure;
                     }
 
-                    Add(RenameOnCreate?.Invoke(name) ?? name, type, options.PathInfos.Select(info => info.Path).ToArray());
+                    var made = RenameOnCreate?.Invoke(name) ?? name;
+                    Add(made, type, options.PathInfos.Select(info => info.Path).ToArray());
+                    if (NoIdOnCreate)
+                    {
+                        Find(made).ItemId = null;
+                    }
+
                     return Task.CompletedTask;
                 });
             _mock.Setup(manager => manager.RemoveVirtualFolder(It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns<string, bool>((name, refresh) =>
                 {
-                    if (RemoveFailure is not null)
+                    if (RemoveFailure is not null && (RemoveFailureFor?.Invoke(name) ?? true))
                     {
                         throw RemoveFailure;
                     }
 
                     Removed.Add(new RemoveCall(name, refresh));
                     Folders.Remove(Find(name));
+                    if (refresh)
+                    {
+                        // Like Jellyfin, the refresh validates the libraries, which gives them ids, and starts a scan.
+                        foreach (var folder in Folders.Where(folder => folder.ItemId is null))
+                        {
+                            folder.ItemId = IdOf(folder.Name);
+                        }
+
+                        OnRefresh?.Invoke();
+                    }
+
                     return Task.CompletedTask;
+                });
+            _mock.Setup(manager => manager.AddMediaPath(It.IsAny<string>(), It.IsAny<MediaPathInfo>()))
+                .Callback<string, MediaPathInfo>((name, path) =>
+                {
+                    var folder = Find(name);
+                    folder.Locations = [.. folder.Locations, path.Path];
+                    AddedPaths.Add((name, path.Path));
+                });
+            _mock.Setup(manager => manager.RemoveMediaPath(It.IsAny<string>(), It.IsAny<string>()))
+                .Callback<string, string>((name, path) =>
+                {
+                    var folder = Find(name);
+                    folder.Locations = [.. folder.Locations.Where(location => location != path)];
+                    RemovedPaths.Add((name, path));
                 });
             _mock.Setup(manager => manager.ValidateTopLibraryFolders(It.IsAny<CancellationToken>(), true))
                 .Returns(() =>
@@ -1910,6 +2004,10 @@ public sealed partial class ServerLibraryManagerTests
 
         public List<RemoveCall> Removed { get; } = [];
 
+        public List<(string Name, string Path)> AddedPaths { get; } = [];
+
+        public List<(string Name, string Path)> RemovedPaths { get; } = [];
+
         // The library names each validation of the top folders saw.
         public List<List<string>> Validations { get; } = [];
 
@@ -1919,12 +2017,21 @@ public sealed partial class ServerLibraryManagerTests
 
         public Action? OnCreate { get; set; }
 
+        // When set, a library is made with no id, as one the server has not scanned yet.
+        public bool NoIdOnCreate { get; set; }
+
         // Runs after each read of the libraries, before the caller sees it.
         public Action? OnRead { get; set; }
 
         public Exception? CreateFailure { get; set; }
 
         public Exception? RemoveFailure { get; set; }
+
+        // When set, only the libraries it takes fail to be deleted.
+        public Func<string, bool>? RemoveFailureFor { get; set; }
+
+        // Runs when a deletion refreshes the libraries, as the scan Jellyfin starts then.
+        public Action? OnRefresh { get; set; }
 
         public Exception? ReadFailure { get; set; }
 
@@ -1949,7 +2056,8 @@ public sealed partial class ServerLibraryManagerTests
             Name = folder.Name,
             CollectionType = folder.CollectionType,
             Locations = folder.Locations.ToArray(),
-            ItemId = folder.ItemId
+            ItemId = folder.ItemId,
+            LibraryOptions = folder.LibraryOptions
         };
     }
 
@@ -1975,6 +2083,79 @@ public sealed partial class ServerLibraryManagerTests
 
         // Runs when a rename starts, before it moves the library.
         public Action? OnRename { get; set; }
+
+        public List<IReadOnlyList<AccessCarry>> Carried { get; } = [];
+
+        public List<IReadOnlyList<AccessCarry>> Previewed { get; } = [];
+
+        // The users a carry or a preview reports as losing titles.
+        public IReadOnlyList<AccessLoss> Lost { get; set; } = [];
+
+        public Exception? CarryFailure { get; set; }
+
+        public Action? OnCarry { get; set; }
+
+        public Task<IReadOnlyList<AccessLoss>> CarryAccessAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+        {
+            OnCarry?.Invoke();
+            if (CarryFailure is not null)
+            {
+                throw CarryFailure;
+            }
+
+            Carried.Add(carries);
+            return Task.FromResult(Lost);
+        }
+
+        public List<IReadOnlyList<AccessCarry>> Blocked { get; } = [];
+
+        public Exception? BlockFailure { get; set; }
+
+        // When set, only the blocks it takes fail.
+        public Func<IReadOnlyList<AccessCarry>, bool>? BlockFailureFor { get; set; }
+
+        public Action? OnBlock { get; set; }
+
+        public Task BlockAsync(IReadOnlyList<AccessCarry> carries, CancellationToken cancellationToken)
+        {
+            OnBlock?.Invoke();
+            if (BlockFailure is not null && (BlockFailureFor?.Invoke(carries) ?? true))
+            {
+                throw BlockFailure;
+            }
+
+            Blocked.Add(carries);
+            return Task.CompletedTask;
+        }
+
+        public List<(string Name, Guid? Id, PreferenceKind List)> Removed { get; } = [];
+
+        public Exception? RemoveFailure { get; set; }
+
+        public Action? OnRemove { get; set; }
+
+        public Task RemoveFromUsersAsync(string name, Guid? itemId, PreferenceKind list, CancellationToken cancellationToken)
+        {
+            OnRemove?.Invoke();
+            if (RemoveFailure is not null)
+            {
+                throw RemoveFailure;
+            }
+
+            Removed.Add((name, itemId, list));
+            return Task.CompletedTask;
+        }
+
+        // When set, a library name gives no id, as one that would leave the libraries folder.
+        public bool NoIdOfName { get; set; }
+
+        public Guid? IdOfName(string name) => NoIdOfName || Libraries is null ? null : Guid.Parse(Libraries.IdOf(name));
+
+        public IReadOnlyList<AccessLoss> LosingAccess(IReadOnlyList<AccessCarry> carries)
+        {
+            Previewed.Add(carries);
+            return Lost;
+        }
 
         public Task ResumeAsync(CancellationToken cancellationToken)
         {

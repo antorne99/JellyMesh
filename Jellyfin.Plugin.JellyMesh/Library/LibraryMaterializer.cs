@@ -44,6 +44,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private readonly ILocalRefreshRequester? _refresher;
     private readonly IVersionLinker? _linker;
     private readonly IWatchStateKeeper? _keeper;
+    private readonly WatchStateCleaner? _cleaner;
     private volatile MaterializationReport? _lastReport;
 
     /// <summary>
@@ -65,6 +66,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     /// <param name="refresher">What asks Jellyfin to read the metadata of new local films.</param>
     /// <param name="linker">What detaches a stub from its versions before it is removed.</param>
     /// <param name="keeper">What keeps the watch state of removed servers and puts it back (row 412).</param>
+    /// <param name="cleaner">What clears the watch state of the stubs that took more episodes (row 543).</param>
     /// <param name="errorLogs">The limits of the errors in the log.</param>
     public LibraryMaterializer(
         StubRegistry registry,
@@ -83,6 +85,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         ILocalRefreshRequester? refresher = null,
         IVersionLinker? linker = null,
         IWatchStateKeeper? keeper = null,
+        WatchStateCleaner? cleaner = null,
         ErrorLogLimits? errorLogs = null)
     {
         _errorLogs = errorLogs ?? new ErrorLogLimits();
@@ -102,6 +105,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _refresher = refresher;
         _linker = linker;
         _keeper = keeper;
+        _cleaner = cleaner;
     }
 
     /// <inheritdoc />
@@ -145,7 +149,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         try
         {
-            WriteServerFolders(root, _servers.GetServers());
+            var servers = _servers.GetServers();
+            WriteServerFolders(root, servers, _registry.State, ConfiguredTypeFolders(servers));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -153,8 +158,16 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
-    // The folders of a server exist before any library points at them, and a folder that holds nothing is never empty.
-    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers)
+    // The type folders of the remote libraries each server imports, known from its last read of them.
+    private List<string> ConfiguredTypeFolders(IReadOnlyList<RemoteServerInfo> servers)
+    {
+        var ids = servers.Select(server => server.Id).ToHashSet();
+        return _store.Read(config => config.Servers.Where(server => ids.Contains(server.Id)).SelectMany(LibraryPlan.TypeFolders).ToList());
+    }
+
+    // The folders of a server and of its remote libraries exist before any library points at them, and a folder that holds
+    // nothing is never empty. The 0.5 server folders stay for the libraries that still hold them, beside the new ones.
+    private static void WriteServerFolders(string root, IReadOnlyList<RemoteServerInfo> servers, StubState state, IReadOnlyList<string> configured)
     {
         WriteHiddenFile(root, FederatedPaths.MovieFolder(string.Empty));
         WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(string.Empty));
@@ -162,6 +175,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         {
             WriteHiddenFile(root, FederatedPaths.MovieFolder(server.Id, string.Empty));
             WriteHiddenFile(root, FederatedPaths.SeriesFolderOf(server.Id, string.Empty));
+        }
+
+        foreach (var folder in servers.SelectMany(server => TypeFolder.Written.SelectMany(type => StubLayout.TypeFoldersOf(state, server.Id, type))).Concat(configured))
+        {
+            WriteHiddenFile(root, folder);
         }
     }
 
@@ -190,6 +208,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         var folder = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(folder);
         var temporary = Path.Combine(folder, "." + Guid.NewGuid().ToString("N") + ".tmp");
+        var moved = false;
         try
         {
             var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous);
@@ -199,10 +218,14 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             File.Move(temporary, path, overwrite: true);
+            moved = true;
         }
         finally
         {
-            File.Delete(temporary);
+            if (!moved)
+            {
+                File.Delete(temporary);
+            }
         }
     }
 
@@ -238,18 +261,27 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     private async Task<MaterializationReport> RunAsync(string root, bool isProtected, bool writesCollections, bool verifyEveryStub, CancellationToken cancellationToken)
     {
+        // A failed read of the libraries stops the run before it writes anything: it would split or join titles at random.
+        var placement = LibraryPlacement.Read(_library, _store);
+
         // One snapshot and one server list for the view and the plan: a removal during the run waits for the next one.
         var snapshot = _index.Snapshot;
         var servers = _servers.GetServers();
         var view = _resolver.Resolve(snapshot, servers);
         _refresher?.Request(view.LocalItemsAwaitingRefresh);
-        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, _registry.State, servers, isProtected, _urls.Build, _ => null)
+        var state = _registry.State;
+        var plan = StubPlanner.PlanByServer(new StubPlanInput(view, snapshot, state, servers, isProtected, _urls.Build, _ => null)
         {
             WritesCollections = writesCollections,
-            IsOnDisk = path => Path.Exists(FederatedPaths.Resolve(root, path))
+            PlacementOf = placement.KeyOf,
+            Now = _timeProvider.GetUtcNow().UtcDateTime,
+            IsOnDisk = path => Path.Exists(FederatedPaths.Resolve(root, path)),
+
+            // Only an empty registry, as after a damage, takes back the stub files of the 0.5 layout it finds.
+            KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root)
         });
 
-        WriteServerFolders(root, servers);
+        WriteServerFolders(root, servers, plan.State, ConfiguredTypeFolders(servers));
 
         await _registry.SaveAsync(plan.State, cancellationToken).ConfigureAwait(false);
 
@@ -273,6 +305,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         run.Commit();
+        run.State = _cleaner?.Clear(root, run.State, cancellationToken) ?? run.State;
         var (removals, kept) = await KeepRemovedAsync(run, plan, cancellationToken).ConfigureAwait(false);
         RemoveGone(run, await DetachRemovalsAsync(run, removals, cancellationToken).ConfigureAwait(false));
         if (kept)
@@ -280,7 +313,16 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             RemoveServerFolders(run, plan.State.RemovedServers);
         }
 
-        await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
+        // A run over an index that could not be read wrote only part of the titles.
+        if (view.Health == IndexHealth.Corrupt)
+        {
+            await _registry.SaveAsync(run.State, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _registry.SaveMaterializedAsync(run.State, cancellationToken).ConfigureAwait(false);
+        }
+
         if (_keeper is not null)
         {
             await _keeper.RestoreAsync(cancellationToken).ConfigureAwait(false);
@@ -300,7 +342,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
 
         var scanQueued = run.NeedsScan || plan.MergedStubs > 0;
-        if (scanQueued)
+        if (scanQueued && _store.Read(config => config.SharedLibraries.HoldsScans()))
+        {
+            // No scan before a shared library has its blocks: the check that writes them scans (D42).
+            _logger.LogWarning("A shared library lacks its blocks or is not recorded yet, so the library scan waits for the next check");
+        }
+        else if (scanQueued)
         {
             _library.QueueLibraryScan();
         }
@@ -431,7 +478,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             var urlTag = UrlTagOf(work.StrmUrl);
             if (written || run.VerifyEveryStub || !IsUrlConfirmed(entry, strm, urlTag))
             {
-                changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, existing.Value, cancellationToken).ConfigureAwait(false);
+                changed |= await ApplyStrmUrlAsync(strm, work.StrmUrl, written, existing.Value, cancellationToken).ConfigureAwait(false);
                 entry = entry with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) };
             }
 
@@ -479,7 +526,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             var urlTag = UrlTagOf(url);
             if (File.Exists(strm) && (run.VerifyEveryStub || !IsUrlConfirmed(stub, strm, urlTag)))
             {
-                await ApplyStrmUrlAsync(strm, url, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
+                await ApplyStrmUrlAsync(strm, url, false, _library.FindByPath(strm, false), cancellationToken).ConfigureAwait(false);
                 run.Put(stub with { UrlTag = urlTag, StrmWrittenUtc = File.GetLastWriteTimeUtc(strm) });
             }
         }
@@ -492,9 +539,10 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     // Keeps the file and the item on the current URL. Only those two change: the path, hence the item and its watch state,
     // stay. The item matters most: it is what ffmpeg opens, and an old URL would be refused until the next refresh.
-    private async Task<bool> ApplyStrmUrlAsync(string strm, string url, BaseItem? item, CancellationToken cancellationToken)
+    // A file just written with the URL is not read again.
+    private async Task<bool> ApplyStrmUrlAsync(string strm, string url, bool written, BaseItem? item, CancellationToken cancellationToken)
     {
-        var stale = !string.Equals(await File.ReadAllTextAsync(strm, cancellationToken).ConfigureAwait(false), url, StringComparison.Ordinal);
+        var stale = !written && !string.Equals(await File.ReadAllTextAsync(strm, cancellationToken).ConfigureAwait(false), url, StringComparison.Ordinal);
         if (stale)
         {
             await WriteTextAsync(strm, url, cancellationToken).ConfigureAwait(false);

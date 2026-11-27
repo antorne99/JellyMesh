@@ -274,6 +274,7 @@ public sealed partial class ServerLibraryManagerTests
     {
         // The admin's library on the server folder, with the automatic one gone: placement treats it as the admin's (§10 row 393).
         var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         Assert.Contains(fixture.Libraries.IdOf("Film"), fixture.Server.PreexistingLibraryIds);
@@ -354,6 +355,7 @@ public sealed partial class ServerLibraryManagerTests
     {
         // The library there at switch-on is never seen by the registry, so the renamed one is still the only one (§10 row 401).
         var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.Manager.MarkFollowSkipped();
@@ -371,6 +373,7 @@ public sealed partial class ServerLibraryManagerTests
     {
         // Row 395 counts the libraries on the folder of a removed server, but not one that was there at switch-on (§10 row 402).
         var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.RemoveServer();
@@ -405,11 +408,14 @@ public sealed partial class ServerLibraryManagerTests
     [Fact]
     public async Task A_library_a_removed_server_found_at_switch_on_stays_the_admin_s_once_the_server_is_added_back()
     {
+        // Recorded at a later switch-on, and the server added back wants no film library, so none adopts it (§10 row 441).
         var fixture = new Fixture();
+        await fixture.Manager.Enable(_serverId).Job;
         fixture.Libraries.Add("Film", CollectionTypeOptions.movies, _movies);
         await fixture.Manager.Enable(_serverId).Job;
         fixture.RemoveServer();
         var server = fixture.AddServerBack("Casa");
+        server.ImportedLibraryIds.Remove(TestLibraries.Films);
         await fixture.Manager.Enable(_serverId).Job;
         Assert.Contains(fixture.Libraries.IdOf("Film"), server.PreexistingLibraryIds);
 
@@ -417,7 +423,7 @@ public sealed partial class ServerLibraryManagerTests
 
         Assert.NotNull(libraries);
         Assert.DoesNotContain(libraries.Automatic, folder => folder.Name == "Film");
-        Assert.Equal(4, libraries.Automatic.Count);
+        Assert.Equal(3, libraries.Automatic.Count);
     }
 
     [Fact]
@@ -441,7 +447,7 @@ public sealed partial class ServerLibraryManagerTests
     private static async Task<RemoteServerConfig> TwoServersFollowedAsync(Fixture fixture)
     {
         await fixture.Manager.Enable(_serverId).Job;
-        var other = new RemoteServerConfig { Id = _otherId, Name = "Mare" };
+        var other = Fixture.WithLibraries(new RemoteServerConfig { Id = _otherId, Name = "Mare" });
         fixture.Store.Update(config => config.Servers.Add(other));
         await fixture.Manager.Enable(other.Id).Job;
         await fixture.Manager.ReconcileAsync(CancellationToken.None);
