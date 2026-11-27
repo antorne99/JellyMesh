@@ -6,7 +6,9 @@ using System.Threading;
 using Jellyfin.Plugin.JellyMesh.Index;
 using MediaBrowser.Controller.Chapters;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
@@ -170,6 +172,69 @@ public sealed class StubTechnicalData
 
         SaveStreams(item, stub, version, cancellationToken);
         return changed;
+    }
+
+    /// <summary>
+    /// Writes the fields of a track or audiobook part from the index, with its lock (D60, D69). Nothing is saved on the item.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="stub">The stub.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <returns>Whether a field of the item changed.</returns>
+    public bool WriteTrack(BaseItem item, StubEntry stub, bool isProtected)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        return item is Audio audio && SourceOf(stub) is { } source && StubItemUpdater.WriteTrack(audio, StubMetadata.Track(source.Item, isProtected));
+    }
+
+    /// <summary>
+    /// Writes the fields of a book from the index, with the mark of its stub and its lock (D62). Nothing is saved.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="stub">The stub.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <returns>Whether a field of the item changed.</returns>
+    public bool WriteBook(BaseItem item, StubEntry stub, bool isProtected)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        var lookup = CurrentLookup();
+        return item is Book book
+            && stub.Sources.Select(source => lookup.Find(source.ServerId, source.ItemId)).FirstOrDefault(found => found is not null) is { } source
+            && StubItemUpdater.WriteBook(book, StubMetadata.Book(source, isProtected, stub.Id));
+    }
+
+    /// <summary>
+    /// Writes the fields of a photo from the index, with its size, its EXIF with no position, the mark of its stub and its
+    /// lock (D7, D26, D45), and its thumbnail as its Primary (row 484). Nothing is saved.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="stub">The stub.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <param name="root">The federated folder.</param>
+    /// <returns>What changed on the item.</returns>
+    public ItemUpdateType WritePhoto(BaseItem item, StubEntry stub, bool isProtected, string root)
+    {
+        ArgumentNullException.ThrowIfNull(stub);
+
+        if (item is not Photo photo)
+        {
+            return ItemUpdateType.None;
+        }
+
+        var lookup = CurrentLookup();
+        var update = stub.Sources.Select(source => lookup.Find(source.ServerId, source.ItemId)).FirstOrDefault(found => found is not null) is { } source
+            && StubItemUpdater.WritePhoto(photo, StubMetadata.PhotoOf(source, isProtected, stub.Id))
+                ? ItemUpdateType.MetadataImport
+                : ItemUpdateType.None;
+        if (PhotoThumbnails.PathOf(root, stub.Id) is not { } thumbnail || !PhotoThumbnails.SetPrimary(photo, thumbnail))
+        {
+            return update;
+        }
+
+        // None is a flag of its own in Jellyfin, so it is not kept beside another.
+        return update == ItemUpdateType.None ? ItemUpdateType.ImageUpdate : update | ItemUpdateType.ImageUpdate;
     }
 
     /// <summary>

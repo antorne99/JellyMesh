@@ -11,7 +11,7 @@ namespace Jellyfin.Plugin.JellyMesh.Dedup;
 /// returns empty <c>ProviderIds</c> and no <c>ProductionYear</c> on episodes, so the mapper has to read them from the
 /// Series item.
 /// </remarks>
-public sealed record CatalogItem
+public sealed record CatalogItem : IServerItem
 {
     /// <summary>
     /// Gets the plugin's ID for the server holding the item. Item IDs are not unique across servers, so this is part of
@@ -50,6 +50,11 @@ public sealed record CatalogItem
     /// Gets the film's provider IDs, or the series' for an episode.
     /// </summary>
     public ContentIds Ids { get; init; } = ContentIds.None;
+
+    /// <summary>
+    /// Gets the artists of a music video, which take part in its title match (D64). Empty for other kinds.
+    /// </summary>
+    public IReadOnlyList<string> Artists { get; init; } = [];
 
     /// <summary>
     /// Gets what confirms a film copy that has no IDs (decision 13). Filled on films only.

@@ -91,6 +91,122 @@ public class JellyfinRemoteClientTests
         Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
     }
 
+    // Below quality 90 Jellyfin never sends the original file, so the copy is re-encoded at 640 with no EXIF of the photo.
+    [Fact]
+    public async Task APhotoThumbnailIsAskedSmallAndReEncodedWithTheSessionInTheHeaderOnly()
+    {
+        var bytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 };
+        var handler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            return response;
+        });
+
+        var result = await ClientFor(handler).GetPhotoThumbnailAsync(_endpoint, _session, "item 1", CancellationToken.None);
+
+        Assert.Equal(bytes, result.Value!.Content.ToArray());
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items/item%201/Images/Primary/0", request.Uri.AbsolutePath);
+        Assert.Equal("?maxWidth=640&maxHeight=640&quality=80&format=Jpg", request.Uri.Query);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    private static StubHandler PhotoImageHandler(string type = "image/jpeg", byte[]? bytes = null) => new(_ =>
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes ?? [0xFF, 0xD8, 0xFF, 0xD9]) };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(type);
+        return response;
+    });
+
+    // Whatever the client asks for, the answer is a re-encoded JPEG of a bounded size.
+    [Theory]
+    [InlineData(null, null, null, null, null, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
+    [InlineData(1920, 1080, null, null, null, null, "?maxWidth=1920&maxHeight=1280&quality=80&format=Jpg")]
+    [InlineData(null, null, 400, 300, null, null, "?maxWidth=640&maxHeight=320&quality=80&format=Jpg")]
+    [InlineData(2000, 500, 1000, 900, null, null, "?maxWidth=1280&maxHeight=640&quality=80&format=Jpg")]
+    [InlineData(null, null, null, null, 300, null, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=320")]
+    [InlineData(null, 300, 400, 500, 600, 700, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=640&fillHeight=960")]
+    [InlineData(100000, 100000, 100000, 100000, 100000, 100000, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg&fillWidth=4096&fillHeight=4096")]
+    [InlineData(0, -1, 0, -1, 0, int.MinValue, "?maxWidth=4096&maxHeight=4096&quality=80&format=Jpg")]
+    public async Task APhotoImageIsAskedReEncodedAndBoundedWithTheSessionInTheHeaderOnly(int? maxWidth, int? maxHeight, int? width, int? height, int? fillWidth, int? fillHeight, string query)
+    {
+        var handler = PhotoImageHandler();
+        var size = new RemotePhotoSize { MaxWidth = maxWidth, MaxHeight = maxHeight, Width = width, Height = height, FillWidth = fillWidth, FillHeight = fillHeight };
+
+        var result = await ClientFor(handler).GetPhotoImageAsync(_endpoint, _session, "item 1", size, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/Items/item%201/Images/Primary/0", request.Uri.AbsolutePath);
+        Assert.Equal(query, request.Uri.Query);
+        Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+        Assert.Contains(TestValues.Token, request.Authorization, StringComparison.Ordinal);
+    }
+
+    // Any side a caller asks is one of a few, so that it cannot make the remote encode a photo in every size (row 534).
+    [Theory]
+    [InlineData(1, 160)]
+    [InlineData(160, 160)]
+    [InlineData(161, 320)]
+    [InlineData(321, 640)]
+    [InlineData(640, 640)]
+    [InlineData(641, 960)]
+    [InlineData(961, 1280)]
+    [InlineData(1281, 1920)]
+    [InlineData(1921, 2560)]
+    [InlineData(2561, 4096)]
+    [InlineData(4096, 4096)]
+    [InlineData(4097, 4096)]
+    public async Task TheSideOfAPhotoImageIsRoundedUpToAStep(int asked, int step)
+    {
+        var handler = PhotoImageHandler();
+
+        await ClientFor(handler).GetPhotoImageAsync(_endpoint, _session, "item", new RemotePhotoSize { MaxWidth = asked }, CancellationToken.None);
+
+        Assert.StartsWith($"?maxWidth={step}&", Assert.Single(handler.Requests).Uri.Query, StringComparison.Ordinal);
+    }
+
+    // A served image is held in memory and a thumbnail on disk, so each has a limit of its own.
+    [Fact]
+    public async Task APhotoImageOrThumbnailOverItsBytesIsRefused()
+    {
+        var image = await ClientFor(PhotoImageHandler(bytes: new byte[JellyfinRemoteClient.MaxPhotoImageBytes + 1])).GetPhotoImageAsync(_endpoint, _session, "item", new RemotePhotoSize(), CancellationToken.None);
+        var thumbnail = await ClientFor(PhotoImageHandler(bytes: new byte[JellyfinRemoteClient.MaxPhotoThumbnailBytes + 1])).GetPhotoThumbnailAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.ResponseTooLarge, image.Failure);
+        Assert.Equal(RemoteFailure.ResponseTooLarge, thumbnail.Failure);
+    }
+
+    [Theory]
+    [InlineData("image/png")]
+    [InlineData("image/svg+xml")]
+    [InlineData("text/html")]
+    public async Task APhotoImageThatIsNotAJpegIsRefused(string type)
+    {
+        var result = await ClientFor(PhotoImageHandler(type)).GetPhotoImageAsync(_endpoint, _session, "item", new RemotePhotoSize(), CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
+    [Theory]
+    [InlineData("image/png")]
+    [InlineData("application/json")]
+    public async Task APhotoThumbnailThatIsNotAJpegIsRefused(string type)
+    {
+        var handler = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0xD8, 0xFF, 0xD9]) };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(type);
+            return response;
+        });
+
+        var result = await ClientFor(handler).GetPhotoThumbnailAsync(_endpoint, _session, "item", CancellationToken.None);
+
+        Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
+    }
+
     [Fact]
     public async Task AnAnswerThatIsNotAnImageIsRefused()
     {
@@ -324,7 +440,7 @@ public class JellyfinRemoteClientTests
     }
 
     [Fact]
-    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyFilmsAndSeries()
+    public async Task LibrariesComeFromUserViewsWithTheHiddenOnesAndKeepOnlyLibraries()
     {
         var handler = StubHandler.StockServer();
 
@@ -344,10 +460,52 @@ public class JellyfinRemoteClientTests
         Assert.Equal([("g1", true), ("s1", false)], result.Value!.Select(library => (library.Id, library.MayCombine)));
     }
 
+    [Theory]
+    [InlineData("\"CollectionType\":\"movies\",\"Type\":\"CollectionFolder\"", "movies")]
+    [InlineData("\"CollectionType\":\"tvshows\",\"Type\":\"CollectionFolder\"", "tvshows")]
+    [InlineData("\"CollectionType\":\"music\",\"Type\":\"CollectionFolder\"", "music")]
+    [InlineData("\"CollectionType\":\"musicvideos\",\"Type\":\"CollectionFolder\"", "musicvideos")]
+    [InlineData("\"CollectionType\":\"homevideos\",\"Type\":\"CollectionFolder\"", "homevideos")]
+    [InlineData("\"CollectionType\":\"books\",\"Type\":\"CollectionFolder\"", "books")]
+    [InlineData("\"CollectionType\":\"Music\",\"Type\":\"CollectionFolder\"", "music")]
+    [InlineData("\"CollectionType\":\"photos\",\"Type\":\"CollectionFolder\"", "homevideos")]
+    [InlineData("\"Type\":\"CollectionFolder\"", "mixed")]
+    [InlineData("\"CollectionType\":null,\"Type\":\"CollectionFolder\"", "mixed")]
+    [InlineData("\"CollectionType\":\"\",\"Type\":\"CollectionFolder\"", "mixed")]
+    [InlineData("\"Type\":\"Channel\"", null)]
+    [InlineData("\"Type\":\"UserView\"", null)]
+    [InlineData("\"Type\":\"collectionfolder\"", null)]
+    [InlineData("", null)]
+    [InlineData("\"CollectionType\":\"boxsets\",\"Type\":\"CollectionFolder\"", null)]
+    [InlineData("\"CollectionType\":\"playlists\",\"Type\":\"ManualPlaylistsFolder\"", null)]
+    [InlineData("\"CollectionType\":\"livetv\",\"Type\":\"UserView\"", null)]
+    [InlineData("\"CollectionType\":\"folders\",\"Type\":\"UserView\"", null)]
+    [InlineData("\"CollectionType\":\"trailers\",\"Type\":\"UserView\"", null)]
+    [InlineData("\"CollectionType\":\"mixed\",\"Type\":\"CollectionFolder\"", "mixed")]
+    public async Task EachRemoteViewIsImportedAsItsTypeOrNotAtAll(string fields, string? expected)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[{\"Id\":\"v1\",\"Name\":\"View\"" + (fields.Length == 0 ? string.Empty : "," + fields) + "}]}"));
+
+        var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Equal(expected is null ? [] : [expected], result.Value!.Select(library => library.CollectionType));
+        Assert.Equal(1, RemoteLibraryList.ViewCountOf(result.Value!));
+    }
+
+    [Fact]
+    public async Task AProviderLibraryWithoutATypeIsNoLibrary()
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"v1","Name":"View"},{"Id":"v2","Name":"Film","CollectionType":"movies"}]}"""));
+
+        var result = await ClientFor(handler).GetSharedLibrariesAsync(_endpoint, _session, CancellationToken.None);
+
+        Assert.Equal(["v2"], result.Value!.Select(library => library.Id));
+    }
+
     [Fact]
     public async Task AnAnswerWithOnlyOtherLibraryTypesGivesNoLibrariesButCountsItsViews()
     {
-        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"m1","Name":"Musica","CollectionType":"music"}]}"""));
+        var handler = new StubHandler(_ => StubHandler.Json("""{"Items":[{"Id":"p1","Name":"Playlist","CollectionType":"playlists"}]}"""));
 
         var result = await ClientFor(handler).GetLibrariesAsync(_endpoint, _session, CancellationToken.None);
 
@@ -401,6 +559,28 @@ public class JellyfinRemoteClientTests
         }
 
         Assert.DoesNotContain(TestValues.Token, request.Uri.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(RemoteItemType.Photo, true)]
+    [InlineData(RemoteItemType.Book, true)]
+    [InlineData(RemoteItemType.Movie, false)]
+    [InlineData(RemoteItemType.Episode, false)]
+    [InlineData(RemoteItemType.Audio, false)]
+    [InlineData(RemoteItemType.Video, false)]
+    public async Task ItemsAsksForTheParentAndTheSizeAndThePathOnlyOfBooksAndPhotos(RemoteItemType type, bool withPath)
+    {
+        var handler = new StubHandler(_ => StubHandler.Json("{\"Items\":[],\"TotalRecordCount\":0}"));
+
+        await ItemsAsync(handler, new RemoteItemQuery("lib", type, 0, 200));
+
+        var query = Uri.UnescapeDataString(Assert.Single(handler.Requests).Uri.Query);
+        Assert.Contains("includeItemTypes=" + type, query, StringComparison.Ordinal);
+        var fields = query.Split('&').Single(part => part.StartsWith("fields=", StringComparison.Ordinal))["fields=".Length..].Split(',');
+        Assert.Contains("ParentId", fields);
+        Assert.Contains("Width", fields);
+        Assert.Contains("Height", fields);
+        Assert.Equal(withPath, fields.Contains("Path"));
     }
 
     [Fact]
@@ -600,6 +780,8 @@ public class JellyfinRemoteClientTests
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Genres\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"People\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Studios\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"AlbumArtists\":[null]}],\"TotalRecordCount\":1}")]
+    [InlineData("{\"Items\":[{\"Id\":\"a\",\"Artists\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"Chapters\":[null]}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"ImageTags\":{\"Primary\":null}}],\"TotalRecordCount\":1}")]
     [InlineData("{\"Items\":[{\"Id\":\"a\",\"MediaSources\":[null]}],\"TotalRecordCount\":1}")]

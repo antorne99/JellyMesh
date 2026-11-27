@@ -11,14 +11,15 @@ using Xunit;
 
 namespace Jellyfin.Plugin.JellyMesh.Tests.Library;
 
-// A remote series that matches by nothing, without IDs and without a year, is one series of its server, with one folder and
-// one row in the registry.
+// A remote series that matches by nothing, without IDs and without a year or with a name that may have been cut (row 529),
+// is one series of its server, with one folder and one row in the registry.
 public class UnmatchedSeriesStubPlannerTests
 {
     private const string Shows = TestLibraries.Shows;
 
     private static readonly Guid _server = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000000");
     private static readonly DateTimeOffset _now = new(2026, 11, 23, 0, 0, 0, TimeSpan.Zero);
+    private static readonly string _longName = new('a', 1500);
 
     private static StubState Sync(StubState state, string name, int? year, params RemoteItem[] episodes)
     {
@@ -46,7 +47,10 @@ public class UnmatchedSeriesStubPlannerTests
             [new RemoteServerInfo(_server, "Casa", "http://server", RemoteMode.Standard, 0, [Shows], null, null)],
             true,
             id => "http://127.0.0.1:8096/JellyMesh/Play/" + id,
-            _ => null)).State;
+            _ => null)
+        {
+            IgnoreRules = new FakeIgnoreRules()
+        }).State;
     }
 
     private static RemoteItem Episode(int number, string suffix = "") => TestItems.Episode("e" + number + suffix, "s", 1, number);
@@ -59,10 +63,12 @@ public class UnmatchedSeriesStubPlannerTests
         Assert.Equal(episodes, state.Stubs.Select(stub => stub.RelativePath).Distinct().Count());
     }
 
-    // The name and year of a series without IDs, that give it no work.
+    // Names of a series without IDs, with its year, that give it no work.
     public static TheoryData<string, int?> Unmatched() => new()
     {
-        { "Show", null }
+        { "Show", null },
+        { _longName, 2020 },
+        { _longName, null }
     };
 
     [Theory]

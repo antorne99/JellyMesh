@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Remote;
 using Jellyfin.Plugin.JellyMesh.Segments;
 using MediaBrowser.Controller.Entities;
@@ -115,9 +116,16 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         // R:versioni §5: the version comes from the query, else from the body, as the stock action merges them.
         var arguments = new ArgumentReader(context.ActionArguments);
         var asked = arguments.Version(MediaSourceArgument);
-        var routeStub = _stubs.Resolve(route, out var routeUnknown);
+        var routeStub = _stubs.ResolvePlayable(route, out var routeUnknown);
         if (routeStub is null && !routeUnknown && (asked is not { } named || named.Equals(route) || !IsFederated(named)) && !_stubs.HasVersions(route))
         {
+            // A stub the registry no longer knows still wants a user who reaches it (row 514), then it is stock's.
+            if (await RefuseUnreachableStubAsync(context.HttpContext, route, asked).ConfigureAwait(false) is { } refused)
+            {
+                context.Result = refused;
+                return;
+            }
+
             await next().ConfigureAwait(false);
             return;
         }
@@ -140,8 +148,22 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
             return;
         }
 
+        // A book is opened, never played: no remote is called for it (D63).
+        if (routeStub?.Kind == StubKind.Book)
+        {
+            context.Result = _refusal.RefuseBook(http, authorization.DeviceId ?? string.Empty);
+            return;
+        }
+
+        // A photo is shown, never played: stock answers on its local placeholder, as for a local photo.
+        if (routeStub?.Kind == StubKind.Photo)
+        {
+            await next().ConfigureAwait(false);
+            return;
+        }
+
         var target = asked ?? (routeStub is not null ? _versions.Choose(route, routeStub, user) : routeUnknown ? _versions.LinkedLocalCopy(route, user) ?? route : route);
-        var targetStub = _stubs.Resolve(target, out var targetUnknown);
+        var targetStub = _stubs.ResolvePlayable(target, out var targetUnknown);
         if (targetUnknown)
         {
             _logger.LogWarning("PlaybackInfo of item {ItemId} is refused: the registry does not hold the stub of version {VersionId}", route, target);
@@ -191,8 +213,16 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
 
         var outcome = await _coordinator.OpenAsync(request, http.RequestAborted).ConfigureAwait(false);
+        var track = _stubs.IsAudioStub(request.Identity.ItemId);
         switch (outcome.Kind)
         {
+            case PlaybackOutcomeKind.Remote when track:
+                context.Result = new OkObjectResult(outcome.Response);
+                break;
+            case PlaybackOutcomeKind.LocalTranscode or PlaybackOutcomeKind.Unavailable when track:
+                // No local audio transcode: the end of the chain is a clear error.
+                context.Result = _refusal.Refuse(http, deviceId, outcome.Kind == PlaybackOutcomeKind.LocalTranscode ? PlaybackRefusal.FailedText : PlaybackRefusal.TextOf(outcome));
+                break;
             case PlaybackOutcomeKind.Remote:
                 _segments.OfferOnRemote(outcome.Response!, outcome.Served, route);
                 context.Result = new OkObjectResult(outcome.Response);
@@ -208,6 +238,24 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
     }
 
+    // The refusal of a request that names a stub as the title or as the version: no user, or one who does not reach it.
+    private async Task<StatusCodeResult?> RefuseUnreachableStubAsync(HttpContext http, Guid route, Guid? asked)
+    {
+        var stubs = new[] { route, asked ?? route }.Distinct().Where(_stubs.IsStub).ToList();
+        if (stubs.Count == 0)
+        {
+            return null;
+        }
+
+        var authorization = await _authorization.GetAuthorizationInfo(http).ConfigureAwait(false);
+        if (authorization.User is not { } user || string.IsNullOrEmpty(authorization.Token))
+        {
+            return new StatusCodeResult(StatusCodes.Status401Unauthorized);
+        }
+
+        return stubs.TrueForAll(stub => _stubs.Sees(user, stub)) ? null : new StatusCodeResult(StatusCodes.Status404NotFound);
+    }
+
     // Keeps only the source of the version served: stock may list every version, and clients play the first one.
     private static void KeepOnly(PlaybackInfoResponse response, Guid versionId)
     {
@@ -219,7 +267,8 @@ public sealed class PlaybackInfoFilter : IAsyncActionFilter
         }
     }
 
-    private bool IsFederated(Guid itemId) => _stubs.Resolve(itemId, out var isUnknown) is not null || isUnknown;
+    // Tells whether an item is a stub, a known audio stub included, or a federated .strm the registry does not hold.
+    private bool IsFederated(Guid itemId) => _stubs.ResolvePlayable(itemId, out var isUnknown) is not null || isUnknown;
 
     // Keeps only the source of a local version, and never the one of a stub, which holds its signed URL.
     private void KeepLocal(PlaybackInfoResponse response, Guid versionId)

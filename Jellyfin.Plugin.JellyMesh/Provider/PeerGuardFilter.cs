@@ -7,6 +7,7 @@ using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Security;
 using Jellyfin.Plugin.JellyMesh.Storage;
 using MediaBrowser.Common;
+using MediaBrowser.Controller.Entities.Audio;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -28,7 +29,10 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     private const string LegacyParameters = "params";
     private const string LiveStreamParameter = "liveStreamId";
     private const string VersionParameter = "mediaSourceId";
+    private const string StaticParameter = "static";
+    private const string ItemParameter = "itemId";
     private const string ConfirmedPlaySession = "JellyMesh.ConfirmedPlaySession";
+    private const string StreamDevice = "JellyMesh.StreamDevice";
 
     private static readonly string[] _itemRouteValues = ["itemId", "routeItemId"];
     private static readonly string[] _versionRouteValues = [VersionParameter, "routeMediaSourceId"];
@@ -83,6 +87,30 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         context.Items[ConfirmedPlaySession] = playSessionId;
     }
 
+    /// <summary>
+    /// Notes the device a <c>PlaybackInfo</c> of audio names, for the filter that takes its slot.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <param name="device">The device, null if it names none.</param>
+    public static void NoteDevice(HttpContext context, string? device)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        context.Items[StreamDevice] = device;
+    }
+
+    /// <summary>
+    /// Reads the device noted on a <c>PlaybackInfo</c>.
+    /// </summary>
+    /// <param name="context">The request.</param>
+    /// <returns>The device, null if none was noted.</returns>
+    public static string? NotedDevice(HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        return context.Items[StreamDevice] as string;
+    }
+
     /// <inheritdoc />
     public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
@@ -124,9 +152,15 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         }
 
         // The same answer as for an item that does not exist: a peer learns nothing of what is not shared with it.
+        // A folder has no file to give, so a slot would be taken for nothing. The file of an admin's .strm is its text, a
+        // URL that may carry credentials, so no peer gets it, nor a static stream of it (rows 561 and 565). An item of the
+        // query may be what stock acts on in place of the route's, so it must be that same item (row 568).
         if (ItemIdOf(context.RouteData) is not { } itemId
-            || _catalog.FindVisible(caller, itemId) is null
-            || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version)))
+            || _catalog.FindVisible(caller, itemId) is not { } item
+            || !QueryItemsAre(http, itemId)
+            || (action?.ControllerName == "Library" && (item.IsFolder || ProviderCatalog.IsStrm(item.Path)))
+            || !VersionsOf(http, context.RouteData).All(version => _catalog.MaySeeVersion(caller, itemId, version))
+            || IsStaticStrm(caller, itemId, action, http, context.RouteData))
         {
             context.Result = new StatusCodeResult(StatusCodes.Status404NotFound);
             return;
@@ -138,8 +172,10 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
+        var device = item is Audio ? DeviceOf(http) : null;
         if (kind == PeerRouteKind.PlaybackInfo)
         {
+            NoteDevice(http, device);
             await PlaybackInfoAsync(caller, context, next).ConfigureAwait(false);
             return;
         }
@@ -168,7 +204,7 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
             return;
         }
 
-        using var request = await EnterAsync(caller, hasSession ? playSession : null, itemId, http).ConfigureAwait(false);
+        using var request = await EnterAsync(caller, hasSession ? playSession : null, itemId, device, http).ConfigureAwait(false);
         if (request is null)
         {
             context.Result = RefuseOverLimit(http);
@@ -192,16 +228,23 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
     }
 
     // Takes a slot for a stream. At the limit it first closes what waits to be closed, whose slot that frees, and tries once more.
-    private async Task<StreamRequest?> EnterAsync(PeerCaller caller, string? playSession, Guid itemId, HttpContext http)
+    private async Task<StreamRequest?> EnterAsync(PeerCaller caller, string? playSession, Guid itemId, string? device, HttpContext http)
     {
         var grant = caller.Grant;
-        if (_slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort) is { } request)
+        if (_slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort, device) is { } request)
         {
             return request;
         }
 
         await _closer.CloseAbandonedAsync().ConfigureAwait(false);
-        return _slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort);
+        return _slots.TryEnter(grant.UserId, grant.MaxStreams, playSession, itemId, http.Abort, device);
+    }
+
+    // The device a stream of audio names. Anything but one hash counts as none, and the stream then counts on its own.
+    private static string? DeviceOf(HttpContext http)
+    {
+        var values = http.Request.Headers[ProviderProtocol.DeviceHeader];
+        return values is [{ Length: ProviderProtocol.DeviceLength } device] && device.All(char.IsAsciiHexDigitLower) ? device : null;
     }
 
     // One answer for all of them, the same for a play session that exists and one that does not. The joined values of a
@@ -303,6 +346,15 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         return http.Request.Query.Where(pair => string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase)).SelectMany(pair => pair.Value);
     }
 
+    // Tells whether every item named by the query, under any case of the name and in every value, is the route's item.
+    // A value that is not a GUID cannot be checked, so it fails; a blank one names none, as for the versions.
+    private static bool QueryItemsAre(HttpContext http, Guid itemId)
+    {
+        return ValuesOf(http, ItemParameter)
+            .Where(value => !string.IsNullOrEmpty(value))
+            .All(value => Guid.TryParse(value, out var id) && id.Equals(itemId));
+    }
+
     private static Guid? ItemIdOf(RouteData route)
     {
         foreach (var name in _itemRouteValues)
@@ -314,5 +366,25 @@ public sealed class PeerGuardFilter : IAsyncResourceFilter
         }
 
         return null;
+    }
+
+    // Tells whether a Videos or Audio stream that may be static reads an admin's .strm, as the item or as a version it names.
+    private bool IsStaticStrm(PeerCaller caller, Guid itemId, ControllerActionDescriptor? action, HttpContext http, RouteData route)
+    {
+        if (action?.ControllerName is not ("Videos" or "Audio") || !MayBeStatic(http))
+        {
+            return false;
+        }
+
+        return _catalog.IsStrmFile(caller, itemId)
+            || VersionsOf(http, route).Any(version => Guid.TryParse(version, out var id) && _catalog.IsStrmFile(caller, id));
+    }
+
+    // Any value of static under any case of the name counts, unless it reads as false. Legacy params may say it too, so a
+    // request with them counts as static.
+    private static bool MayBeStatic(HttpContext http)
+    {
+        return ValuesOf(http, StaticParameter).Any(value => !bool.TryParse(value, out var isStatic) || isStatic)
+            || ValuesOf(http, LegacyParameters).Any();
     }
 }

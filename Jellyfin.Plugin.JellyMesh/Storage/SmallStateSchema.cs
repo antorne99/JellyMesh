@@ -147,6 +147,40 @@ public static class SmallStateSchema
     }
 
     /// <summary>
+    /// Adds the artists of a kept music video (F53), inside the step's transaction. Titles kept before have none.
+    /// </summary>
+    /// <param name="connection">The open database.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddKeptArtists(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "ALTER TABLE kept_titles ADD COLUMN artists TEXT NOT NULL DEFAULT '[]';";
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Adds the data of a kept track, audiobook, book or home video (row 532), inside the step's transaction. Titles kept
+    /// before have none.
+    /// </summary>
+    /// <param name="connection">The open database.</param>
+    /// <param name="transaction">The step's transaction.</param>
+    public static void AddKeptTypes(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            ALTER TABLE kept_titles ADD COLUMN album_artists TEXT NOT NULL DEFAULT '[]';
+            ALTER TABLE kept_titles ADD COLUMN album TEXT;
+            ALTER TABLE kept_titles ADD COLUMN series_name TEXT;
+            ALTER TABLE kept_titles ADD COLUMN provider_ids TEXT NOT NULL DEFAULT '{}';
+            ALTER TABLE kept_titles ADD COLUMN place TEXT;
+            ALTER TABLE kept_titles ADD COLUMN is_only_file INTEGER NOT NULL DEFAULT 0;
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// Adds the operation of each watch state carry (row 575), none for the rows already there. A table that has the
     /// column is left as it is, so the step can also run under another version number.
     /// </summary>

@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Net.Http;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
@@ -27,6 +27,7 @@ using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Lyrics;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -54,6 +55,7 @@ public partial class PlaybackFiltersTests
     private readonly Mock<ITranscodeManager> _transcodes = new();
     private readonly CapturingLogger<PlaybackInfoFilter> _infoLog = new();
     private readonly CapturingLogger<StockRouteGuardFilter> _guardLog = new();
+    private readonly CapturingLogger<AudioStubRoutes> _audioLog = new();
     private readonly Mock<IFederationResolver> _resolver = new();
     private readonly Mock<IMediaSegmentManager> _segmentManager = new();
     private readonly User _user = new("viewer", "auth", "reset");
@@ -68,6 +70,7 @@ public partial class PlaybackFiltersTests
         var video = new Movie { ShortcutPath = PlaybackRoutes.StrmUrl(8096, null, "stub", "signature") };
         _library.Setup(library => library.GetItemById(_itemId)).Returns(video);
         _stubs.Setup(stubs => stubs.Find("stub")).Returns(_stub);
+        _stubs.Setup(stubs => stubs.FindCopies(It.IsAny<string>())).Returns([]);
         _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([new Folder()]);
         _resolver.Setup(resolver => resolver.Resolve()).Returns(new FederationView(IndexHealth.Ok, 0, [], []));
         SignedIn();
@@ -90,9 +93,9 @@ public partial class PlaybackFiltersTests
         _library.Setup(library => library.GetItemById<BaseItem>(_itemId, _user)).Returns(new Movie());
     }
 
-    private PlaybackInfoFilter InfoFilter(InMemoryConfigurationStore? settings = null)
+    private PlaybackInfoFilter InfoFilter(InMemoryConfigurationStore? store = null)
     {
-        var store = settings ?? new InMemoryConfigurationStore();
+        store ??= new InMemoryConfigurationStore();
         var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         _offer = new SegmentOffer(_segmentManager.Object, Segments(lookup, store), lookup, _fixture.Sessions);
         return new PlaybackInfoFilter(
@@ -101,7 +104,7 @@ public partial class PlaybackFiltersTests
             _fixture.Coordinator,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             new LocalCopyLookup(_resolver.Object, _library.Object, _stubs.Object),
-            new PlaybackVersions(lookup, _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, store),
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, TrackIndex(), store),
             _offer,
             _infoLog,
             _errorLogs);
@@ -116,14 +119,18 @@ public partial class PlaybackFiltersTests
 
     private StockRouteGuardFilter GuardFilter(PlaybackSessionStore? sessions = null, Func<string, IReadOnlyList<string>>? listFolder = null, InMemoryConfigurationStore? store = null)
     {
+        store ??= new InMemoryConfigurationStore();
+        var lookup = new StubLookup(_library.Object, _stubs.Object, store);
         return new StockRouteGuardFilter(
-            new StubLookup(_library.Object, _stubs.Object, store ?? new InMemoryConfigurationStore()),
+            lookup,
             _authorization.Object,
             _fixture.Coordinator,
             sessions ?? _fixture.Sessions,
             new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(_sessionManager.Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, _audioLog),
+            new PlaybackVersions(lookup, _stubs.Object, _library.Object, TrackIndex(), store),
             listFolder ?? StockRouteGuardFilter.ListFolder,
             _guardLog,
             _errorLogs);
@@ -1800,8 +1807,9 @@ public partial class PlaybackFiltersTests
     [InlineData("video/x-matroska", "x.mkv")]
     [InlineData("video/mp4; charset=binary", "x.mp4")]
     [InlineData("video/mp2t", "x.ts")]
-    [InlineData("text/html", "x")]
-    [InlineData(null, "x")]
+    [InlineData("text/html", "x.bin")]
+    [InlineData("video/unknown", "x.bin")]
+    [InlineData(null, "x.bin")]
     public async Task Download_of_a_stub_is_an_attachment_named_as_the_title_with_the_extension_of_the_remote_file(string? contentType, string name)
     {
         CanSeeItem();
@@ -1816,6 +1824,7 @@ public partial class PlaybackFiltersTests
         var disposition = Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(context.HttpContext.Response.Headers.ContentDisposition.ToString());
         Assert.Equal("attachment", disposition.DispositionType.ToString());
         Assert.Equal(name, disposition.FileName.ToString().Trim('"'));
+        Assert.Equal(name.EndsWith(".bin", StringComparison.Ordinal) ? "application/octet-stream" : contentType, context.HttpContext.Response.ContentType);
         Assert.Equal(_remoteBytes, BodyOf(context));
     }
 
@@ -1942,6 +1951,1222 @@ public partial class PlaybackFiltersTests
         var store = new InMemoryConfigurationStore();
         store.Configuration.FederatedFolderPath = "/federata";
         _library.Setup(library => library.GetItemById(_itemId)).Returns(new Movie { Path = "/media/Film (2012).strm" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
+    // A track stub is an Audio item with no plugin URL; the registry knows it by its path (F54).
+    private InMemoryConfigurationStore TrackStub(bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        var path = "/federata/server/library/Musica/Artist/Album/01 - Song.strm";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = path });
+        _stubs.Setup(stubs => stubs.FindByPath(path)).Returns(known ? _stub : null);
+        return store;
+    }
+
+    [Fact]
+    public async Task File_of_a_visible_track_stub_comes_from_the_remote_and_never_from_stock()
+    {
+        CanSeeItem();
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.StartsWith("/Videos/remote-item/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
+    }
+
+    // Finamp downloads a track through File, which wants no download permission (D12), and seeks with a Range.
+    [Fact]
+    public async Task File_of_a_track_stub_keeps_its_range_without_the_download_permission()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        RemoteStreamRequest? asked = null;
+        var serve = _fixture.Client.Open;
+        _fixture.Client.Open = (request, token) =>
+        {
+            asked = request;
+            return serve(request, token);
+        };
+        var context = FileRequest("GetFile", "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal("bytes 0-4/100", context.HttpContext.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes=0-4", asked?.Range);
+    }
+
+    // A track or an audiobook part, with the name its .strm has.
+    private InMemoryConfigurationStore AudioStub(StubKind kind)
+    {
+        var store = TrackStub();
+        var name = kind == StubKind.AudioBook ? "Libri/Author/Story/01 - Café 1.5.strm" : "Musica/Artist/Album/01 - Song.strm";
+        _stubs.Setup(stubs => stubs.FindByPath(It.IsAny<string>())).Returns(_stub with { Kind = kind, RelativePath = "server/library/" + name });
+        return store;
+    }
+
+    private void RemoteServesType(string? contentType)
+    {
+        _fixture.Client.Open = (request, _) => Task.FromResult(RemoteResult.Success(new RemoteContent(
+            System.Net.HttpStatusCode.OK,
+            new RemoteContentHeaders(contentType, _remoteBytes.Length, null, "bytes"),
+            new MemoryStream(_remoteBytes))));
+    }
+
+    // Rows 532 and 542: the type of the answer gives the extension from a fixed list, and any other type a neutral one.
+    [Theory]
+    [InlineData(StubKind.Track, "audio/mpeg", "01 - Song.mp3")]
+    [InlineData(StubKind.Track, "AUDIO/FLAC; charset=binary", "01 - Song.flac")]
+    [InlineData(StubKind.Track, "audio/ogg", "01 - Song.ogg")]
+    [InlineData(StubKind.Track, " audio/mpeg ;q=1", "01 - Song.mp3")]
+    [InlineData(StubKind.Track, "video/x-matroska", "01 - Song.mka")]
+    [InlineData(StubKind.Track, "video/x-ms-asf", "01 - Song.wma")]
+    [InlineData(StubKind.AudioBook, "video/x-matroska", "01 - Café 1.5.mka")]
+    [InlineData(StubKind.Track, "video/mp4", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "text/html", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "text/plain", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "audio/mpeg.exe", "01 - Song.bin")]
+    [InlineData(StubKind.Track, "", "01 - Song.bin")]
+    [InlineData(StubKind.Track, null, "01 - Song.bin")]
+    [InlineData(StubKind.AudioBook, "audio/mp4", "01 - Café 1.5.m4a")]
+    [InlineData(StubKind.AudioBook, "audio/unknown", "01 - Café 1.5.bin")]
+    public async Task Download_of_an_audio_stub_is_an_attachment_named_as_its_stub_with_the_extension_of_the_remote_file(StubKind kind, string? contentType, string name)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServesType(contentType);
+        var context = FileRequest("GetDownload");
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(kind)), context));
+
+        var headers = context.HttpContext.Response.Headers;
+        var disposition = Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(headers.ContentDisposition.ToString());
+        Assert.Equal("attachment", disposition.DispositionType.ToString());
+        Assert.Equal(name, disposition.FileNameStar.ToString());
+        Assert.Equal("nosniff", headers.XContentTypeOptions.ToString());
+        Assert.Equal(name.EndsWith(".bin", StringComparison.Ordinal) ? "application/octet-stream" : contentType, context.HttpContext.Response.ContentType);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    // No part of a title passes for the type of the file (row 542).
+    [Theory]
+    [InlineData("01 - Invoice.exe", "application/octet-stream", "01 - Invoice.exe.bin")]
+    [InlineData("01 - Invoice.exe", "application/x-msdownload", "01 - Invoice.exe.bin")]
+    [InlineData("01 - Invoice.exe", "audio/mpeg", "01 - Invoice.exe.mp3")]
+    [InlineData("01 - Song.mp3", null, "01 - Song.mp3.bin")]
+    public async Task The_title_of_an_audio_stub_never_gives_the_extension_of_its_download(string title, string? contentType, string name)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServesType(contentType);
+        var store = AudioStub(StubKind.Track);
+        _stubs.Setup(stubs => stubs.FindByPath(It.IsAny<string>())).Returns(_stub with { Kind = StubKind.Track, RelativePath = "server/library/Musica/Artist/Album/" + title + ".strm" });
+        var context = FileRequest("GetDownload");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+
+        Assert.Equal(name, Microsoft.Net.Http.Headers.ContentDispositionHeaderValue.Parse(context.HttpContext.Response.Headers.ContentDisposition.ToString()).FileNameStar.ToString());
+    }
+
+    // Only a download is bytes: a player opens the file with the type the remote gives.
+    [Fact]
+    public async Task File_of_an_audio_stub_of_an_unlisted_type_keeps_its_audio_type()
+    {
+        CanSeeItem();
+        RemoteServesType("audio/unknown");
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(StubKind.Track)), context));
+
+        Assert.Equal("audio/unknown", context.HttpContext.Response.ContentType);
+    }
+
+    [Theory]
+    [InlineData(StubKind.Track)]
+    [InlineData(StubKind.AudioBook)]
+    public async Task File_of_an_audio_stub_is_not_sniffed_and_is_not_an_attachment(StubKind kind)
+    {
+        CanSeeItem();
+        RemoteServesType("audio/mpeg");
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(kind)), context));
+
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(context.HttpContext.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("audio/mpeg", context.HttpContext.Response.ContentType);
+    }
+
+    [Theory]
+    [InlineData("HEAD", null)]
+    [InlineData("GET", "bytes=0-4")]
+    public async Task Head_and_a_range_of_an_audio_download_carry_the_same_headers(string method, string? range)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServesType("audio/mpeg");
+        var context = FileRequest("GetDownload", range);
+        context.HttpContext.Request.Method = method;
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(StubKind.AudioBook)), context));
+
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.StartsWith("attachment", context.HttpContext.Response.Headers.ContentDisposition.ToString(), StringComparison.Ordinal);
+    }
+
+    // A static stream is the file itself, so it is not sniffed, and a player opens it without an attachment.
+    [Fact]
+    public async Task A_static_stream_of_an_audio_stub_is_not_sniffed_and_is_not_an_attachment()
+    {
+        CanSeeItem();
+        RemoteServesType("audio/mpeg");
+        var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+        Assert.False(await RunAsync(GuardFilter(store: AudioStub(StubKind.Track)), context));
+
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(context.HttpContext.Response.Headers.ContentDisposition.ToString());
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_visible_track_stub_comes_from_the_remote()
+    {
+        CanSeeItem();
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(TrackStub()), context));
+        var response = Assert.IsType<PlaybackInfoResponse>(Assert.IsType<OkObjectResult>(context.Result).Value);
+        Assert.StartsWith("/JellyMesh/Playback/", Assert.Single(response.MediaSources).TranscodingUrl, StringComparison.Ordinal);
+        Assert.Equal("remote-item", Assert.Single(_fixture.Client.Requests).ItemId);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_track_stub_wants_a_user_who_sees_it()
+    {
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(TrackStub()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    // No local audio transcode: a remote that answers but cannot serve leaves a clear error, and stock is never reached.
+    [Fact]
+    public async Task PlaybackInfo_of_a_track_stub_the_remote_cannot_serve_is_refused_without_a_local_transcode()
+    {
+        CanSeeItem();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(RemoteResult.Success(new PlaybackInfoResponse { PlaySessionId = "remote-play", ErrorCode = PlaybackErrorCode.NotAllowed }));
+        var context = Context("MediaInfo", "GetPostedPlaybackInfo", ("itemId", _itemId), ("playbackInfoDto", new { DeviceProfile = PlaybackValues.WebProfile }));
+
+        Assert.False(await RunAsync(InfoFilter(TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task The_segments_of_a_visible_track_stub_stay_with_stock()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(store: TrackStub()), Context("MediaSegments", "GetItemSegments", ("itemId", _itemId))));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task File_of_a_track_stub_wants_a_user(string action)
+    {
+        Anonymous();
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("Audio", "GetAudioStream")]
+    [InlineData("Audio", "GetAudioStreamByContainer")]
+    [InlineData("UniversalAudio", "GetUniversalAudioStream")]
+    [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist")]
+    [InlineData("DynamicHls", "GetVariantHlsAudioPlaylist")]
+    public async Task A_stock_audio_route_refuses_a_track_stub_without_a_user(string controller, string action)
+    {
+        Anonymous();
+        var context = Context(controller, action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_stock_audio_route_does_not_find_a_track_stub_the_user_cannot_see()
+    {
+        var context = Context("Audio", "GetAudioStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    // Stock cannot play an audio .strm and would send its text, so even a user who sees the track never reaches it. A stock
+    // segment of a track stub was never handed out: the client gets the segments of its session.
+    [Theory]
+    [InlineData("GetAudioStream", false)]
+    [InlineData("GetHlsAudioSegment", true)]
+    public async Task A_stock_audio_route_never_reaches_stock_for_a_visible_track_stub(string action, bool known)
+    {
+        CanSeeItem();
+        var context = Context(action == "GetAudioStream" ? "Audio" : "DynamicHls", action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub(known)), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    // Row 582: a track .strm left outside the federated folder, found by the id in its URL; the caller removes the folder.
+    private (InMemoryConfigurationStore Store, string Temp) MovedTrackStub(string folder)
+    {
+        var temp = Directory.CreateTempSubdirectory("jellymesh-moved-").FullName;
+        var strm = Path.Combine(temp, "federata", "01 - Song.strm");
+        Directory.CreateDirectory(Path.GetDirectoryName(strm)!);
+        File.WriteAllText(strm, PlaybackRoutes.StrmUrl(8096, null, "moved", "signature"));
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = folder.Length == 0 ? string.Empty : Path.Combine(temp, folder);
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = strm });
+        _stubs.Setup(stubs => stubs.Find("moved")).Returns(_stub with { Id = "moved", Kind = StubKind.Track, RelativePath = "server/library/Musica/Artist/Album/01 - Song.strm" });
+        return (store, temp);
+    }
+
+    [Theory]
+    [InlineData("Audio", "GetAudioStream", "fed2")]
+    [InlineData("Audio", "GetAudioStream", "")]
+    [InlineData("Audio", "GetAudioStreamByContainer", "fed2")]
+    [InlineData("UniversalAudio", "GetUniversalAudioStream", "")]
+    [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist", "fed2")]
+    [InlineData("Library", "GetFile", "")]
+    [InlineData("Library", "GetDownload", "fed2")]
+    public async Task A_moved_track_stub_refuses_an_anonymous_caller(string controller, string action, string folder)
+    {
+        Anonymous();
+        var (store, temp) = MovedTrackStub(folder);
+        try
+        {
+            var context = AudioRequest(controller, action, "GET", ("static", true));
+
+            Assert.False(await RunAsync(GuardFilter(store: store), context));
+            Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    [Fact]
+    public async Task A_moved_track_stub_is_not_found_by_a_user_who_cannot_see_it()
+    {
+        var (store, temp) = MovedTrackStub("fed2");
+        try
+        {
+            var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+            Assert.False(await RunAsync(GuardFilter(store: store), context));
+            Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    // A user who sees the old track plays it through its stub, never through stock.
+    [Theory]
+    [InlineData("fed2")]
+    [InlineData("")]
+    public async Task A_static_stream_of_a_moved_track_stub_comes_from_the_remote(string folder)
+    {
+        CanSeeItem();
+        RemoteServesType("audio/mpeg");
+        var (store, temp) = MovedTrackStub(folder);
+        try
+        {
+            var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+            Assert.False(await RunAsync(GuardFilter(store: store), context));
+            Assert.Equal(_remoteBytes, BodyOf(context));
+        }
+        finally
+        {
+            Directory.Delete(temp, true);
+        }
+    }
+
+    private ActionExecutingContext AudioRequest(string controller, string action, string method, params (string Key, object? Value)[] arguments)
+    {
+        var context = Context(controller, action, new (string Key, object? Value)[] { ("itemId", _itemId) }.Concat(arguments).ToArray());
+        context.HttpContext.Request.Method = method;
+        context.HttpContext.Response.Body = new MemoryStream();
+        return context;
+    }
+
+    // What jellyfin-web sends to universal.
+    private ActionExecutingContext Universal(string method = "GET")
+    {
+        return AudioRequest(
+            "UniversalAudio",
+            "GetUniversalAudioStream",
+            method,
+            ("container", new[] { "opus", "mp3|mp3", "flac" }),
+            ("transcodingContainer", "ts"),
+            ("transcodingProtocol", Jellyfin.Data.Enums.MediaStreamProtocol.hls),
+            ("audioCodec", "aac"),
+            ("maxStreamingBitrate", 320000));
+    }
+
+    // What Finamp sends for HLS.
+    private ActionExecutingContext FinampVariant()
+    {
+        return AudioRequest("DynamicHls", "GetVariantHlsAudioPlaylist", "GET", ("audioCodec", "aac"), ("segmentContainer", "mp4"), ("audioBitRate", 320000), ("playSessionId", "finamp-play"));
+    }
+
+    private static void HoldsNoRemoteValue(string text)
+    {
+        foreach (var secret in new[] { PlaybackValues.RemoteToken, PlaybackValues.RemoteDevice, PlaybackValues.RemotePlaySession, "remote.invalid", "remote-item" })
+        {
+            Assert.DoesNotContain(secret, text, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task Universal_of_a_track_stub_plays_what_the_remote_serves_as_it_is()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var context = Universal();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.StartsWith("/Videos/remote-item/stream?static=true", _fixture.Client.Opened[^1], StringComparison.Ordinal);
+        var profile = Assert.Single(_fixture.Client.Requests).DeviceProfile!;
+        Assert.Equal(["opus", "mp3", "flac"], profile.DirectPlayProfiles.Select(direct => direct.Container));
+        Assert.Equal("mp3", profile.DirectPlayProfiles[1].AudioCodec);
+        Assert.Equal(DlnaProfileType.Audio, profile.DirectPlayProfiles[0].Type);
+        var transcoding = Assert.Single(profile.TranscodingProfiles);
+        Assert.Equal(("ts", "aac", Jellyfin.Data.Enums.MediaStreamProtocol.hls), (transcoding.Container, transcoding.AudioCodec, transcoding.Protocol));
+    }
+
+    // jellyfin-web sends HEAD and then GET, and a seek asks again with a Range: one stream on the remote for all of them.
+    [Fact]
+    public async Task Head_and_get_of_universal_share_one_remote_stream()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var store = TrackStub();
+        var guard = GuardFilter(store: store);
+
+        Assert.False(await RunAsync(guard, Universal("HEAD")));
+        var get = Universal();
+        get.HttpContext.Request.Headers.Range = "bytes=100-";
+        Assert.False(await RunAsync(guard, get));
+
+        Assert.Single(_fixture.Client.Requests);
+        Assert.Equal(_remoteBytes, BodyOf(get));
+    }
+
+    [Fact]
+    public async Task Universal_the_remote_transcodes_to_hls_answers_a_master_of_the_session()
+    {
+        CanSeeItem();
+        var context = Universal();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal("application/x-mpegURL", playlist.ContentType);
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Contains("\n../../JellyMesh/Playback/" + session.Id + "/f/", playlist.Content, StringComparison.Ordinal);
+        Assert.Contains("ApiKey=" + Token, playlist.Content, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist.Content!);
+    }
+
+    [Fact]
+    public async Task Head_of_universal_the_remote_transcodes_to_hls_tells_a_playlist_without_a_body()
+    {
+        CanSeeItem();
+        var context = Universal("HEAD");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var head = Assert.IsType<FileContentResult>(context.Result);
+        Assert.Equal("application/x-mpegURL", head.ContentType);
+        Assert.Empty(head.FileContents);
+    }
+
+    [Fact]
+    public async Task Main_playlist_of_a_track_stub_lists_the_segments_of_its_session()
+    {
+        CanSeeItem();
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result);
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Contains("\n../../JellyMesh/Playback/" + session.Id + "/f/", playlist.Content, StringComparison.Ordinal);
+        Assert.Contains("0.mp4", playlist.Content, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist.Content!);
+        var asked = Assert.Single(_fixture.Client.Requests);
+        Assert.Equal((false, false, 320000), (asked.EnableDirectPlay, asked.EnableDirectStream, asked.MaxStreamingBitrate));
+        var transcoding = Assert.Single(asked.DeviceProfile!.TranscodingProfiles);
+        Assert.Equal(("mp4", "aac", Jellyfin.Data.Enums.MediaStreamProtocol.hls), (transcoding.Container, transcoding.AudioCodec, transcoding.Protocol));
+    }
+
+    [Fact]
+    public async Task Master_playlist_of_a_track_stub_leads_to_its_session()
+    {
+        CanSeeItem();
+        var context = AudioRequest("DynamicHls", "GetMasterHlsAudioPlaylist", "GET", ("audioCodec", "aac"));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result);
+        Assert.Contains("../../JellyMesh/Playback/" + Assert.Single(_fixture.Sessions.All).Id + "/f/", playlist.Content, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist.Content!);
+    }
+
+    // A remote answers an audio transcode with an audio master: its variant holds no video codec.
+    private void RemoteTranscodesAudioToHls()
+    {
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            answer.Value!.MediaSources[0].TranscodingUrl = PlaybackValues.AudioMaster;
+            return Task.FromResult(answer);
+        };
+        _fixture.Client.Master = PlaybackValues.AudioMasterPlaylist;
+        _fixture.Client.Variant = PlaybackValues.AudioVariantPlaylist;
+    }
+
+    [Fact]
+    public async Task Universal_of_a_track_stub_with_an_audio_master_leads_to_its_session()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var context = Universal();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result);
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Equal(PlaybackStreamKind.Hls, session.Kind);
+        Assert.Contains("CODECS=\"mp4a.40.2\"", playlist.Content, StringComparison.Ordinal);
+        Assert.Contains("\n../../JellyMesh/Playback/" + session.Id + "/f/", playlist.Content, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist.Content!);
+    }
+
+    [Fact]
+    public async Task Main_playlist_of_a_track_stub_with_an_audio_master_lists_its_segments()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var playlist = Assert.IsType<ContentResult>(context.Result).Content!;
+        var prefix = "../../JellyMesh/Playback/" + Assert.Single(_fixture.Sessions.All).Id + "/f/";
+        Assert.Contains("URI=\"" + prefix, playlist, StringComparison.Ordinal);
+        Assert.Contains("\n" + prefix, playlist, StringComparison.Ordinal);
+        Assert.Contains("0.mp4", playlist, StringComparison.Ordinal);
+        Assert.Contains("#EXT-X-ENDLIST", playlist, StringComparison.Ordinal);
+        HoldsNoRemoteValue(playlist);
+    }
+
+    // Row 561: Finamp names the play session itself, and stops the encoding with that name.
+    [Fact]
+    public async Task Stopping_the_play_session_finamp_chose_closes_its_track_session()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, FinampVariant()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        Assert.Equal("finamp-play", session.ClientPlaySessionId);
+
+        Assert.True(await RunAsync(guard, Context("HlsSegment", "StopEncodingProcess", ("playSessionId", "finamp-play"))));
+
+        Assert.Null(_fixture.Sessions.Find(session.Id));
+    }
+
+    // The client moved on, as after a stop: what it still asks of the session is gone, and no source failed.
+    [Fact]
+    public async Task Main_playlist_of_a_track_session_closed_while_its_master_is_read_is_not_found()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, FinampVariant()));
+        var session = Assert.Single(_fixture.Sessions.All);
+        _fixture.Client.Playlists = _ =>
+        {
+            session.Close();
+            return RemoteFailure.Unreachable;
+        };
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(guard, context));
+
+        Assert.IsType<NotFoundResult>(context.Result);
+        Assert.False(session.HasFailed);
+        Assert.DoesNotContain(_audioLog.Lines, line => line.Contains("could not be read", StringComparison.Ordinal));
+    }
+
+    // A rooted variant would leave the folder of the session.
+    [Fact]
+    public async Task Main_playlist_of_a_master_with_a_rooted_variant_is_a_bad_gateway()
+    {
+        CanSeeItem();
+        RemoteTranscodesAudioToHls();
+        _fixture.Client.Master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n/Audio/other/main.m3u8\n";
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status502BadGateway, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Contains(_audioLog.Lines, line => line.Contains("names no variant in its own folder: 502", StringComparison.Ordinal));
+        PlaybackLogAssert.NoRemoteValue(_audioLog.Lines);
+    }
+
+    [Fact]
+    public async Task Universal_of_a_track_stub_the_remote_transcodes_to_a_file_relays_it()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            var source = answer.Value!.MediaSources[0];
+            source.TranscodingUrl = "/Audio/remote-item/stream.mp3?DeviceId=" + PlaybackValues.RemoteDevice + "&ApiKey=" + PlaybackValues.RemoteToken;
+            source.TranscodingSubProtocol = Jellyfin.Data.Enums.MediaStreamProtocol.http;
+            return Task.FromResult(answer);
+        };
+        var guard = GuardFilter(store: TrackStub());
+
+        var head = Universal("HEAD");
+        Assert.False(await RunAsync(guard, head));
+        Assert.Equal("audio/mpeg", Assert.IsType<FileContentResult>(head.Result).ContentType);
+        var get = Universal();
+        Assert.False(await RunAsync(guard, get));
+
+        Assert.Equal(_remoteBytes, BodyOf(get));
+        Assert.Equal(PlaybackStreamKind.Progressive, Assert.Single(_fixture.Sessions.All).Kind);
+        Assert.Single(_fixture.Client.Requests);
+
+        // Row 561: neither the HEAD nor the GET of universal is sniffed.
+        Assert.Equal("nosniff", head.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Equal("nosniff", get.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+    }
+
+    // The extension of a transcode comes from the remote, so the HEAD of universal tells an audio type only.
+    [Fact]
+    public async Task Head_of_universal_the_remote_transcodes_to_a_file_of_another_type_tells_an_audio_type()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) =>
+        {
+            var answer = FakePlaybackClient.Hls(request);
+            var source = answer.Value!.MediaSources[0];
+            source.TranscodingUrl = "/Audio/remote-item/stream.html?DeviceId=" + PlaybackValues.RemoteDevice;
+            source.TranscodingSubProtocol = Jellyfin.Data.Enums.MediaStreamProtocol.http;
+            return Task.FromResult(answer);
+        };
+        var head = Universal("HEAD");
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), head));
+        Assert.Equal("audio/mpeg", Assert.IsType<FileContentResult>(head.Result).ContentType);
+    }
+
+    // The same query from another user or device is another playback: it never gets the session of the first.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task The_same_universal_query_from_another_user_or_device_opens_its_own_session(bool otherUser)
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, Universal()));
+        var other = new User("other", "auth", "reset");
+        _library.Setup(library => library.GetItemById<BaseItem>(_itemId, other)).Returns(new Movie());
+        _authorization.Setup(context => context.GetAuthorizationInfo(It.IsAny<HttpContext>()))
+            .ReturnsAsync(new AuthorizationInfo { User = otherUser ? other : _user, Token = Token, DeviceId = otherUser ? "device" : "another-device" });
+
+        var second = Universal();
+        Assert.False(await RunAsync(guard, second));
+
+        Assert.Equal(2, _fixture.Client.Requests.Count);
+        Assert.Equal(2, _fixture.Sessions.All.Count);
+        Assert.Equal(_remoteBytes, BodyOf(second));
+    }
+
+    [Fact]
+    public async Task A_session_whose_source_failed_is_not_reused()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var guard = GuardFilter(store: TrackStub());
+        Assert.False(await RunAsync(guard, Universal()));
+        Assert.True(Assert.Single(_fixture.Sessions.All).TryFail());
+
+        Assert.False(await RunAsync(guard, Universal()));
+
+        Assert.Equal(2, _fixture.Client.Requests.Count);
+    }
+
+    // A playlist route never answers with the bytes of a stream.
+    [Fact]
+    public async Task A_playlist_route_of_a_track_stub_the_remote_plays_as_it_is_is_refused()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var context = FinampVariant();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_static_stream_of_a_track_stub_is_its_remote_file()
+    {
+        CanSeeItem();
+        RemoteServes();
+        var context = AudioRequest("Audio", "GetAudioStream", "GET", ("static", true));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.StartsWith("/Videos/remote-item/stream?static=true", Assert.Single(_fixture.Client.Opened), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_stream_of_a_track_stub_in_a_container_comes_through_a_session()
+    {
+        CanSeeItem();
+        RemoteServes();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(FakePlaybackClient.Direct(request));
+        var context = AudioRequest("Audio", "GetAudioStreamByContainer", "GET", ("container", "mp3"), ("audioCodec", "mp3"));
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        var direct = Assert.Single(Assert.Single(_fixture.Client.Requests).DeviceProfile!.DirectPlayProfiles);
+        Assert.Equal(("mp3", "mp3"), (direct.Container, direct.AudioCodec));
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+    }
+
+    // No local audio transcode: a remote that answers but cannot serve leaves a clear error, and stock is never reached.
+    [Fact]
+    public async Task Universal_of_a_track_stub_no_source_serves_is_refused()
+    {
+        CanSeeItem();
+        _fixture.Client.Answer = (request, _) => Task.FromResult(RemoteResult.Success(new PlaybackInfoResponse { PlaySessionId = "remote-play", ErrorCode = PlaybackErrorCode.NotAllowed }));
+        var context = Universal();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Sessions.All);
+    }
+
+    private ActionExecutingContext LyricsRequest(string action = "GetLyrics")
+    {
+        return AudioRequest("Lyrics", action, "GET");
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_track_stub_come_from_its_remote()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Success(new RemoteLyrics(new LyricDto { Lyrics = [new LyricLine("One", 10)] }));
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        var lyrics = Assert.IsType<LyricDto>(Assert.IsType<OkObjectResult>(context.Result).Value);
+        Assert.Equal("One", Assert.Single(lyrics.Lyrics).Text);
+        Assert.Equal(["remote-item"], _fixture.Client.LyricsAsked);
+    }
+
+    [Fact]
+    public async Task Lyrics_the_remote_does_not_have_are_not_found()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Success(RemoteLyrics.None);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.IsType<NotFoundResult>(context.Result);
+    }
+
+    // The title stays visible while its server is offline, and asking for its lyrics gets a clear error.
+    [Fact]
+    public async Task Lyrics_no_source_can_read_are_refused_with_a_clear_error()
+    {
+        CanSeeItem();
+        _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Unreachable);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    // A JellyMesh remote opens Lyrics to its peers (row 460), so its 403 is a refusal like that of a stock one.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Lyrics_a_remote_refuses_are_refused_with_a_clear_error(bool jellyMesh)
+    {
+        CanSeeItem();
+        if (jellyMesh)
+        {
+            _fixture.Registry.AddJellyMesh(_stub.Sources[0].ServerId);
+        }
+
+        _fixture.Client.Lyrics = _ => RemoteResult.Fail<RemoteLyrics>(RemoteFailure.Forbidden);
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Contains(RemoteFailure.Forbidden, _fixture.Registry.Recorded);
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_track_stub_want_a_user()
+    {
+        Anonymous();
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.LyricsAsked);
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_track_stub_the_user_cannot_see_are_not_found()
+    {
+        var context = LyricsRequest();
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.LyricsAsked);
+    }
+
+    // Stock would write the lyrics of a track stub next to its .strm, inside the federated folder.
+    [Theory]
+    [InlineData("UploadLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("DeleteLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("SearchRemoteLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("DownloadRemoteLyrics", true, StatusCodes.Status403Forbidden)]
+    [InlineData("UploadLyrics", false, StatusCodes.Status404NotFound)]
+    [InlineData("DownloadRemoteLyrics", false, StatusCodes.Status404NotFound)]
+    public async Task Lyrics_of_a_track_stub_are_never_managed(string action, bool sees, int status)
+    {
+        if (sees)
+        {
+            CanSeeItem();
+        }
+
+        var context = LyricsRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: TrackStub()), context));
+        Assert.Equal(status, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.LyricsAsked);
+        Assert.Equal(sees, _guardLog.Lines.Any(line => line.Contains("Lyrics." + action + " on a track stub is refused", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task Lyrics_of_a_local_track_stay_with_stock()
+    {
+        CanSeeItem();
+        var context = LyricsRequest();
+
+        Assert.True(await RunAsync(GuardFilter(), context));
+    }
+
+    [Fact]
+    public async Task An_audio_file_outside_the_federated_folder_stays_with_stock()
+    {
+        Anonymous();
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new MediaBrowser.Controller.Entities.Audio.Audio { Path = "/media/music/01 - Song.flac" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), Context("Audio", "GetAudioStream", ("itemId", _itemId))));
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
+    private const string BookPath = "/federata/server/Libri/Dune (1965)/Dune (1965).epub";
+
+    // A book placeholder of the federated folder, its stub found by its path, as a book has no URL to name it.
+    private InMemoryConfigurationStore BookPlaceholder(bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Path = BookPath });
+        _stubs.Setup(stubs => stubs.FindByPath(BookPath)).Returns(known ? _stub with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965).epub" } : null);
+        return store;
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_book_comes_from_the_remote_file_with_its_range_and_never_from_the_placeholder(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        RemoteStreamRequest? asked = null;
+        var serve = _fixture.Client.Open;
+        _fixture.Client.Open = (request, token) =>
+        {
+            asked = request;
+            return serve(request, token);
+        };
+        var context = FileRequest(action, "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("/Items/remote-item/File", Assert.Single(_fixture.Client.Opened));
+        Assert.Equal("bytes=0-4", asked?.Range);
+    }
+
+    // The type comes from the format of the placeholder, never from the remote, which says video/x-matroska here.
+    [Theory]
+    [InlineData("GetFile", "epub", "application/epub+zip")]
+    [InlineData("GetDownload", "epub", "application/epub+zip")]
+    [InlineData("GetFile", "pdf", "application/pdf")]
+    [InlineData("GetFile", "cbz", "application/vnd.comicbook+zip")]
+    [InlineData("GetFile", "cbr", "application/vnd.comicbook-rar")]
+    [InlineData("GetFile", "cb7", "application/x-cb7")]
+    [InlineData("GetFile", "cbt", "application/x-cbt")]
+    [InlineData("GetFile", "mobi", "application/x-mobipocket-ebook")]
+    [InlineData("GetFile", "azw", "application/vnd.amazon.ebook")]
+    [InlineData("GetFile", "azw3", "application/vnd.amazon.ebook")]
+    [InlineData("GetFile", "html", "application/octet-stream")]
+    public async Task A_book_goes_with_the_media_type_of_its_format(string action, string extension, string mediaType)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = BookPlaceholder();
+        _stubs.Setup(stubs => stubs.FindByPath(BookPath)).Returns(_stub with { Kind = StubKind.Book, RelativePath = "server/Libri/Dune (1965)/Dune (1965)." + extension });
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: store), context));
+        Assert.Equal(mediaType, context.HttpContext.Response.ContentType);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_book_is_an_attachment_with_its_local_name_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = BookPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        var disposition = download.HttpContext.Response.Headers.ContentDisposition.ToString();
+        Assert.StartsWith("attachment", disposition, StringComparison.Ordinal);
+        Assert.Contains("Dune (1965).epub", disposition, StringComparison.Ordinal);
+        Assert.Equal("nosniff", download.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Empty(file.HttpContext.Response.Headers.ContentDisposition.ToString());
+        Assert.Equal("nosniff", file.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+    }
+
+    // D63: a book is never played, so its PlaybackInfo is refused here and no remote is called.
+    [Fact]
+    public async Task PlaybackInfo_of_a_book_is_refused_here_with_a_text_and_reaches_no_remote()
+    {
+        CanSeeItem();
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(BookPlaceholder()), context));
+
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.BookText, result.Content);
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_book_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(BookPlaceholder()), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Requests);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("Audio", "GetAudioStream")]
+    [InlineData("DynamicHls", "GetMasterHlsVideoPlaylist")]
+    [InlineData("DynamicHls", "GetHlsVideoSegment")]
+    [InlineData("MediaSegments", "GetItemSegments")]
+    public async Task A_stream_or_segment_of_a_book_is_refused_here_with_a_text(string controller, string action)
+    {
+        CanSeeItem();
+        var context = Context(controller, action, ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.BookText, result.Content);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_stream_of_a_book_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_book_needs_the_download_permission_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(false);
+        RemoteServes();
+        var store = BookPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(download.Result).StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(file));
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_book_the_user_cannot_see_is_not_found(string action)
+    {
+        MayDownload(true);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    // Jellyfin shows an item in no library to everyone, so a book the user sees only that way is not found (D17).
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_visible_book_in_no_library_is_not_found(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        _library.Setup(library => library.GetCollectionFolders(It.IsAny<BaseItem>())).Returns([]);
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Theory]
+    [InlineData("GetFile", true)]
+    [InlineData("GetDownload", true)]
+    [InlineData("GetFile", false)]
+    public async Task A_book_whose_remote_is_offline_is_a_503_that_says_so(string action, bool known)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable));
+        var context = FileRequest(action);
+
+        Assert.False(await RunAsync(GuardFilter(store: BookPlaceholder(known)), context));
+        var result = Assert.IsType<ContentResult>(context.Result);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
+        Assert.Equal(PlaybackRefusal.FileOfflineText, result.Content);
+        Assert.Empty(BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_book_outside_the_federated_folder_stays_with_stock()
+    {
+        var store = BookPlaceholder();
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Path = "/media/Libri/Dune.epub" });
+
+        Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
+    }
+
+    private const string PhotoPath = "/federata/server/Video domestici/Trips/IMG_0001.jpg";
+
+    // A photo placeholder of the federated folder, its stub found by its path, as a photo has no URL to name it.
+    private InMemoryConfigurationStore PhotoPlaceholder(string extension = "jpg", bool known = true)
+    {
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Path = PhotoPath });
+        var relative = "server/Video domestici/Trips/IMG_0001." + extension;
+        _stubs.Setup(stubs => stubs.FindByPath(PhotoPath)).Returns(known ? _stub with { Kind = StubKind.Photo, RelativePath = relative } : null);
+        return store;
+    }
+
+    [Theory]
+    [InlineData("GetFile")]
+    [InlineData("GetDownload")]
+    public async Task A_photo_comes_from_the_remote_file_with_its_range_and_never_from_the_placeholder(string action)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes(System.Net.HttpStatusCode.PartialContent, "bytes 0-4/100");
+        var context = FileRequest(action, "bytes=0-4");
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status206PartialContent, context.HttpContext.Response.StatusCode);
+        Assert.Equal(_remoteBytes, BodyOf(context));
+        Assert.Equal("/Items/remote-item/File", Assert.Single(_fixture.Client.Opened));
+    }
+
+    // The type comes from the format of the placeholder, never from the remote, which says video/x-matroska here.
+    [Theory]
+    [InlineData("jpg", "image/jpeg")]
+    [InlineData("JPEG", "image/jpeg")]
+    [InlineData("png", "image/png")]
+    [InlineData("gif", "image/gif")]
+    [InlineData("webp", "image/webp")]
+    [InlineData("bmp", "image/bmp")]
+    [InlineData("tif", "image/tiff")]
+    [InlineData("tiff", "image/tiff")]
+    [InlineData("heic", "image/heic")]
+    [InlineData("heif", "image/heif")]
+    [InlineData("avif", "image/avif")]
+    [InlineData("cr2", "application/octet-stream")]
+    [InlineData("dng", "application/octet-stream")]
+    public async Task A_photo_goes_with_the_media_type_of_its_format_and_no_sniffing(string extension, string mediaType)
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder(extension)), context));
+        Assert.Equal(mediaType, context.HttpContext.Response.ContentType);
+        Assert.Equal("nosniff", context.HttpContext.Response.Headers.XContentTypeOptions.ToString());
+        Assert.Equal(_remoteBytes, BodyOf(context));
+    }
+
+    [Fact]
+    public async Task A_photo_is_an_attachment_with_its_local_name_only_on_Download()
+    {
+        CanSeeItem();
+        MayDownload(true);
+        RemoteServes();
+        var store = PhotoPlaceholder();
+        var download = FileRequest("GetDownload");
+        var file = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+        Assert.False(await RunAsync(GuardFilter(store: store), file));
+
+        Assert.Contains("IMG_0001.jpg", download.HttpContext.Response.Headers.ContentDisposition.ToString(), StringComparison.Ordinal);
+        Assert.Empty(file.HttpContext.Response.Headers.ContentDisposition.ToString());
+    }
+
+    [Fact]
+    public async Task A_photo_needs_a_user_who_sees_it_and_the_download_permission_on_Download()
+    {
+        MayDownload(false);
+        RemoteServes();
+        var store = PhotoPlaceholder();
+        var unseen = FileRequest("GetFile");
+        Assert.False(await RunAsync(GuardFilter(store: store), unseen));
+        CanSeeItem();
+        var download = FileRequest("GetDownload");
+        Assert.False(await RunAsync(GuardFilter(store: store), download));
+
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(unseen.Result).StatusCode);
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<StatusCodeResult>(download.Result).StatusCode);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_photo_whose_remote_is_offline_is_a_503()
+    {
+        CanSeeItem();
+        _fixture.Client.Open = (_, _) => Task.FromResult(RemoteResult.Fail<RemoteContent>(RemoteFailure.Unreachable));
+        var context = FileRequest("GetFile");
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, Assert.IsType<ContentResult>(context.Result).StatusCode);
+        Assert.Empty(BodyOf(context));
+    }
+
+    // A photo is not played: its PlaybackInfo and streams reach no remote, and stock answers on the 1x1 placeholder.
+    [Fact]
+    public async Task PlaybackInfo_of_a_photo_reaches_no_remote()
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(InfoFilter(PhotoPlaceholder()), Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId))));
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Theory]
+    [InlineData("Videos", "GetVideoStream")]
+    [InlineData("MediaSegments", "GetItemSegments")]
+    public async Task A_stream_or_segment_of_a_photo_reaches_no_remote(string controller, string action)
+    {
+        CanSeeItem();
+
+        Assert.True(await RunAsync(GuardFilter(store: PhotoPlaceholder()), Context(controller, action, ("itemId", _itemId))));
+        Assert.Empty(_fixture.Client.Requests);
+        Assert.Empty(_fixture.Client.Opened);
+    }
+
+    [Fact]
+    public async Task A_stream_of_a_photo_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("Videos", "GetVideoStream", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(GuardFilter(store: PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task PlaybackInfo_of_a_photo_the_user_cannot_see_is_not_found()
+    {
+        var context = Context("MediaInfo", "GetPlaybackInfo", ("itemId", _itemId));
+
+        Assert.False(await RunAsync(InfoFilter(PhotoPlaceholder()), context));
+        Assert.Equal(StatusCodes.Status404NotFound, Assert.IsType<StatusCodeResult>(context.Result).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_photo_outside_the_federated_folder_stays_with_stock()
+    {
+        var store = PhotoPlaceholder();
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Path = "/media/Foto/IMG_0001.jpg" });
 
         Assert.True(await RunAsync(GuardFilter(store: store), FileRequest("GetFile")));
     }

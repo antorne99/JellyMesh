@@ -41,6 +41,7 @@ public sealed partial class PlaybackSession
     private int _abandoned;
     private int _failed;
     private int _closedAfterFailure;
+    private string? _clientPlaySessionId;
     private int _requested;
     private string? _replacedBy;
 
@@ -80,6 +81,9 @@ public sealed partial class PlaybackSession
     /// <summary>Gets the play session on the remote. Never sent to a client.</summary>
     public string? RemotePlaySessionId { get; }
 
+    /// <summary>Gets the play session id the client chose for this stream, as Finamp does, null if none. Never sent to a remote.</summary>
+    public string? ClientPlaySessionId => Volatile.Read(ref _clientPlaySessionId);
+
     /// <summary>Gets how the stream reaches the client.</summary>
     public PlaybackStreamKind Kind { get; }
 
@@ -88,6 +92,9 @@ public sealed partial class PlaybackSession
 
     /// <summary>Gets when the session was opened.</summary>
     public DateTimeOffset Opened { get; }
+
+    /// <summary>Gets the hash of the device a track plays on, null unless the remote is a JellyMesh server.</summary>
+    public string? RemoteDevice { get; init; }
 
     /// <summary>Gets the time of the last request.</summary>
     public DateTimeOffset LastRequest => new(Interlocked.Read(ref _lastRequestTicks), TimeSpan.Zero);
@@ -185,6 +192,13 @@ public sealed partial class PlaybackSession
     /// </summary>
     /// <param name="replacementId">The session that replaced it.</param>
     public void MarkReplaced(string replacementId) => Volatile.Write(ref _replacedBy, replacementId);
+
+    /// <summary>
+    /// Records the play session id the client chose for this stream, so that its stop report closes it (row 561). The first
+    /// one stays.
+    /// </summary>
+    /// <param name="playSessionId">The id the client sent.</param>
+    public void NameByClient(string playSessionId) => Interlocked.CompareExchange(ref _clientPlaySessionId, playSessionId, null);
 
     /// <summary>
     /// Marks the source of this session as stopped, once: the retries of a player count as one failure.

@@ -43,7 +43,7 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
         var stubPrefix = StubPrefix(_store.Read(config => config.FederatedFolderPath));
         var items = _libraryManager.GetItemList(new InternalItemsQuery
         {
-            IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Episode],
+            IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.MusicVideo],
             Recursive = true,
             IsVirtualItem = false
         });
@@ -88,7 +88,8 @@ public sealed class LocalCatalogReader : ILocalCatalogReader
             {
                 ServerId = LocalServerId,
                 ItemId = item.Id.ToString("N"),
-                Kind = ContentKind.Movie,
+                Kind = item is MusicVideo ? ContentKind.MusicVideo : ContentKind.Movie,
+                Artists = (item as MusicVideo)?.Artists ?? [],
                 Title = item.Name,
                 Year = item.ProductionYear,
                 Ids = ids,

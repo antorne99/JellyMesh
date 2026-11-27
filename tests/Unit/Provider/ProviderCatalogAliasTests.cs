@@ -70,7 +70,7 @@ public sealed class ProviderCatalogAliasTests : IDisposable
     [Fact]
     public void A_page_of_a_library_with_a_linked_federated_path_reads_only_under_its_real_path()
     {
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Real, Linked);
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Real, Linked);
         var real = _fixture.WithFolder(Real);
         var seen = CaptureQuery();
 
@@ -83,7 +83,7 @@ public sealed class ProviderCatalogAliasTests : IDisposable
     [Fact]
     public void A_page_of_a_library_above_the_federated_folder_through_a_link_leaves_out_the_folder_as_jellyfin_names_it()
     {
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Path.Combine(_folder, "alias"));
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Path.Combine(_folder, "alias"));
         var federated = _fixture.WithFolder(Path.Combine(_folder, "alias", "federata"));
         var stubSeries = Guid.NewGuid();
         _fixture.Library.Setup(manager => manager.GetItemIds(It.Is<InternalItemsQuery>(query => query.AncestorIds.SequenceEqual(new[] { federated.Id }))))
@@ -116,7 +116,7 @@ public sealed class ProviderCatalogAliasTests : IDisposable
         var root = Path.Combine(_folder, "lib", "federata");
         Directory.CreateSymbolicLink(root, Path.Combine(_folder, "outside", "fed"));
         _fixture.Store.Configuration.FederatedFolderPath = root;
-        _fixture.WithLibrary(ProviderFixture.SharedLibrary, Path.Combine(_folder, "lib"));
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Path.Combine(_folder, "lib"));
         var federated = _fixture.WithFolder(root);
         _fixture.Library.Setup(manager => manager.GetItemIds(It.IsAny<InternalItemsQuery>())).Returns([]);
         var seen = CaptureQuery();
@@ -127,10 +127,63 @@ public sealed class ProviderCatalogAliasTests : IDisposable
     }
 
     [Fact]
+    public void A_path_inside_the_federated_folder_that_links_to_a_real_path_of_the_library_does_not_hide_that_path()
+    {
+        var inner = Path.Combine(_folder, "real", "federata", "Out");
+        Directory.CreateSymbolicLink(inner, Real);
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Real, inner);
+        var real = _fixture.WithFolder(Real);
+        _fixture.WithFolder(inner);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Equal([real.Id], seen()!.AncestorIds);
+        Assert.Empty(seen()!.ExcludeItemIds);
+    }
+
+    [Fact]
+    public void An_old_server_folder_that_links_to_a_real_path_of_the_library_does_not_hide_that_path()
+    {
+        var old = OldServerFolder();
+        Directory.CreateSymbolicLink(old, Real);
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Real, old);
+        var real = _fixture.WithFolder(Real);
+        _fixture.WithFolder(old);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Equal([real.Id], seen()!.AncestorIds);
+        Assert.Empty(seen()!.ExcludeItemIds);
+    }
+
+    [Fact]
+    public void A_path_that_links_to_an_old_server_folder_is_still_read_since_links_may_lead_out_of_it()
+    {
+        Directory.CreateDirectory(OldServerFolder());
+        var alias = Path.Combine(_folder, "old");
+        Directory.CreateSymbolicLink(alias, OldServerFolder());
+        _fixture.WithTypedLibrary(ProviderFixture.SharedLibrary, CollectionTypeOptions.tvshows, Real, alias);
+        _fixture.WithFolder(Real);
+        _fixture.WithFolder(alias);
+        var seen = CaptureQuery();
+
+        _fixture.Catalog.ReadLibrary(_fixture.PeerCaller, ProviderFixture.SharedLibrary, RemoteItemType.Series, 0, 10);
+
+        Assert.Empty(seen()!.AncestorIds);
+        Assert.Empty(seen()!.ExcludeItemIds);
+    }
+
+    [Fact]
     public void A_blank_path_is_not_federated()
     {
         Assert.False(_fixture.Catalog.IsFederated(new Series { Path = "  " }));
     }
+
+    // The path of the series of a server in the 0.5 layout, outside the federated folder.
+    private string OldServerFolder() =>
+        Path.Combine(Directory.CreateDirectory(Path.Combine(_folder, "vecchia", "0f8fad5b-d9cb-469f-a165-70867728950e")).FullName, "Serie");
 
     private static VirtualFolderInfo Library(string name, params string[] locations) =>
         new() { Name = name, ItemId = Guid.NewGuid().ToString(), CollectionType = CollectionTypeOptions.tvshows, Locations = locations };

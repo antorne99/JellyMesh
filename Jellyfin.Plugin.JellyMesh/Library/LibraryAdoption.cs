@@ -15,24 +15,22 @@ internal static class LibraryAdoption
     /// Classifies the libraries of the admin against a library the plugin wants.
     /// </summary>
     /// <param name="planned">The library the plugin wants, with all its paths.</param>
-    /// <param name="type">The local type it would have.</param>
     /// <param name="folders">The libraries of the server no registry holds.</param>
     /// <param name="root">The federated folder.</param>
     /// <param name="serverId">The server the library is for.</param>
     /// <returns>The library to adopt, whether to wait, and what is in the way.</returns>
-    public static AdoptionOutcome Classify(PlannedLibrary planned, CollectionTypeOptions type, IEnumerable<VirtualFolderInfo> folders, string root, Guid serverId)
-        => ClassifyBy(planned, folders, folder => ReasonOf(planned, type, folder, root, serverId));
+    public static AdoptionOutcome Classify(PlannedLibrary planned, IEnumerable<VirtualFolderInfo> folders, string root, Guid serverId)
+        => ClassifyBy(planned, folders, folder => ReasonOf(planned, folder, root, serverId));
 
     /// <summary>
     /// Classifies the libraries of the admin against a shared library (D43): one on a parent path, of another type or with
     /// all its paths and others blocks it, one with only some of its paths is ignored, one with exactly them is adopted.
     /// </summary>
     /// <param name="planned">The shared library, with the folders of every server.</param>
-    /// <param name="type">The local type it would have.</param>
     /// <param name="folders">The libraries of the server no registry holds.</param>
     /// <returns>The library to adopt, whether to wait, and what is in the way; nothing with no paths.</returns>
-    public static AdoptionOutcome ClassifyShared(PlannedLibrary planned, CollectionTypeOptions type, IEnumerable<VirtualFolderInfo> folders)
-        => planned.Paths.Count == 0 ? new AdoptionOutcome(null, false, []) : ClassifyBy(planned, folders, folder => SharedReasonOf(planned, type, folder));
+    public static AdoptionOutcome ClassifyShared(PlannedLibrary planned, IEnumerable<VirtualFolderInfo> folders)
+        => planned.Paths.Count == 0 ? new AdoptionOutcome(null, false, []) : ClassifyBy(planned, folders, folder => SharedReasonOf(planned, folder));
 
     private static AdoptionOutcome ClassifyBy(PlannedLibrary planned, IEnumerable<VirtualFolderInfo> folders, Func<VirtualFolderInfo, LibraryConflictReason?> reasonOf)
     {
@@ -71,7 +69,7 @@ internal static class LibraryAdoption
 
     // Null when the library does not touch the paths or also holds folders of other servers, as the libraries of row 77 do;
     // SamePaths when it holds exactly them with the type. A location that is no path holds no folder.
-    private static LibraryConflictReason? ReasonOf(PlannedLibrary planned, CollectionTypeOptions type, VirtualFolderInfo folder, string root, Guid serverId)
+    private static LibraryConflictReason? ReasonOf(PlannedLibrary planned, VirtualFolderInfo folder, string root, Guid serverId)
     {
         var locations = (folder.Locations ?? []).Where(FederatedFolderLinkChecker.IsPath).ToArray();
         if (locations.Any(location => planned.Paths.Any(path => IsStrictAncestor(location, path))))
@@ -85,7 +83,7 @@ internal static class LibraryAdoption
             return null;
         }
 
-        if (folder.CollectionType != type)
+        if (!ServerLibraryKinds.HasTypeOf(folder.CollectionType, planned.Kind))
         {
             return LibraryConflictReason.OtherType;
         }
@@ -97,7 +95,7 @@ internal static class LibraryAdoption
     }
 
     // The type is checked before the paths, so one of another type on any of the paths blocks.
-    private static LibraryConflictReason? SharedReasonOf(PlannedLibrary planned, CollectionTypeOptions type, VirtualFolderInfo folder)
+    private static LibraryConflictReason? SharedReasonOf(PlannedLibrary planned, VirtualFolderInfo folder)
     {
         var locations = (folder.Locations ?? []).Where(FederatedFolderLinkChecker.IsPath).ToArray();
         if (locations.Any(location => planned.Paths.Any(path => IsStrictAncestor(location, path))))
@@ -110,7 +108,7 @@ internal static class LibraryAdoption
             return null;
         }
 
-        if (folder.CollectionType != type)
+        if (!ServerLibraryKinds.HasTypeOf(folder.CollectionType, planned.Kind))
         {
             return LibraryConflictReason.OtherType;
         }

@@ -116,6 +116,25 @@ public sealed class MergeWatchStateCarryTests : IDisposable
     }
 
     [Fact]
+    public async Task MergedMusicVideosCarryTheirStateToThePrimaryLikeFilms()
+    {
+        var (a, aCopy) = Clip(_serverA, "a1");
+        var (b, bCopy) = Clip(_serverB, "b1");
+        var row = Row(a);
+        row.PlayCount = 3;
+        row.IsFavorite = true;
+        var carry = await SaveAsync();
+        var heads = carry.FindHeads([aCopy, bCopy]);
+
+        await LinkAsync(b, a);
+        var report = await carry.CarryAsync(heads, CancellationToken.None);
+
+        Assert.Equal(WatchStateMoveStatus.Carried, Assert.Single(report!.Moves).Status);
+        Assert.Equal(3, Row(b).PlayCount);
+        Assert.True(Row(b).IsFavorite);
+    }
+
+    [Fact]
     public async Task AStubJoinedWithALocalCopyGivesItsStateToTheLocalCopy()
     {
         var (a, aCopy) = Stub(_serverA, "a1");
@@ -350,6 +369,23 @@ public sealed class MergeWatchStateCarryTests : IDisposable
         _stubs.Add(stub);
         var item = Add(new Movie { Path = FederatedPaths.Resolve(Root, stub.RelativePath) }, library ?? _films);
         return (item, new MergedCopy { ServerId = server.ToString("N"), ItemId = remoteId });
+    }
+
+    private (MediaBrowser.Controller.Entities.MusicVideo Item, MergedCopy Copy) Clip(Guid server, string remoteId)
+    {
+        var name = Guid.NewGuid().ToString("N");
+        var stub = new StubEntry
+        {
+            Id = name,
+            ServerId = server,
+            Kind = StubKind.MusicVideo,
+            RelativePath = Path.Combine(FederatedPaths.ServerFolder(server), "Video musicali", name, name + ".strm"),
+            IdentityKey = "key",
+            Sources = [new StubSource(server, remoteId, "ms")]
+        };
+        _stubs.Add(stub);
+        var item = Add(new MediaBrowser.Controller.Entities.MusicVideo { Path = FederatedPaths.Resolve(Root, stub.RelativePath) }, _films);
+        return (item, new MergedCopy { ServerId = server.ToString("N"), ItemId = remoteId, Kind = ContentKind.MusicVideo });
     }
 
     private T Add<T>(T item, Guid library)

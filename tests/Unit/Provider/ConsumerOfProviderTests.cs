@@ -116,6 +116,54 @@ public class ProviderClientTests
         await client.GetPlaybackInfoAsync(_endpoint, _session, _request, CancellationToken.None);
 
         Assert.False(seen!.Headers.Contains(ProviderProtocol.ReplacesHeader));
+        Assert.False(seen.Headers.Contains(ProviderProtocol.DeviceHeader));
+    }
+
+    private static async Task<HttpRequestMessage> SentAsync(string call, string? device)
+    {
+        HttpRequestMessage? seen = null;
+        var client = Playback(request =>
+        {
+            seen = request;
+            return StubHandler.Json("{}");
+        }, out _);
+
+        switch (call)
+        {
+            case "info":
+                await client.GetPlaybackInfoAsync(_endpoint, _session, _request with { Device = device }, CancellationToken.None);
+                break;
+            case "playlist":
+                await client.ReadPlaylistAsync(_endpoint, _session, "/x.m3u8", device, CancellationToken.None);
+                break;
+            default:
+                (await client.OpenStreamAsync(_endpoint, _session, new RemoteStreamRequest(HttpMethod.Get, "/x", null, Device: device), CancellationToken.None)).Value?.Dispose();
+                break;
+        }
+
+        return seen!;
+    }
+
+    // Row 511.
+    [Theory]
+    [InlineData("info")]
+    [InlineData("playlist")]
+    [InlineData("stream")]
+    public async Task A_track_names_the_hash_of_its_device(string call)
+    {
+        var sent = await SentAsync(call, "hash");
+
+        Assert.True(sent.Headers.Contains(ProviderProtocol.DeviceHeader));
+        Assert.Equal("hash", sent.Headers.GetValues(ProviderProtocol.DeviceHeader).Single());
+    }
+
+    [Theory]
+    [InlineData("info")]
+    [InlineData("playlist")]
+    [InlineData("stream")]
+    public async Task Anything_else_sends_no_device_header(string call)
+    {
+        Assert.False((await SentAsync(call, null)).Headers.Contains(ProviderProtocol.DeviceHeader));
     }
 
     [Fact]

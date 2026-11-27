@@ -80,6 +80,37 @@ public class StubSegmentsTests
 
     private static MediaSegmentDto Existing(MediaSegmentType type, long start, long end) => new() { Id = Guid.NewGuid(), ItemId = _itemId, Type = type, StartTicks = start, EndTicks = end };
 
+    // D63: a book has no segments, and no remote is asked for them.
+    [Fact]
+    public async Task A_book_has_no_segments_and_asks_no_remote()
+    {
+        const string path = "/federata/server/Libri/Dune (1965)/Dune (1965).epub";
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Book { Id = _itemId, Path = path });
+        _stubs.Setup(stubs => stubs.FindByPath(path)).Returns(PlaybackValues.Stub(_best) with { Kind = StubKind.Book });
+        var segments = new StubSegments(new StubLookup(_library.Object, _stubs.Object, store), _index.Object, _registry, _client, store, _clock, NullLogger<StubSegments>.Instance);
+
+        Assert.False(segments.Supports(_itemId));
+        Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
+        Assert.Empty(_client.Asked);
+    }
+
+    [Fact]
+    public async Task A_photo_has_no_segments_and_asks_no_remote()
+    {
+        const string path = "/federata/server/Video domestici/Trips/IMG_0001.jpg";
+        var store = new InMemoryConfigurationStore();
+        store.Configuration.FederatedFolderPath = "/federata";
+        _library.Setup(library => library.GetItemById(_itemId)).Returns(new Photo { Id = _itemId, Path = path });
+        _stubs.Setup(stubs => stubs.FindByPath(path)).Returns(PlaybackValues.Stub(_best) with { Kind = StubKind.Photo });
+        var segments = new StubSegments(new StubLookup(_library.Object, _stubs.Object, store), _index.Object, _registry, _client, store, _clock, NullLogger<StubSegments>.Instance);
+
+        Assert.False(segments.Supports(_itemId));
+        Assert.Empty(await segments.GetAsync(Request(), CancellationToken.None));
+        Assert.Empty(_client.Asked);
+    }
+
     [Fact]
     public void Only_a_stub_is_supported()
     {

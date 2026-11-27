@@ -30,4 +30,7 @@ public sealed record ServerFolderStatus(
 {
     /// <summary>Gets the servers whose series stay split from those of this server (Q46, row 77).</summary>
     public IReadOnlyList<Guid> SeriesSplitWith { get; init; } = [];
+
+    /// <summary>Gets the mixed libraries holding a Musica folder of the server, which ignore its music (row 492).</summary>
+    public IReadOnlyList<string> MusicInMixed { get; init; } = [];
 }

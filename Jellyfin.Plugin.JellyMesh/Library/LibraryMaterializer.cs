@@ -20,12 +20,10 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// <see cref="ILibraryMaterializer"/>. Writes only inside the federated folder. The registry is saved before the files, so
 /// that a scan running at the same time finds the stub of every file it meets.
 /// </summary>
-public sealed class LibraryMaterializer : ILibraryMaterializer
+public sealed partial class LibraryMaterializer : ILibraryMaterializer
 {
     // How many images of one server are read at once. A choice of Claude's, under the 8 reads per peer of decision 31.
     private const int ImageReadsAtOnce = 4;
-
-    private static readonly string[] _imageExtensions = [".jpg", ".png", ".webp", ".gif"];
 
     private readonly StubRegistry _registry;
     private readonly IFederationResolver _resolver;
@@ -107,6 +105,11 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         _keeper = keeper;
         _cleaner = cleaner;
     }
+
+    /// <summary>
+    /// Gets the extensions of the images the plugin writes.
+    /// </summary>
+    internal static IReadOnlyList<string> ImageExtensions { get; } = [".jpg", ".png", ".webp", ".gif"];
 
     /// <inheritdoc />
     public MaterializationReport? LastReport => _lastReport;
@@ -232,18 +235,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
     private static Task WriteTextAsync(string path, string text, CancellationToken cancellationToken)
         => WriteFileAsync(path, Encoding.UTF8.GetBytes(text), cancellationToken);
 
+    // Deletes the image of a stem in another format, without listing the folder, which can hold many parts with their covers.
     private static void DeleteOtherExtensions(string stem, string keep)
     {
-        var folder = Path.GetDirectoryName(stem)!;
-        var name = Path.GetFileName(stem) + ".";
-        foreach (var file in Directory.EnumerateFiles(folder))
+        foreach (var file in ImageExtensions.Select(extension => stem + extension).Where(file => !string.Equals(file, keep, StringComparison.Ordinal) && File.Exists(file)))
         {
-            if (Path.GetFileName(file).StartsWith(name, StringComparison.Ordinal)
-                && !string.Equals(file, keep, StringComparison.Ordinal)
-                && _imageExtensions.Contains(Path.GetExtension(file)))
-            {
-                File.Delete(file);
-            }
+            File.Delete(file);
         }
     }
 
@@ -278,7 +275,8 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             IsOnDisk = path => Path.Exists(FederatedPaths.Resolve(root, path)),
 
             // Only an empty registry, as after a damage, takes back the stub files of the 0.5 layout it finds.
-            KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root)
+            KeepsOlderLayout = state.Stubs.Count == 0 && state.Series.Count == 0 && StubLayout.HasOlderStubFiles(root),
+            IgnoreRules = new ServerIgnoreRules(_library, root, _logger, _errorLogs)
         });
 
         WriteServerFolders(root, servers, plan.State, ConfiguredTypeFolders(servers));
@@ -287,6 +285,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         var run = new Run(root, plan.State) { VerifyEveryStub = verifyEveryStub };
         await FetchImagesAsync(run, plan, cancellationToken).ConfigureAwait(false);
+        await FetchThumbnailsAsync(run, plan, cancellationToken).ConfigureAwait(false);
         foreach (var series in plan.Series)
         {
             await WriteSeriesAsync(run, series, cancellationToken).ConfigureAwait(false);
@@ -449,6 +448,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     private async Task WriteStubAsync(Run run, StubWork work, CancellationToken cancellationToken)
     {
+        if (work.Entry.Kind is StubKind.Book or StubKind.Photo)
+        {
+            await WritePlaceholderAsync(run, work, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         var entry = work.Entry;
         var strm = FederatedPaths.Resolve(run.Root, entry.RelativePath);
         try
@@ -460,7 +465,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             if (!string.Equals(entry.ContentHash, work.ContentHash, StringComparison.Ordinal) || !File.Exists(strm))
             {
                 await WriteTextAsync(strm, work.StrmUrl, cancellationToken).ConfigureAwait(false);
-                await WriteTextAsync(FederatedPaths.Resolve(run.Root, work.NfoPath), work.Nfo, cancellationToken).ConfigureAwait(false);
+                // A track has no .nfo: Jellyfin reads none for audio (F48).
+                if (work.NfoPath.Length > 0)
+                {
+                    await WriteTextAsync(FederatedPaths.Resolve(run.Root, work.NfoPath), work.Nfo, cancellationToken).ConfigureAwait(false);
+                }
+
                 if (existing.Value is { } item)
                 {
                     await _updater.ApplyMetadataAsync(item, work.Metadata, cancellationToken).ConfigureAwait(false);
@@ -483,7 +493,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             }
 
             if (!string.Equals(entry.ImageTag, work.ImageTag, StringComparison.Ordinal)
-                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, existing.Value, cancellationToken).ConfigureAwait(false))
+                && await UpdateImagesAsync(run, work.Images, work.RemovedImages, ImageOwnerOf(work, strm, existing), cancellationToken).ConfigureAwait(false))
             {
                 entry = entry with { ImageTag = work.ImageTag };
             }
@@ -517,8 +527,18 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
+    // The item an image of a stub belongs to: a track or photo carries the cover of its album, which is the album folder's.
+    private BaseItem? ImageOwnerOf(StubWork work, string strm, LazyItem existing) => work.Entry.Kind is not (StubKind.Track or StubKind.Photo)
+        ? existing.Value
+        : work.Images.Count + work.RemovedImages.Count > 0 ? _library.FindByPath(Path.GetDirectoryName(strm)!, true) : null;
+
     private async Task SignStubAsync(Run run, StubEntry stub, CancellationToken cancellationToken)
     {
+        if (stub.Kind is StubKind.Book or StubKind.Photo)
+        {
+            return;
+        }
+
         var strm = FederatedPaths.Resolve(run.Root, stub.RelativePath);
         try
         {
@@ -562,7 +582,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         foreach (var image in removed)
         {
             var stem = FederatedPaths.Resolve(run.Root, image.RelativeStem);
-            var files = _imageExtensions.Select(extension => stem + extension).ToList();
+            var files = ImageExtensions.Select(extension => stem + extension).ToList();
             foreach (var file in files.Where(File.Exists))
             {
                 File.Delete(file);
@@ -603,7 +623,7 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         string path;
         if (image.LocalPath is { } source)
         {
-            path = stem + Path.GetExtension(source);
+            path = stem + Path.GetExtension(source).ToLowerInvariant();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.Copy(source, path, overwrite: true);
         }
@@ -642,6 +662,85 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         }
     }
 
+    // Reads the thumbnail of each photo that has none, or whose remote image changed since (its Primary tag, kept as the
+    // technical tag). One that cannot be read keeps the old file and its old tag, so the next run tries again, but a GIF,
+    // TIFF or AVIF refused at a tag, which waits for its next one (row 560).
+    private async Task FetchThumbnailsAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
+    {
+        var wanted = plan.Stubs
+            .Where(work => work.Entry.Kind == StubKind.Photo && work.Entry.Sources.Count > 0)
+            .Select(work => (Work: work, Path: PhotoThumbnails.PathOf(run.Root, work.Entry.Id)))
+            .Where(photo => photo.Path is not null
+                && !string.Equals(photo.Work.Entry.TechnicalTag, PhotoThumbnails.Refused(photo.Work.TechnicalTag), StringComparison.Ordinal)
+                && (!File.Exists(photo.Path) || !string.Equals(photo.Work.Entry.TechnicalTag, photo.Work.TechnicalTag, StringComparison.Ordinal)))
+            .ToList();
+        var failed = 0;
+        var options = new ParallelOptions { MaxDegreeOfParallelism = ImageReadsAtOnce, CancellationToken = cancellationToken };
+        foreach (var server in wanted.GroupBy(photo => photo.Work.Entry.Sources[0].ServerId))
+        {
+            var photos = server.ToList();
+            failed += await FetchThumbnailAsync(run, photos[0].Work.Entry, photos[0].Path!, cancellationToken).ConfigureAwait(false) ? 0 : 1;
+            await Parallel.ForEachAsync(photos.Skip(1), options, async (photo, token) =>
+            {
+                if (!await FetchThumbnailAsync(run, photo.Work.Entry, photo.Path!, token).ConfigureAwait(false))
+                {
+                    Interlocked.Increment(ref failed);
+                }
+            }).ConfigureAwait(false);
+        }
+
+        run.ImagesPending += failed;
+    }
+
+    // Reads and writes the thumbnail of one photo; false when the next run must try again.
+    private async Task<bool> FetchThumbnailAsync(Run run, StubEntry photo, string path, CancellationToken cancellationToken)
+    {
+        var source = photo.Sources[0];
+        if (run.UnreachableServers.ContainsKey(source.ServerId))
+        {
+            return false;
+        }
+
+        var read = await _servers.RunWithSessionAsync(
+            source.ServerId,
+            (endpoint, session, token) => _client.GetPhotoThumbnailAsync(endpoint, session, source.ItemId, token),
+            cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess)
+        {
+            if (read.Failure is RemoteFailure.Unreachable or RemoteFailure.Timeout)
+            {
+                run.UnreachableServers.TryAdd(source.ServerId, true);
+            }
+
+            return false;
+        }
+
+        // Row 470: no position ever reaches the disk, so a thumbnail that still has its EXIF is never written.
+        if (!PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
+        {
+            _logger.LogWarning("A photo thumbnail from a remote was not a whole JPEG of the thumbnail size without EXIF and was not saved");
+            if (PhotoThumbnails.IsReadOnceWhenRefused(photo.RelativePath))
+            {
+                run.RefusedThumbnails[photo.Id] = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        try
+        {
+            await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
+            run.Thumbnails[photo.Id] = true;
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError("Cannot write a photo thumbnail: {Error}{Detail:l}", exception.GetType().Name, _errorLogs.Local.Of(exception));
+            return false;
+        }
+    }
+
     private async Task FetchImageAsync(Run run, StubImage image, CancellationToken cancellationToken)
     {
         try
@@ -664,7 +763,9 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
         var read = await _servers.RunWithSessionAsync(
             serverId,
-            (endpoint, session, token) => _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
+            (endpoint, session, token) => image.IsPhotoCover
+                ? _client.GetPhotoThumbnailAsync(endpoint, session, itemId, token)
+                : _client.GetImageAsync(endpoint, session, itemId, image.Type.ToString(), 0, token),
             cancellationToken).ConfigureAwait(false);
         if (!read.IsSuccess)
         {
@@ -677,6 +778,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
             return null;
         }
 
+        if (image.IsPhotoCover && !PhotoThumbnails.IsCleanJpeg(read.Value!.Content.Span))
+        {
+            _logger.LogWarning("An album cover from a remote was not a whole JPEG of the thumbnail size without EXIF and was not saved");
+            return null;
+        }
+
         var path = stem + ExtensionOf(read.Value!.ContentType);
         await WriteFileAsync(path, read.Value.Content, cancellationToken).ConfigureAwait(false);
         DeleteOtherExtensions(stem, path);
@@ -685,32 +792,65 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
 
     // The stubs to remove this round: one that could not leave its version group, also at the old path of a pending server
     // rename, stays, counted as failed, for the next round (Q326, Q351).
-    // The titles of removed servers keep their watch state before they go (row 412); while it cannot be saved they stay.
+    // The titles of removed servers (row 412) and the stubs of two copies joined again (row 565) keep their watch state
+    // before they go; while it cannot be saved they stay.
     private async Task<(IReadOnlyList<StubEntry> Stubs, bool Kept)> KeepRemovedAsync(Run run, StubPlan plan, CancellationToken cancellationToken)
     {
+        if (_keeper is null)
+        {
+            return (plan.Removals, true);
+        }
+
         var removed = plan.State.RemovedServers.ToHashSet();
-        if (_keeper is null || removed.Count == 0)
+        var held = new HashSet<string>(StringComparer.Ordinal);
+        var kept = true;
+        if (removed.Count > 0)
         {
-            return (plan.Removals, true);
+            var stubs = plan.Removals.Where(stub => IsOfRemoved(stub, removed)).ToList();
+            var series = run.State.Series.Where(entry => entry.ServerId is { } serverId && removed.Contains(serverId)).ToList();
+            if (!await _keeper.KeepAsync(run.Root, stubs, series, cancellationToken).ConfigureAwait(false))
+            {
+                Hold(stubs);
+                kept = false;
+            }
         }
 
-        var stubs = plan.Removals
-            .Where(stub => stub.ServerId is { } serverId ? removed.Contains(serverId) : stub.Sources.Count > 0 && stub.Sources.All(source => removed.Contains(source.ServerId)))
+        var joined = JoinedOf(plan, removed);
+        if (joined.Count > 0 && !await _keeper.KeepJoinedAsync(run.Root, joined, cancellationToken).ConfigureAwait(false))
+        {
+            Hold(joined);
+        }
+
+        return (held.Count == 0 ? plan.Removals : plan.Removals.Where(stub => !held.Contains(stub.Id)).ToList(), kept);
+
+        void Hold(List<StubEntry> stubs)
+        {
+            run.Failed += stubs.Count;
+            foreach (var serverId in stubs.Select(stub => stub.ServerId).OfType<Guid>())
+            {
+                run.CountServer(serverId, failed: 1);
+            }
+
+            held.UnionWith(stubs.Select(stub => stub.Id));
+        }
+    }
+
+    private static bool IsOfRemoved(StubEntry stub, HashSet<Guid> removed)
+        => stub.ServerId is { } serverId ? removed.Contains(serverId) : stub.Sources.Count > 0 && stub.Sources.All(source => removed.Contains(source.ServerId));
+
+    // The stubs that go while another stub of their server and kind keeps one of their remote items: two copies of a
+    // title joined again (row 565).
+    private static List<StubEntry> JoinedOf(StubPlan plan, HashSet<Guid> removed)
+    {
+        var going = plan.Removals.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
+        var staying = plan.State.Stubs
+            .Where(stub => stub.ServerId is not null && !going.Contains(stub.Id))
+            .SelectMany(stub => stub.Sources.Select(source => (stub.Kind, source.ServerId, source.ItemId)))
+            .ToHashSet();
+        return plan.Removals
+            .Where(stub => stub.ServerId is { } serverId && !removed.Contains(serverId)
+                && stub.Sources.Any(source => source.ServerId == serverId && staying.Contains((stub.Kind, source.ServerId, source.ItemId))))
             .ToList();
-        var series = run.State.Series.Where(entry => entry.ServerId is { } serverId && removed.Contains(serverId)).ToList();
-        if (await _keeper.KeepAsync(run.Root, stubs, series, cancellationToken).ConfigureAwait(false))
-        {
-            return (plan.Removals, true);
-        }
-
-        run.Failed += stubs.Count;
-        foreach (var serverId in stubs.Select(stub => stub.ServerId).OfType<Guid>())
-        {
-            run.CountServer(serverId, failed: 1);
-        }
-
-        var held = stubs.Select(stub => stub.Id).ToHashSet(StringComparer.Ordinal);
-        return (plan.Removals.Where(stub => !held.Contains(stub.Id)).ToList(), false);
     }
 
     private async Task<IReadOnlyList<StubEntry>> DetachRemovalsAsync(Run run, IReadOnlyList<StubEntry> removals, CancellationToken cancellationToken)
@@ -822,6 +962,12 @@ public sealed class LibraryMaterializer : ILibraryMaterializer
         public StubState State { get; set; }
 
         public ConcurrentDictionary<Guid, bool> UnreachableServers { get; } = new();
+
+        /// <summary>Gets the photo stubs whose thumbnail was written this run.</summary>
+        public ConcurrentDictionary<string, bool> Thumbnails { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Gets the photo stubs whose thumbnail was refused this run and is read again only on a change.</summary>
+        public ConcurrentDictionary<string, bool> RefusedThumbnails { get; } = new(StringComparer.Ordinal);
 
         /// <summary>Gets the remote images read ahead, by relative stem, with null for one that could not be read.</summary>
         public ConcurrentDictionary<string, string?> Fetched { get; } = new(StringComparer.Ordinal);

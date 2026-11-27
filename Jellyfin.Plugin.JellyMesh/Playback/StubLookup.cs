@@ -7,7 +7,9 @@ using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Library;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Session;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -177,8 +179,8 @@ public sealed class StubLookup
     }
 
     /// <summary>
-    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub or a version
-    /// sits in a library, since Jellyfin shows an item with no library to everyone (D17).
+    /// Tells whether a user reaches an item: Jellyfin shows it to them and, unless they are an admin, a stub, also one the
+    /// registry no longer knows (row 514), or a version sits in a library, as Jellyfin shows one with none to all (D17).
     /// </summary>
     /// <param name="user">The user.</param>
     /// <param name="itemId">The item.</param>
@@ -193,7 +195,7 @@ public sealed class StubLookup
         }
 
         return user.HasPermission(PermissionKind.IsAdministrator)
-            || (Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
+            || (!IsStub(itemId) && FindWithThumbnail(itemId) is null && Resolve(itemId, out var isUnknown) is null && !isUnknown && !HasVersions(itemId))
             || _libraryManager.GetCollectionFolders(item).Count > 0;
     }
 
@@ -203,15 +205,32 @@ public sealed class StubLookup
     /// </summary>
     /// <param name="itemId">The item.</param>
     /// <returns>True for a stub.</returns>
-    public bool IsStub(Guid itemId)
-    {
-        if (_libraryManager.GetItemById(itemId) is not Video video)
-        {
-            return false;
-        }
+    public bool IsStub(Guid itemId) => IsStub(_libraryManager.GetItemById(itemId));
 
-        return PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path);
-    }
+    /// <summary>
+    /// Tells whether an item is an audio stub: an audio <c>.strm</c> in the federated folder, which has no plugin URL, or one
+    /// with the URL of the plugin in its file wherever it lies (row 582).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for an audio stub.</returns>
+    public bool IsAudioStub(Guid itemId) => _libraryManager.GetItemById(itemId) is Audio audio && IsAudioStub(audio);
+
+    /// <summary>
+    /// Tells whether an item is a placeholder: a book of the federated folder, which has no URL and is a stub by its path.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a placeholder, even one the registry does not know.</returns>
+    public bool IsPlaceholder(Guid itemId) => IsPlaceholder(_libraryManager.GetItemById(itemId));
+
+    /// <summary>
+    /// Tells whether an item is a photo stub: a photo of the federated folder, or one whose Primary is a thumbnail of the
+    /// plugin while the folder is not known.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>True for a photo stub, even one the registry does not know.</returns>
+    public bool IsPhotoStub(Guid itemId)
+        => _libraryManager.GetItemById(itemId) is Photo photo
+            && (PlaceholderPath(photo) is not null || PhotoThumbnails.IsThumbnail(photo.GetImageInfo(ImageType.Primary, 0)?.Path));
 
     /// <summary>
     /// Finds the stub of an item.
@@ -220,9 +239,12 @@ public sealed class StubLookup
     /// <returns>The stub, null for anything else.</returns>
     public StubEntry? Find(Guid itemId)
     {
-        return _libraryManager.GetItemById(itemId) is Video video && PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId)
-            ? _stubs.Find(stubId)
-            : null;
+        return _libraryManager.GetItemById(itemId) switch
+        {
+            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) ? _stubs.Find(stubId) : null,
+            var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
+            _ => null
+        };
     }
 
     /// <summary>
@@ -235,9 +257,11 @@ public sealed class StubLookup
     public StubEntry? Resolve(Guid itemId, out bool isUnknown)
     {
         isUnknown = false;
-        if (_libraryManager.GetItemById(itemId) is not Video video)
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is not Video video)
         {
-            return null;
+            // A book placeholder by its path (D63); no other item that is not a video is a stub here.
+            return PlaceholderPath(item) is { } path ? _stubs.FindByPath(path) : null;
         }
 
         // Before the search: a registry read in between would otherwise count as one that does not hold the stub.
@@ -247,6 +271,40 @@ public sealed class StubLookup
         isUnknown = stub is null && IsStrm(video.Path) && IsFederated(video, isOurs, isUnread);
         return stub;
     }
+
+    /// <summary>
+    /// Finds the stub a playback of an item reaches, as <see cref="Resolve"/> does, and also an audio stub by its path or by the
+    /// URL in its file (row 582).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <param name="isUnknown">Whether the item is a federated <c>.strm</c> with no stub in the registry.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? ResolvePlayable(Guid itemId, out bool isUnknown) => Resolve(itemId, out isUnknown) ?? (IsAudioStub(itemId) ? FindFile(itemId) : null);
+
+    /// <summary>
+    /// Finds the stub of an item for its file and its visibility: a video stub, an audio stub by its path or else by the URL in
+    /// its file (row 582), or a book placeholder by its path.
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? FindFile(Guid itemId)
+    {
+        return _libraryManager.GetItemById(itemId) switch
+        {
+            Video video when PlaybackRoutes.TryGetStubId(video.ShortcutPath, out var stubId) => _stubs.Find(stubId),
+            Audio audio when IsStrm(audio.Path) => (PathInFolder(audio.Path) is { } path ? _stubs.FindByPath(path) : null) ?? FindByStrmUrl(audio.Path),
+            var item when PlaceholderPath(item) is { } path => _stubs.FindByPath(path),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Finds the stub of an item as <see cref="FindFile"/> does, and that of a photo left under another federated folder
+    /// by the name of its thumbnail, while a folder is set (row 553).
+    /// </summary>
+    /// <param name="itemId">The item.</param>
+    /// <returns>The stub, null for anything else.</returns>
+    public StubEntry? FindWithThumbnail(Guid itemId) => FindFile(itemId) ?? MovedPhotoStub(_libraryManager.GetItemById(itemId));
 
     /// <summary>
     /// Finds the items Jellyfin links with an item as versions: it climbs through primaries and owners, as the linker does,
@@ -291,10 +349,10 @@ public sealed class StubLookup
         return members;
     }
 
-    // A link only between local films stays stock; while the registry is unread, any of our URLs counts as a stub (row 552).
+    // A link only between local films stays stock; a stub the registry lacks counts too (row 527), and so does any of our
+    // URLs while the registry is unread (row 552).
     private bool IsLinkedToStub(Guid itemId)
     {
-        var isUnread = _stubs.IsUnread;
         var members = LinkedVersionsOf(itemId);
         if (members.Count < 2)
         {
@@ -302,23 +360,69 @@ public sealed class StubLookup
         }
 
         var root = _store.ReadOr(config => config.FederatedFolderPath, null);
-        foreach (var member in members.Values)
+        return members.Values.Any(member => FederatedPaths.IsInside(root, member.Path) || IsStub(member));
+    }
+
+    private bool IsStub(BaseItem? item)
+    {
+        return item switch
         {
-            if ((root is null ? IsStrm(member.Path) : FederatedPaths.IsInside(root, member.Path))
-                || (PlaybackRoutes.TryGetStubId(member.ShortcutPath, out var stubId) && (isUnread || _stubs.Find(stubId) is not null)))
-            {
-                return true;
-            }
+            Video video => PlaybackRoutes.TryGetStubId(video.ShortcutPath, out _) || IsStrmInFolder(video.Path),
+            Audio audio => IsAudioStub(audio),
+            _ => IsPlaceholder(item)
+        };
+    }
+
+    private bool IsPlaceholder(BaseItem? item) => PlaceholderPath(item) is not null;
+
+    // An audio .strm in the federated folder, or one with our URL wherever it lies, also with no folder set (row 582).
+    private bool IsAudioStub(Audio audio) => IsStrmInFolder(audio.Path) || StrmFile.StubIdOf(audio.Path) is not null;
+
+    private StubEntry? FindByStrmUrl(string? path) => StrmFile.StubIdOf(path) is { } stubId ? _stubs.Find(stubId) : null;
+
+    // A photo outside the federated folder whose Primary is a thumbnail of a photo stub the registry knows.
+    private StubEntry? MovedPhotoStub(BaseItem? item)
+        => item is Photo photo
+            && PlaceholderPath(photo) is null
+            && _store.ReadOr(config => config.FederatedFolderPath, null) is { Length: > 0 }
+            && PhotoThumbnails.StubIdOf(photo.GetImageInfo(ImageType.Primary, 0)?.Path) is { } stubId
+            && _stubs.Find(stubId) is { Kind: StubKind.Photo } stub
+                ? stub
+                : null;
+
+    // The path of a book or a photo in the federated folder, also through an alias of it, spelled under the folder; else null.
+    private string? PlaceholderPath(BaseItem? item)
+    {
+        if (item is not (Book or Photo) || item.Path is not { Length: > 0 } path || _store.ReadOr(config => config.FederatedFolderPath, null) is not { Length: > 0 } root)
+        {
+            return null;
         }
 
-        return false;
+        return FederatedPaths.IsInside(root, path) ? path : RealPath.Rebase(root, path);
     }
 
     private static bool IsStrm(string? path) => path?.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) == true;
 
-    // A .strm in the federated folder; while the folder is not known, any .strm, since stock would send its signed URL.
-    private bool IsStrmInFolder(string? path)
-        => IsStrm(path) && (_store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.IsInside(root, path));
+    // A .strm in the federated folder; while the settings cannot be read, any .strm, since stock would send its signed URL.
+    // With no folder set none is in it (row 522).
+    private bool IsStrmInFolder(string? path) => PathInFolder(path) is not null;
+
+    // The path of a .strm in the federated folder, also through an alias of it, spelled under the folder; else null.
+    private string? PathInFolder(string? path)
+    {
+        if (!IsStrm(path))
+        {
+            return null;
+        }
+
+        return _store.ReadOr(config => config.FederatedFolderPath, null) switch
+        {
+            null => path,
+            { Length: 0 } => null,
+            var root when FederatedPaths.IsInside(root, path) => path,
+            var root => RealPath.Rebase(root, path!)
+        };
+    }
 
     // A .strm in the federated folder, or with our URL while the folder is not known or the registry is not read; while the
     // folder is not known, also one Jellyfin has not read. Any other .strm is the administrator's.

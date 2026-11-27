@@ -41,6 +41,7 @@ else
   run cards cards-in-place cards-themes
   run edit-form edit-locks edit-gone mode-change adopted recreate
   run server-notes store shared-libraries shared-errors new-library-mode
+  run music-videos new-types
 
   block_key first
   run first-nokey overview-first-nokey

@@ -372,7 +372,7 @@ public class RemoteErrorTests
         var handler = new StubHandler(_ => StubHandler.Status(HttpStatusCode.OK));
         var client = new RemotePlaybackClient(new StubHttpClientFactory(handler));
 
-        var result = await client.ReadPlaylistAsync(_endpoint, _session, "//elsewhere/x.m3u8", CancellationToken.None);
+        var result = await client.ReadPlaylistAsync(_endpoint, _session, "//elsewhere/x.m3u8", null, CancellationToken.None);
 
         Assert.Equal(RemoteFailure.InvalidResponse, result.Failure);
         Assert.Empty(handler.Requests);

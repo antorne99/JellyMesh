@@ -1053,6 +1053,7 @@ public class FederationAdminControllerTests
         Assert.Equal(["Serie"], shown.SeriesGroupingOff);
         Assert.Equal(["Serie"], shown.SeriesLibraries);
         Assert.Equal([_splitFrom], shown.SeriesSplitWith);
+        Assert.Equal(["Tutto"], shown.MusicInMixed);
         Assert.Equal(FederatedFolderLinkState.NotLinked, folder.Link);
         Assert.Equal(["Tutto"], folder.Covering);
         Assert.True(folder.SeriesSplit);
@@ -1437,7 +1438,7 @@ public class FederationAdminControllerTests
                     new(link, []),
                     ["Serie"],
                     ["Serie"],
-                    OnlyOnItsFolders) { SeriesSplitWith = [_splitFrom] })
+                    OnlyOnItsFolders) { SeriesSplitWith = [_splitFrom], MusicInMixed = ["Tutto"] })
                 .ToList();
             return new FederatedFolderLinkReport(servers, ["Tutto"], true);
         }

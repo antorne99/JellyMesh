@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.JellyMesh.Index;
 using Jellyfin.Plugin.JellyMesh.Library;
 using Jellyfin.Plugin.JellyMesh.Playback;
 using Jellyfin.Plugin.JellyMesh.Provider;
@@ -124,6 +125,8 @@ public class VersionGuardTests
             new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance),
             _transcodes.Object,
             _peerSlots,
+            new AudioStubRoutes(_fixture.Coordinator, _fixture.Sessions, new PlaybackRefusal(new Mock<ISessionManager>().Object, NullLogger<PlaybackRefusal>.Instance), _fixture.Clock, NullLogger<AudioStubRoutes>.Instance),
+            new PlaybackVersions(new StubLookup(_library.Object, _stubs.Object, _store), _stubs.Object, _library.Object, new Mock<IFederationIndex>().Object, _store),
             _log);
     }
 
@@ -480,6 +483,60 @@ public class VersionGuardTests
 
         Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", film.Id), ("mediaSourceId", N(_localItem)))));
         Assert.True(await RunAsync(Guard(), Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)))));
+    }
+
+    // Row 531: a local copy Jellyfin links to a stub the registry lacks is guarded on the media routes as beside a known one.
+    [Theory]
+    [InlineData("")]
+    [InlineData("/nuova")]
+    public async Task A_local_copy_linked_to_an_unknown_stub_is_refused_without_a_user(string folder)
+    {
+        LinkedToAnUnknownStub(folder);
+        Anonymous();
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status401Unauthorized, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("/nuova", false)]
+    [InlineData("", true)]
+    [InlineData("/nuova", true)]
+    public async Task A_local_copy_linked_to_an_unknown_stub_is_found_only_in_a_library(string folder, bool inLibrary)
+    {
+        LinkedToAnUnknownStub(folder);
+        Sees(_localItem);
+        if (!inLibrary)
+        {
+            InNoLibrary(_localItem);
+        }
+
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.Equal(inLibrary, await RunAsync(Guard(), context));
+        Assert.Equal(inLibrary ? null : StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/nuova")]
+    public async Task A_local_copy_linked_to_an_unknown_stub_is_not_found_for_a_user_who_cannot_see_it(string folder)
+    {
+        LinkedToAnUnknownStub(folder);
+        var context = Context("Videos", "GetVideoStream", ("itemId", _localItem), ("mediaSourceId", N(_localItem)));
+
+        Assert.False(await RunAsync(Guard(), context));
+        Assert.Equal(StatusCodes.Status404NotFound, StatusOf(context));
+    }
+
+    private void LinkedToAnUnknownStub(string folder)
+    {
+        Linked(null);
+        Merged(_local, _stub);
+        _stubs.Setup(stubs => stubs.Find("b")).Returns((StubEntry?)null);
+        _store.Configuration.FederatedFolderPath = folder;
     }
 
     // D17: Jellyfin shows a stub or a version with no library to everyone; the guard refuses it to non-admins.

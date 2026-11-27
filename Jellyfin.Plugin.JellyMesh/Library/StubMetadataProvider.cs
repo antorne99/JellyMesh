@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -17,6 +18,12 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 public abstract class StubMetadataProvider :
     ICustomMetadataProvider<Movie>,
     ICustomMetadataProvider<Episode>,
+    ICustomMetadataProvider<Audio>,
+    ICustomMetadataProvider<AudioBook>,
+    ICustomMetadataProvider<MusicVideo>,
+    ICustomMetadataProvider<Video>,
+    ICustomMetadataProvider<Book>,
+    ICustomMetadataProvider<Photo>,
     IHasOrder,
     IForcedProvider,
     IPreRefreshProvider
@@ -57,6 +64,30 @@ public abstract class StubMetadataProvider :
     public Task<ItemUpdateType> FetchAsync(Episode item, MetadataRefreshOptions options, CancellationToken cancellationToken)
         => Task.FromResult(Run(item, options, cancellationToken));
 
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Audio item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(AudioBook item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(MusicVideo item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Video item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Book item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
+    /// <inheritdoc />
+    public Task<ItemUpdateType> FetchAsync(Photo item, MetadataRefreshOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(Run(item, options, cancellationToken));
+
     /// <summary>
     /// Handles a refresh of a file in the federated folder.
     /// </summary>
@@ -76,8 +107,33 @@ public abstract class StubMetadataProvider :
     {
         ArgumentNullException.ThrowIfNull(item);
 
-        return item.Path is { } path
+        return item is not Book
+            && item.Path is { } path
             && path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
             && (Store.ReadOr(config => config.FederatedFolderPath, null) is not { } root || FederatedPaths.RelativeTo(root, path) is not null);
+    }
+
+    /// <summary>
+    /// Tells whether an item is a book or a photo in the federated folder: only a known folder has placeholders.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <returns>Whether it is.</returns>
+    protected bool IsPlaceholderInFederatedFolder(BaseItem item) => IsPlaceholderInFederatedFolder(item, Store);
+
+    /// <summary>
+    /// Tells whether an item is a book or a photo in the federated folder that the configuration names.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="store">The configuration store.</param>
+    /// <returns>Whether it is.</returns>
+    internal static bool IsPlaceholderInFederatedFolder(BaseItem item, IPluginConfigurationStore store)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(store);
+
+        return item is Book or Photo
+            && item.Path is { } path
+            && store.ReadOr(config => config.FederatedFolderPath, null) is { } root
+            && FederatedPaths.RelativeTo(root, path) is not null;
     }
 }

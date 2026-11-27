@@ -73,6 +73,27 @@ public sealed record StubMetadata
     /// <summary>Gets the last episode of a stub that covers several.</summary>
     public int? EpisodeNumberEnd { get; init; }
 
+    /// <summary>Gets the album of a track or music video.</summary>
+    public string? Album { get; init; }
+
+    /// <summary>Gets the artists of a track or music video.</summary>
+    public IReadOnlyList<string> Artists { get; init; } = [];
+
+    /// <summary>Gets the album artists of a track.</summary>
+    public IReadOnlyList<string> AlbumArtists { get; init; } = [];
+
+    /// <summary>Gets the number of a track on its disc.</summary>
+    public int? TrackNumber { get; init; }
+
+    /// <summary>Gets the disc of a track.</summary>
+    public int? DiscNumber { get; init; }
+
+    /// <summary>Gets the series of a book.</summary>
+    public string? SeriesName { get; init; }
+
+    /// <summary>Gets the size and camera data of a photo, never where it was taken (D26).</summary>
+    public IndexedPhoto? Photo { get; init; }
+
     /// <summary>
     /// Gets a value indicating whether the plugin writes collections, an option that is off by default (decision 52).
     /// </summary>
@@ -83,6 +104,62 @@ public sealed record StubMetadata
 
     /// <summary>Gets the TMDb ID of that collection.</summary>
     public string? TmdbCollectionId { get; init; }
+
+    /// <summary>
+    /// Builds the metadata of a track, or of an audiobook part with its plot. Stock Jellyfin reads nothing from their stubs,
+    /// so every field is written with or without protection, which only adds the lock (D60, D69).
+    /// </summary>
+    /// <param name="item">The track or part.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <returns>The metadata.</returns>
+    public static StubMetadata Track(IndexedItem item, bool isProtected)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return new StubMetadata
+        {
+            IsProtected = isProtected,
+            Title = item.Name,
+            Year = item.ProductionYear,
+            ProviderIds = item.ProviderIds,
+            Genres = item.Genres,
+            Overview = item.Kind == IndexedItemKind.AudioBook ? item.Overview : null,
+            Album = item.Album,
+            Artists = item.Artists ?? [],
+            AlbumArtists = item.AlbumArtists ?? [],
+            TrackNumber = item.IndexNumber,
+            DiscNumber = item.ParentIndexNumber
+        };
+    }
+
+    /// <summary>
+    /// Builds the metadata of a book: every field, with the lock only with protection, and the mark of its stub (D62).
+    /// </summary>
+    /// <param name="item">The book.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <param name="stubId">The stub of the book.</param>
+    /// <returns>The metadata.</returns>
+    public static StubMetadata Book(IndexedItem item, bool isProtected, string stubId)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return From(item, isProtected) with { ProviderIds = FederatedPlaceholderMark.WithMark(item.ProviderIds, stubId) };
+    }
+
+    /// <summary>
+    /// Builds the metadata of a photo: every field with its size and camera data, with the lock only with protection,
+    /// and the mark of its stub, since the placeholder gives Jellyfin nothing (D45).
+    /// </summary>
+    /// <param name="item">The photo.</param>
+    /// <param name="isProtected">Whether metadata protection is on.</param>
+    /// <param name="stubId">The stub of the photo.</param>
+    /// <returns>The metadata.</returns>
+    public static StubMetadata PhotoOf(IndexedItem item, bool isProtected, string stubId)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        return From(item, isProtected) with { ProviderIds = FederatedPlaceholderMark.WithMark(item.ProviderIds, stubId), Photo = item.Photo };
+    }
 
     /// <summary>
     /// Builds the metadata of a catalog entry.
@@ -105,12 +182,19 @@ public sealed record StubMetadata
             ProviderIds = item.ProviderIds,
             WritesCollections = writesCollections,
             CollectionName = collection?.Name,
-            TmdbCollectionId = collection?.TmdbId
+            TmdbCollectionId = collection?.TmdbId,
+            Artists = item.Kind == IndexedItemKind.MusicVideo ? item.Artists ?? [] : [],
+            Album = item.Kind == IndexedItemKind.MusicVideo ? item.Album : null,
+
+            // A home video has no fetcher for its date, which is when it was shot (spec §3.12).
+            PremiereDate = item.Kind == IndexedItemKind.Video ? item.PremiereDate : null
         };
 
-        // Without protection the fetchers fill the rest (plan §3.1).
-        return !isProtected ? core : core with
+        // Without protection the fetchers fill the rest (plan §3.1), except for books and photos, which get it all unlocked
+        // (D62, D45).
+        return !isProtected && item.Kind is not (IndexedItemKind.Book or IndexedItemKind.Photo) ? core : core with
         {
+            SeriesName = item.Kind == IndexedItemKind.Book ? item.SeriesName : null,
             OriginalTitle = item.OriginalTitle,
             Overview = item.Overview,
             Taglines = item.Taglines,

@@ -99,7 +99,7 @@ public sealed partial class ServerLibraryManager
             var preexisting = IdSet(server.PreexistingLibraryIds);
             // While the remote libraries are not known yet, each kind may still get one.
             var wanted = server.RemoteLibraries.Count == 0
-                ? _kinds.Select(kind => (Key: kind.ToString(), Kind: kind, RemoteLibraryId: string.Empty)).ToList()
+                ? ServerLibraryKinds.OfOneType.Select(kind => (Key: kind.ToString(), Kind: kind, RemoteLibraryId: string.Empty)).ToList()
                 : LibraryPlan.For(server, root, false).Select(planned => (planned.Key, planned.Kind, planned.RemoteLibraryId)).ToList();
             return server.AutomaticLibraries && wanted.Any(planned =>
                 server.AutomaticLibraryRegistry.All(record => !string.Equals(KeyOf(record), planned.Key, StringComparison.OrdinalIgnoreCase))
@@ -119,7 +119,7 @@ public sealed partial class ServerLibraryManager
     private static bool PassesAsHeld(VirtualFolderInfo folder, RemovedServerLibrariesConfig held, string root) =>
         !(folder.ItemId is { Length: > 0 } id && held.PreexistingLibraryIds.Contains(id, StringComparer.OrdinalIgnoreCase))
         && !held.ReleasedLibraries.Contains(folder.Name, StringComparer.Ordinal)
-        && _kinds.Any(kind => Passes(folder, kind, string.Empty, root, held.ServerId));
+        && ServerLibraryKinds.All.Any(kind => Passes(folder, kind, string.Empty, root, held.ServerId));
 
     // A complete follow covers the checks of the syncs that found the gate held meanwhile; otherwise their mark is made now.
     private void EndPlacementFollow(bool followed)

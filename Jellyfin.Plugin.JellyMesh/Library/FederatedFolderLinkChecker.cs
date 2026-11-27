@@ -117,6 +117,11 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             .Where(library => library.CollectionType == CollectionTypeOptions.tvshows && library.LibraryOptions is { EnableAutomaticSeriesGrouping: false })
             .Select(library => library.Name)
             .ToList();
+        var musicInMixed = libraries
+            .Where(library => library.CollectionType is null or CollectionTypeOptions.mixed
+                && folders.Any(folder => ExpectedType(folder) == CollectionTypeOptions.music && Holds(library, folder.Path, _pathComparison)))
+            .Select(library => library.Name)
+            .ToList();
         var onlyOnItsFolders = libraries
             .Where(library => Locations(library).Any() && Locations(library).All(location => folders.Any(folder => IsSame(location, folder.Path))))
             .Select(library => library.Name)
@@ -128,7 +133,10 @@ public sealed class FederatedFolderLinkChecker : IFederatedFolderLinkChecker
             Together(links.Where(link => ExpectedType(link.LibraryType) == CollectionTypeOptions.tvshows)),
             groupingOff,
             Names(holdingSeries.Where(counted.Contains).ToList()),
-            onlyOnItsFolders);
+            onlyOnItsFolders)
+        {
+            MusicInMixed = musicInMixed
+        };
     }
 
     // Series of two servers merge in a library only where their series folders sit in the same libraries (Q46,

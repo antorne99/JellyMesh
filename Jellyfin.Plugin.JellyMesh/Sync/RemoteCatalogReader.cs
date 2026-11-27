@@ -49,7 +49,6 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     public const int MaxCollections = 10_000;
 
     private const int MaxReadAttempts = 3;
-    private const string MoviesCollection = "movies";
 
     private readonly IRemoteServerRegistry _registry;
     private readonly IJellyfinRemoteClient _client;
@@ -387,7 +386,8 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
     // ones and records them as vanished (§10 row 436). Returns the ids dropped now.
     private IReadOnlyList<string> TrackAbsence(RemoteServerInfo server, IReadOnlyList<string> missing, IReadOnlyList<RemoteLibrary> answer)
     {
-        // A view of the same type that is no library of its own nor one known may be the library grouped with others.
+        // A view of the same type that is no library of its own nor one known may be the library grouped with others; a
+        // mixed library is grouped into the film and the series views.
         static bool MayBeGrouped(RemoteServerConfig kept, string id, IReadOnlyList<RemoteLibrary> answer)
         {
             var type = kept.RemoteLibraries.FirstOrDefault(library => library.Id == id)?.CollectionType;
@@ -395,8 +395,13 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
                 && !kept.ImportedLibraryIds.Contains(view.Id)
                 && !kept.RemoteLibraries.Any(library => library.Id == view.Id)
                 && !kept.VanishedLibraries.Any(library => library.Id == view.Id)
-                && (type is null || string.Equals(view.CollectionType, type, StringComparison.OrdinalIgnoreCase)));
+                && (type is null || string.Equals(view.CollectionType, type, StringComparison.OrdinalIgnoreCase) || (IsMixed(type) && IsFilmOrSeries(view.CollectionType))));
         }
+
+        static bool IsMixed(string type) => string.Equals(type, RemoteCollectionTypes.Mixed, StringComparison.OrdinalIgnoreCase);
+
+        static bool IsFilmOrSeries(string type)
+            => string.Equals(type, RemoteCollectionTypes.Movies, StringComparison.OrdinalIgnoreCase) || string.Equals(type, RemoteCollectionTypes.TvShows, StringComparison.OrdinalIgnoreCase);
 
         static bool Unchanged(RemoteServerConfig kept, IReadOnlyList<string> missing)
             => missing.Count == 0 && kept.AbsentLibraryIds.Count == 0 && !kept.VanishedLibraries.Any(library => kept.ImportedLibraryIds.Contains(library.Id));
@@ -536,9 +541,7 @@ public sealed class RemoteCatalogReader : IRemoteCatalogReader
         DateTimeOffset seenUtc,
         CancellationToken cancellationToken)
     {
-        var types = string.Equals(library.CollectionType, MoviesCollection, StringComparison.OrdinalIgnoreCase)
-            ? new[] { RemoteItemType.Movie }
-            : [RemoteItemType.Series, RemoteItemType.Season, RemoteItemType.Episode];
+        var types = RemoteCollectionTypes.ItemTypesOf(library.CollectionType);
 
         foreach (var type in types)
         {

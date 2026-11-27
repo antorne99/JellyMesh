@@ -1842,6 +1842,11 @@ public sealed partial class ServerLibraryManagerTests
             Server = WithLibraries(new RemoteServerConfig { Id = _serverId, Name = serverName });
             Store.Configuration.FederatedFolderPath = root;
             Stubs.Setup(stubs => stubs.UsesOlderLayout()).Returns(true);
+            // The registry is read and holds no music, music videos, home videos or books unless a test says so.
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.MusicVideos)).Returns([]);
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.HomeVideos)).Returns([]);
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.Music)).Returns([]);
+            Stubs.Setup(stubs => stubs.TypeFoldersOf(It.IsAny<Guid>(), TypeFolder.Books)).Returns([]);
             Store.Configuration.Servers.Add(Server);
             var fileSystem = new Mock<IFileSystem>();
             fileSystem.Setup(system => system.GetValidFilename(It.IsAny<string>()))
@@ -2067,6 +2072,8 @@ public sealed partial class ServerLibraryManagerTests
 
         public List<(string Name, string NewName)> Calls { get; } = [];
 
+        public List<(string Name, Jellyfin.Data.Enums.CollectionType? Type)> Types { get; } = [];
+
         public Exception? Failure { get; set; }
 
         public bool Refuses { get; set; }
@@ -2168,6 +2175,7 @@ public sealed partial class ServerLibraryManagerTests
         public Task<Guid?> RenameAsync(string name, Guid? itemId, Jellyfin.Data.Enums.CollectionType? type, string newName, CancellationToken cancellationToken)
         {
             Calls.Add((name, newName));
+            Types.Add((name, type));
             OnRename?.Invoke();
             if (Failure is not null)
             {

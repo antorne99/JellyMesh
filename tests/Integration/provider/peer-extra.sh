@@ -17,7 +17,7 @@ check "items" 200 "$(as_peer a "$token" GET "/JellyMesh/Provider/Items?parentId=
 cp "$WORK/body" "$WORK/peer-items"
 check "there is something to look at" true "$([ "$(jq '.Items | length' "$WORK/peer-items")" -gt 0 ] && echo true || echo false)"
 check "no path of this server" 0 "$(grep -c -E '"/(media|config|cache|extra|federata)/' "$WORK/peer-items")"
-check "no key named like a path has a value" 0 "$(jq '[.. | objects | to_entries[] | select((.key | test("Path$")) and .value != null)] | length' "$WORK/peer-items")"
+check "no key named like a path has a value but the extension of a file (row 569)" 0 "$(jq '[.. | objects | to_entries[] | select((.key | test("Path$")) and .value != null and (.key == "Path" and (.value | tostring | test("^\\.[A-Za-z0-9]+$")) | not))] | length' "$WORK/peer-items")"
 check "the name of the local server is not there" 0 "$(jq '[.. | objects | select(has("ServerName"))] | length' "$WORK/peer-items")"
 
 echo "--- the list of image details is closed, the images by type stay open (row 585)"

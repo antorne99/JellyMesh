@@ -2,7 +2,7 @@
 
 # JellyMesh
 
-JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films and series from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
+JellyMesh is a Jellyfin plugin that federates Jellyfin servers. Films, series, music, music videos, home videos, photos and books from other servers appear in your existing libraries, next to your own, and play through your server. Your users only ever connect to your server.
 
 **Status: pre-release.** It runs on Jellyfin 12.4 and has been tested against real 12.4 servers with jellyfin-web, Android and TV clients, and QSV. The versions added in 0.5 have been tested on real 12.4 servers; how the Android TV and Swiftfin apps show them has only been read from their source. What 0.6 adds has been tested on real 12.4 servers through the API and the plugin page. See [Limits](#limits).
 
@@ -10,12 +10,12 @@ Upgrading from 0.5 or 0.4? Read [Upgrading to 0.6](#upgrading-to-06) first: 0.6 
 
 ## What it does
 
-- Reads the film and series libraries you choose on other Jellyfin servers. Those servers can be stock Jellyfin.
-- Gives each library you import from a server its own folder inside a federated folder you choose, with a `Film` or `Serie` folder in it. JellyMesh makes libraries for them as the server's library mode says, or you add them to your libraries, as described in [Server folders and libraries](#server-folders-and-libraries) and [Library modes](#library-modes).
+- Reads the libraries you choose on other Jellyfin servers, of the kinds in [Types of content](#types-of-content). Those servers can be stock Jellyfin.
+- Gives each library you import from a server its own folder inside a federated folder you choose, with a type folder in it for each kind, as listed in [Types of content](#types-of-content). JellyMesh makes libraries for them as the server's library mode says, or you add them to your libraries, as described in [Server folders and libraries](#server-folders-and-libraries) and [Library modes](#library-modes).
 - Shows a title once in each library, with the copies of every server and your own copy as versions. A local copy is the primary version; otherwise the best quality is, compared by resolution, then HDR, video bitrate and codec, with bitrates within 5% counted as a tie. See [Versions](#versions).
 - Lets an admin merge films and series it can't match safely, as described in [Merging duplicates by hand](#merging-duplicates-by-hand).
 - Completes series per episode: in a series library that holds your series and the `Serie` folders of the servers, episodes you lack appear inside your own series.
-- Writes a `.strm`, a `.nfo` and local images for each title, and a `season.nfo` and poster for each season, inside the federated folder. Remote YouTube trailers and intro and credits segments come along, and so do remote collections if you turn them on.
+- Writes a `.strm`, a `.nfo` and local images for each title, and a `season.nfo` and poster for each season, inside the federated folder. Tracks, audiobooks, books and photos differ, as described in [Types of content](#types-of-content). Remote YouTube trailers and intro and credits segments come along, and so do remote collections if you turn them on.
 - At playback, sends the real client's device profile to the remote, which decides between direct play and transcode and does any transcoding on its own hardware. Your server proxies the stream.
 - Falls back when a remote cannot serve, as described in [Stream limit and fallback](#stream-limit-and-fallback).
 - Keeps watch state on your server.
@@ -26,7 +26,7 @@ Upgrading from 0.5 or 0.4? Read [Upgrading to 0.6](#upgrading-to-06) first: 0.6 
 ## What it doesn't do
 
 - It does not copy media files. Only images are stored locally, and playback needs the remote to be reachable.
-- It does not handle anything but films and series.
+- It does not import anything but the kinds of library in [Types of content](#types-of-content).
 - It writes files only inside the federated folder. It renames and deletes only the libraries it made, and it changes the folders of a library it did not make only in these cases: a library it [adopted](#adopted-libraries), the [library of all servers](#libraries-of-all-servers), the [automatic migration](#upgrading-to-06) of the folders, and **Add them automatically** for servers you connect later. Each of these adds or removes only JellyMesh's own folders and leaves other folders, settings and permissions alone.
 - It does not sync watch state to other servers.
 - It does not set up the connection between your servers. A remote's URL is whatever you enter, and the plugin assumes nothing about the network in between.
@@ -95,7 +95,7 @@ Mount the federated folder at one path only, and add its folders to your librari
 
 Remote credentials, user and password, are encrypted before they are saved in the plugin database, with a key that JellyMesh makes by itself at its first start: a random file named `credential.key` in its data folder. In the Docker image that is `/config/plugins/Jellyfin.Plugin.JellyMesh/`. On Linux and macOS only its owner can read it. On Windows it gets its own access list, which lets in only the account running Jellyfin, SYSTEM and Administrators and ignores the permissions of that folder. The access list is checked by unit tests, but applying it has not been tried on a Windows server yet. There is nothing to set.
 
-The key never goes into the database. Someone who copies the database alone sees what JellyMesh keeps in it, such as the name, address and ID of each server, the connected servers and the libraries shared with them, the titles and the watch state saved for removed titles, but not the user or password of a server. When you change a password or remove a server, its old encrypted login is cleared from the database file and its log right after the save, or at the latest at the next start or nightly copy if the log is busy then; copies of the database made before still hold it.
+The key never goes into the database. Someone who copies the database alone sees what JellyMesh keeps in it, such as the name, address and ID of each server, the connected servers and the libraries shared with them, the titles and the watch state saved for removed titles and for copies joined into one title, but not the user or password of a server. When you change a password or remove a server, its old encrypted login is cleared from the database file and its log right after the save, or at the latest at the next start or nightly copy if the log is busy then; copies of the database made before still hold it.
 
 **Back up the key file with the rest of the plugin data folder**, as described in [Backup and moving the server](#backup-and-moving-the-server). Without it the saved passwords can't be decrypted.
 
@@ -109,7 +109,7 @@ If the file is lost or replaced, JellyMesh suspends sync and remote playback and
 
 Jellyfin's own backup does not include JellyMesh. To back it up, copy the whole plugin data folder, `/config/plugins/Jellyfin.Plugin.JellyMesh/` in the Docker image, with Jellyfin stopped so that the database and its log are copied together. It holds `jellymesh.db` with its `-wal` and `-shm` files, the nightly copies, `credential.key` and `strm-signing.key`.
 
-**Keep the whole folder secret, and every copy of it.** It holds the key, and with the key anyone can decrypt the saved logins of your remotes. The nightly copies of the database hold no key: a copy alone shows what the database holds, such as the servers with their addresses, the connected servers, the shared libraries, the titles and the watch state saved for removed titles, but not the user or password of a server.
+**Keep the whole folder secret, and every copy of it.** It holds the key, and with the key anyone can decrypt the saved logins of your remotes. The nightly copies of the database hold no key: a copy alone shows what the database holds, such as the servers with their addresses, the connected servers, the shared libraries, the titles and the watch state saved for removed titles and for copies joined into one title, but not the user or password of a server.
 
 To move JellyMesh to another server, copy the whole data folder there and keep it readable only by the account that runs Jellyfin. A database without its key file works only after you enter the login of each server again.
 
@@ -261,6 +261,83 @@ Under **Catalog**, **Sync history** lists the last 50 syncs and the last 7 night
 
 When something fails, the plugin page has **Full error**: the call, its status, what the remote server answered, and the exceptions with their stack traces. It is in the message, on the card of the server until it answers again, and in each part of the page that can't be read. Each text is cut at 64 KB or 2000 lines. Jellyfin's log holds the same text, up to 20 whole errors and 512 KB a minute, and 50 MB a day, for each server; as many for servers that are being added or were removed, for the playback errors that belong to no server, and for everything else, such as the libraries and the sync. Past a limit an error is one short line. Both show the address of the remote server; neither shows tokens or passwords, and an answer that holds the password is hidden whole. An error of the remote server has no stack trace here: look in its own log.
 
+## Types of content
+
+JellyMesh imports these kinds of library from other servers. Each imported library gets the folder below inside the federated folder, and a local library that holds the folder has the type below. The libraries JellyMesh makes already have it.
+
+| Remote library | Folder | Type of the local library | Read from it |
+|---|---|---|---|
+| Films | `Film` | Movies | Films |
+| Series | `Serie` | Shows | Series, seasons and episodes |
+| Music | `Musica` | Music | Tracks |
+| Music videos | `Video musicali` | Music videos | Music videos |
+| Home videos and photos | `Video domestici` | Home videos and photos | Videos, photos and their folders |
+| Books | `Libri` | Books | Ebooks, PDFs, comics and audiobooks |
+| No type (mixed) | `Film` and `Serie` | Movies for `Film` and Shows for `Serie`, or no type for both | Films and series only; anything else in it is left out |
+
+- Playlists and channels are not imported.
+- Between JellyMesh servers, libraries of films, series, music, music videos, home videos, ebooks, comics and audiobooks, and libraries with no type, can be shared.
+- Films, series and music videos are matched across servers and shown once. The rest is never merged with a copy on another server or with a local one.
+- Metadata protection covers every type. JellyMesh writes no `.nfo` for tracks, books, audiobooks and photos: it writes their metadata in Jellyfin itself, and locks the whole item when protection is on.
+
+### Music videos and home videos
+
+Music videos have a `.strm`, a `.nfo` and images like films. Copies on several servers are matched by a shared provider ID, or otherwise by the same artists and title when their years agree, and become [versions](#versions) of one title. Playback falls back as for films.
+
+Home videos keep the folders they have on the remote. They are not matched with other copies, so the same video on two servers shows twice in a library that holds both.
+
+### Music
+
+Each track has one `.strm` in `Musica/<album artist>/<album>/`, named by its number and title, or by disc, number and title when the album has more than one disc. The remote album decides which tracks go together, and its cover comes along.
+
+- **Playback:** your server answers the requests for a track and passes them to the remote, which decides between direct play and transcode as for films. Your server never transcodes a federated track. Clients see neither the remote's address nor its token.
+- **Fallback:** if the server of a track can't play it, JellyMesh plays the same track from another server, in a library the user can see, best audio quality first, with lossless before lossy. Copies are matched by their MusicBrainz IDs, or otherwise by their album and place in it. A federated track never falls back to a local copy, and if no copy can play, the track stays visible and playback fails.
+- **Lyrics** are read from the remote. They can't be uploaded, searched for or deleted on a federated track.
+- **Repeated albums:** tracks have no versions. An album that two servers have shows twice in a library that holds the music folders of both, and a federated album shows next to the same album of yours. To see each copy on its own, keep the folders in separate libraries. A federated track never replaces a local one, and a library that holds only federated folders stays complete even when you own the same album. Tried on 12.4 with the music folders of two servers in one library: each album both have shows twice, and a favourite or a play on one copy stays off the other.
+
+### Ebooks, PDFs and comics
+
+For each book JellyMesh writes a cover and a placeholder with the extension of the remote file, which holds nothing of the book. The formats are EPUB, PDF, CBZ, CBR, CB7, CBT, MOBI, AZW and AZW3; books in any other format are not imported. The placeholders of EPUB, PDF and CBZ are minimal valid files, tried on Jellyfin 12.4; those of CBR, CB7, CBT, MOBI, AZW and AZW3 are empty and have not been tried on Jellyfin.
+
+Opening or downloading the book reads the file from the remote. If the remote is offline, the book stays in the library, and opening it fails with HTTP 503 and the text "File non disponibile: il server di origine non è raggiungibile. Riprova più tardi.", in Italian only.
+
+### Audiobooks
+
+Each audio file of an audiobook on the remote is one item, in `Libri/<author>/<book>/`, with its own cover and chapters, so an audiobook in several files shows as several items. It plays as a track does.
+
+A `.m4b` audiobook on a remote downloads as `.m4a`: Jellyfin serves it as `audio/mp4`, the same format, and this is a limit of Jellyfin.
+
+A library scan does not put back a field you change by hand on an audiobook. Replacing all metadata of the item does, and so does a change on the remote.
+
+### Photos and GPS
+
+For each photo JellyMesh writes a placeholder of 1×1 pixel with the extension of the remote file, in the album folders of the remote. Thumbnails, of at most 640 pixels a side, are kept outside the libraries, and album covers next to the placeholders. None of these files is the original or carries EXIF data.
+
+- **What Jellyfin knows:** the size and the camera data of the photo are read from the remote. Latitude, longitude and altitude never are.
+- **The image** is asked of the remote. What is served is a re-encoded JPEG without EXIF data, never the original. When the remote is offline the image is missing.
+- **`Download` and `File` give the original file of the remote as it is, with its EXIF data and, if it has one, its GPS position.** Anyone who can see a federated photo can read from the file where it was taken. The photo viewer of jellyfin-web opens photos through `Download`. When the remote is offline, both answer HTTP 503.
+- **Photos you share with another JellyMesh server:** it never gets their latitude, longitude and altitude in what it reads of your libraries, but `Download` and `File` give it the original file as it is, with its EXIF data and, if it has one, its GPS position, as they do for your own users. So does the image of a photo it asks for without resizing, which is then the original file too.
+- **The image is anonymous, as it is in Jellyfin for local photos:** anyone who knows the ID of a photo gets its image without signing in, while a signed-in user who can't see the photo gets HTTP 404. `Download` and `File` always need a signed-in user.
+- **Libraries with photos turned off:** the libraries JellyMesh makes for `Video domestici` have photos on. In a library you made, federated photos don't show while its photos option is off.
+- **HEIC photos** are not imported, because Jellyfin 12.4 does not list them as photos.
+
+### Download permission
+
+**On your server** JellyMesh follows Jellyfin. On a federated title `Download` needs the user's download permission, and answers HTTP 403 without it. `File` needs a signed-in user who can see the title, and no download permission. Neither answers for a title the user can't see.
+
+- Music apps that stream the file of a track, as Finamp does by default according to its source, need no download permission to play federated music.
+- The book readers of jellyfin-web, according to its source, open a book through `Download`, so reading one there needs the permission.
+
+**On the remote** the dedicated user needs no download permission: JellyMesh never calls `Download` there.
+
+### Clients
+
+Music, audiobooks and ebooks have been tried on real 12.4 servers through the API, and photos with jellyfin-web. Finamp, Swiftfin and the other native apps have not been tried on them, and what is said here about the apps comes from their source.
+
+- **Swiftfin** shows only libraries of films, series, collections and folders, and libraries with no type. It shows no music, music videos, home videos, photos or books.
+- **Finamp** streams the file of a track by default, so it needs no [download permission](#download-permission).
+- **Books:** jellyfin-web has no reader for `.mobi`, `.azw` and `.azw3`, which open only in an app that downloads the file.
+
 ## Versions
 
 Inside a library, a title shows once. Its versions are the copies of every server, and your local copy, that the user can see; a user is never offered a version in a library they cannot open. The version list names each server copy by its server.
@@ -360,6 +437,7 @@ Remote tokens stay on your server: they never appear in `.strm` files, in logs o
 - **Seasons from two servers:** when two servers give different names or plots for a season of the same series, which one Jellyfin shows is effectively random, and stays the same on a given install. Each episode keeps the season name of its own server.
 - **Jellyfin versions:** 12.1 is the minimum. Tested on 12.4; on 12.1 only starting the plugin and opening its database have been checked.
 - **Provider restart:** a stream in progress ends when the provider restarts, and the client has to open the title again.
+- **Your own `.strm` files in a shared library:** another JellyMesh server can play them only transcoded by your server, never directly. A client of that server that accepts only direct play, with no transcoding profile, gets an error for those titles.
 
 ### Built-in limits
 

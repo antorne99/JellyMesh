@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.JellyMesh.Library;
 /// A stub whose content turned local is left alone here: only the post-scan task may remove it, after handing over the
 /// watch state (decision 2). This plan removes only what is proved gone from the remotes.
 /// </remarks>
-public static class StubPlanner
+public static partial class StubPlanner
 {
     private static readonly string[] _seriesKeyProviders = ["Custom", "Tvdb", "Imdb"];
 
@@ -49,9 +49,11 @@ public static class StubPlanner
         var flat = input.State.Stubs.Where(stub => stub.ServerId is null).ToList();
         var flatSeries = input.State.Series.Where(series => series.ServerId is null).ToList();
         var matcher = new StubMatcher(flat);
-        var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents));
 
-        var paths = new PathAllocator(flat, flatSeries);
+        // Music videos exist only in the server folders.
+        var claims = matcher.ClaimAll(StubContents.Group(input.View.Contents.Where(content => content.Identity.Kind != ContentKind.MusicVideo).ToList()));
+
+        var paths = new PathAllocator(flat, flatSeries, input.IgnoreRules);
         var scope = new SeriesScope(null, flatSeries, ByWork(input.View.Contents), (_, _, title, year, id) => paths.SeriesFolder(TypeFolder.Series.Name, title, year, id), input.LocalSeriesOf);
         var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
         var works = new List<StubWork>();
@@ -68,7 +70,7 @@ public static class StubPlanner
 
             if (content.Identity.Kind == ContentKind.Movie)
             {
-                works.Add(MovieWork(input, content, stub, winner, catalog, null, id => FederatedPaths.MovieStub(paths.MovieFolderName(TypeFolder.Movies.Name, winner.Name, winner.ProductionYear, id))));
+                works.Add(MovieWork(input, content, stub, winner, catalog, null, StubKind.Movie, id => FederatedPaths.MovieStub(paths.MovieFolderName(TypeFolder.Movies.Name, winner.Name, winner.ProductionYear, id))));
             }
             else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
             {
@@ -81,7 +83,7 @@ public static class StubPlanner
             }
         }
 
-        var seriesWorks = SeriesWorks(input, seriesPlans.Values, catalog);
+        var seriesWorks = SeriesWorks(input, seriesPlans.Values, flatSeries, catalog);
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = flat.Where(stub => !matcher.IsClaimed(stub)).ToList();
 
@@ -130,14 +132,21 @@ public static class StubPlanner
         var claimed = new HashSet<string>(StringComparer.Ordinal);
         var merged = new HashSet<string>(StringComparer.Ordinal);
         var unplaceable = new HashSet<string>(StringComparer.Ordinal);
+        var tracks = new List<StubWork>();
+        var videoWorks = new List<StubWork>();
+        var books = new List<StubWork>();
 
         // Stubs of an older layout are left as they are, out of every part, until the migration empties them (§10 row 444).
         var legacy = input.KeepsOlderLayout;
         input = WithLostSeries(input, catalog, stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)));
         foreach (var server in input.Servers)
         {
-            var contents = ServerContents(input.View, input.Snapshot, catalog, server);
-            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            // Music videos and home videos exist only in the new layout: an older one keeps them as they are.
+            var contents = ServerContents(input.View, input.Snapshot, catalog, server).Where(content => !legacy || content.Identity.Kind != ContentKind.MusicVideo).ToList();
+            var own = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind is not (StubKind.Track or StubKind.Book or StubKind.AudioBook) && !IsUntitledVideo(stub.Kind, legacy) && (legacy || IsCurrent(stub.RelativePath))).ToList();
+            var ownBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Book).ToList();
+            var ownAudioBooks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.AudioBook).ToList();
+            var ownVideos = input.State.Stubs.Where(stub => stub.ServerId == server.Id && IsUntitledVideo(stub.Kind, legacy)).ToList();
             var ownSeries = input.State.Series.Where(series => series.ServerId == server.Id && (legacy || IsCurrent(series.RelativePath))).ToList();
             var label = labels[server.Id];
             var parts = legacy
@@ -148,7 +157,7 @@ public static class StubPlanner
                 var matcher = new StubMatcher(part.Stubs);
                 var claims = matcher.ClaimAll(StubContents.Group(part.Contents));
 
-                var paths = new PathAllocator(part.Stubs, part.Series);
+                var paths = new PathAllocator(part.Stubs, part.Series, input.IgnoreRules);
                 var scope = new SeriesScope(server.Id, part.Series, ByWork(part.Contents), (remote, winner, title, year, id) => paths.SeriesFolder(part.FolderOf([remote, winner], TypeFolder.Series), title, year, id), _ => null);
                 var seriesPlans = new Dictionary<string, SeriesPlan>(StringComparer.Ordinal);
                 foreach (var (content, stub) in claims)
@@ -158,10 +167,11 @@ public static class StubPlanner
                         continue;
                     }
 
-                    if (content.Identity.Kind == ContentKind.Movie)
+                    if (content.Identity.Kind is ContentKind.Movie or ContentKind.MusicVideo)
                     {
-                        var folder = part.FolderOf([winner], TypeFolder.Movies);
-                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id), label)), content, winner));
+                        var (kind, type) = content.Identity.Kind == ContentKind.Movie ? (StubKind.Movie, TypeFolder.Movies) : (StubKind.MusicVideo, TypeFolder.MusicVideos);
+                        var folder = part.FolderOf([winner], type);
+                        placed.Add((MovieWork(input, content, stub, winner, catalog, server.Id, kind, id => FederatedPaths.MovieStubIn(folder, paths.MovieFolderName(folder, winner.Name, winner.ProductionYear, id, label), label)), content, winner));
                     }
                     else if (content.Identity.SeasonNumber is null || content.Identity.EpisodeNumber is null)
                     {
@@ -174,13 +184,39 @@ public static class StubPlanner
                     }
                 }
 
-                seriesWorks.AddRange(SeriesWorks(input, seriesPlans.Values, catalog));
+                seriesWorks.AddRange(SeriesWorks(input, seriesPlans.Values, part.Series, catalog));
                 works.AddRange(placed.Skip(works.Count).Select(entry => entry.Work));
                 claimed.UnionWith(part.Stubs.Where(matcher.IsClaimed).Select(stub => stub.Id));
                 merged.UnionWith(claims.SelectMany(claim => claim.Merged).Select(stub => stub.Id));
             }
+
+            // Tracks come only in the new layout (Q49), from the index: the dedup has no track identity yet.
+            if (!legacy)
+            {
+                var ownTracks = input.State.Stubs.Where(stub => stub.ServerId == server.Id && stub.Kind == StubKind.Track).ToList();
+                var artists = new PathAllocator(ownTracks, [], input.IgnoreRules);
+                var serverTracks = TrackStubPlanner.Plan(input, catalog, server.Id, StubKind.Track, ownTracks, artists.ArtistFolder);
+                tracks.AddRange(serverTracks);
+                claimed.UnionWith(serverTracks.Select(work => work.Entry.Id));
+            }
+
+            if (legacy)
+            {
+                claimed.UnionWith(ownVideos.Select(stub => stub.Id));
+            }
+            else
+            {
+                videoWorks.AddRange(VideoWorks(input, catalog, server, ownVideos, claimed, unplaceable));
+            }
+
+            var bookNames = new PathAllocator(ownBooks.Concat(ownAudioBooks), [], input.IgnoreRules);
+            books.AddRange(BookWorks(input, server.Id, ownBooks, bookNames, legacy, claimed, unplaceable));
+            books.AddRange(AudioBookWorks(input, catalog, server.Id, ownAudioBooks, bookNames, legacy, claimed));
         }
 
+        works.AddRange(tracks);
+        works.AddRange(videoWorks);
+        works.AddRange(books);
         var written = works.ToDictionary(work => work.Entry.Id, StringComparer.Ordinal);
         var unclaimed = input.State.Stubs.Where(stub => stub.ServerId is not null && (legacy || IsCurrent(stub.RelativePath)) && !claimed.Contains(stub.Id)).ToList();
 
@@ -251,7 +287,7 @@ public static class StubPlanner
         foreach (var server in servers)
         {
             var contents = ServerContents(view, snapshot, catalog, server);
-            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath)).ToList();
+            var own = stubs.Where(stub => stub.ServerId == server.Id && IsCurrent(stub.RelativePath) && !IsUntitledVideo(stub.Kind, legacy: false)).ToList();
             var parts = PartsOf(placementOf ?? StubPlanInput.DefaultPlacement, catalog, server.Id, contents, own, [], []);
             claims.AddRange(parts.SelectMany(part => new StubMatcher(part.Stubs).ClaimAll(StubContents.Group(part.Contents))));
         }
@@ -647,13 +683,14 @@ public static class StubPlanner
         return FederatedPaths.FitsInNames(planned) && !isTaken ? planned : kept;
     }
 
-    private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, Func<string, string> newPath)
+    // A film, or a music video: one title in a folder of its own, its .nfo named after the stub (F52).
+    private static StubWork MovieWork(StubPlanInput input, ResolvedContent content, StubEntry? stub, IndexedItem winner, IndexItemLookup catalog, Guid? serverId, StubKind kind, Func<string, string> newPath)
     {
         var id = stub?.Id ?? NewId();
         var relative = PathOf(input, stub?.RelativePath, stub?.ContentHash, () => newPath(id));
         var folder = Path.GetDirectoryName(relative)!;
 
-        var entry = (stub ?? NewEntry(id, StubKind.Movie, relative)) with
+        var entry = (stub ?? NewEntry(id, kind, relative)) with
         {
             RelativePath = relative,
             ServerId = serverId,
@@ -661,8 +698,9 @@ public static class StubPlanner
             Sources = SourcesOf(content, catalog)
         };
 
-        var metadata = StubMetadata.From(winner, input.IsProtected, input.WritesCollections);
-        var nfo = NfoDocument.Movie(metadata);
+        var isFilm = kind == StubKind.Movie;
+        var metadata = isFilm ? StubMetadata.From(winner, input.IsProtected, input.WritesCollections) : StubMetadata.From(winner, input.IsProtected);
+        var nfo = isFilm ? NfoDocument.Movie(metadata) : NfoDocument.MusicVideo(metadata);
         var url = input.StrmUrl(id);
         var images = new List<StubImage>();
         var slots = _titleImages.Select(image => (image.Type, Path.Combine(folder, image.Stem))).ToList();
@@ -671,7 +709,8 @@ public static class StubPlanner
             AddRemote(images, winner, content.Winner!.ServerId, type, stem);
         }
 
-        return new StubWork(entry, stub is null, metadata, nfo, Path.Combine(folder, "movie.nfo"), url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner))
+        var nfoPath = isFilm ? Path.Combine(folder, "movie.nfo") : Path.ChangeExtension(relative, ".nfo");
+        return new StubWork(entry, stub is null, metadata, nfo, nfoPath, url, Hash(nfo, Unsigned(url)), images, ImageTagOf(winner, images), TechnicalTagOf(content, winner))
         {
             RemovedImages = Removed(entry.ImageTag, slots, images)
         };
@@ -713,6 +752,11 @@ public static class StubPlanner
             // New numbers reach an existing item with the technical data, because its .nfo is not read again.
             TechnicalTag = (stub?.SeasonNumber, stub?.EpisodeNumber, stub?.EpisodeNumberEnd) == (season, number, last) ? stub!.TechnicalTag : null
         };
+
+        if (entry.SeriesStubId is { } row && !string.Equals(row, series.Entry.Id, StringComparison.Ordinal))
+        {
+            series.OtherRows.Add(row);
+        }
 
         var metadata = StubMetadata.From(winner, input.IsProtected) with { SeasonNumber = season, EpisodeNumber = number, EpisodeNumberEnd = last };
         var nfo = NfoDocument.Episode(metadata);
@@ -839,12 +883,40 @@ public static class StubPlanner
         return plan;
     }
 
-    // The work of each series. A new one whose stubs all stay in the folder of another series gets none.
-    private static List<SeriesWork> SeriesWorks(StubPlanInput input, IReadOnlyCollection<SeriesPlan> plans, IndexItemLookup catalog)
+    // The work of each series. A new one whose stubs all stay in the folder of another series gets none. A row of no plan
+    // that stubs of a plan stay in, a second folder of its title, gets the tvshow.nfo of the first such plan (§10 row 562).
+    private static List<SeriesWork> SeriesWorks(StubPlanInput input, IReadOnlyCollection<SeriesPlan> plans, IReadOnlyList<SeriesStub> existing, IndexItemLookup catalog)
     {
         var folders = plans.Select(plan => plan.Entry.RelativePath).ToHashSet(StringComparer.Ordinal);
-        return plans.Where(plan => plan.HasStubs || !plan.Work.IsNew).Select(plan => WithSeasons(input, plan, folders, catalog)).ToList();
+        var works = plans.Where(plan => plan.HasStubs || !plan.Work.IsNew).Select(plan => WithSeasons(input, plan, folders, catalog)).ToList();
+        var planned = plans.Select(plan => plan.Entry.Id).ToHashSet(StringComparer.Ordinal);
+        var others = existing.Where(entry => !planned.Contains(entry.Id)).DistinctBy(entry => entry.Id, StringComparer.Ordinal).ToDictionary(entry => entry.Id, StringComparer.Ordinal);
+        foreach (var plan in plans)
+        {
+            foreach (var id in plan.OtherRows.Order(StringComparer.Ordinal))
+            {
+                if (others.Remove(id, out var row))
+                {
+                    works.Add(OtherFolderWork(plan, row));
+                }
+            }
+        }
+
+        return works;
     }
+
+    // The tvshow.nfo of a plan in the folder of another row of its title. The images and seasons of that folder stay with
+    // the plan, so the row gets none.
+    private static SeriesWork OtherFolderWork(SeriesPlan plan, SeriesStub row) => plan.Work with
+    {
+        Entry = row,
+        IsNew = false,
+        NfoPath = Path.Combine(row.RelativePath, "tvshow.nfo"),
+        Images = [],
+        ImageTag = row.ImageTag ?? string.Empty,
+        RemovedImages = [],
+        Seasons = []
+    };
 
     // One season work per season folder that gets episode work, in no folder of another series of the plan. A season that has
     // none now is forgotten, so that it is written again. A series merged with a local one gets none (Q248).
@@ -989,7 +1061,7 @@ public static class StubPlanner
         return tag.ToString();
     }
 
-    private static void AddRemote(List<StubImage> images, IndexedItem item, Guid serverId, ImageType type, string stem)
+    internal static void AddRemote(List<StubImage> images, IndexedItem item, Guid serverId, ImageType type, string stem)
     {
         if (TagOf(item, type) is not null)
         {
@@ -998,7 +1070,7 @@ public static class StubPlanner
     }
 
     // The images an earlier tag lists, hence written by the plugin, whose type the remote row no longer has (Q235).
-    private static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
+    internal static List<StubImage> Removed(string? writtenTag, IEnumerable<(ImageType Type, string Stem)> slots, List<StubImage> images)
     {
         if (string.IsNullOrEmpty(writtenTag))
         {
@@ -1019,7 +1091,7 @@ public static class StubPlanner
             : item.ImageTags.GetValueOrDefault(type.ToString());
     }
 
-    private static string ImageTagOf(IndexedItem item, List<StubImage> images)
+    internal static string ImageTagOf(IndexedItem item, List<StubImage> images)
     {
         return string.Concat(images.Select(image => string.Create(CultureInfo.InvariantCulture, $"{image.Type}={TagOf(item, image.Type)};")));
     }
@@ -1049,6 +1121,9 @@ public static class StubPlanner
 
         // Whether a stub has this series as its own.
         public bool HasStubs { get; set; }
+
+        // The other rows whose folders stubs of this series stay in.
+        public HashSet<string> OtherRows { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed record SlotCopies(string Id, (Guid? ServerId, string Placement) Slot, IReadOnlyList<string> ItemIds, int First, int Last);
@@ -1093,14 +1168,13 @@ public static class StubPlanner
     {
         private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
 
-        // Finds the series stub of a work by its key, then by a remote series among those no other work has, written ones first.
+        // Finds the series stub of a work by its key, then by a remote series among those no other work has, in their order.
         public SeriesStub? Claim(string workKey, List<(Guid ServerId, IndexedItem Item)> known)
         {
             var stub = Existing.FirstOrDefault(entry => string.Equals(entry.WorkKey, workKey, StringComparison.Ordinal))
-                ?? Existing.Where(entry => !Contents.Contains(entry.WorkKey)
+                ?? Existing.FirstOrDefault(entry => !Contents.Contains(entry.WorkKey)
                     && !_claimed.Contains(entry.Id)
-                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)))
-                    .MinBy(entry => entry.ContentHash is null);
+                    && entry.Sources.Any(source => known.Exists(item => item.ServerId == source.ServerId && item.Item.ItemId == source.ItemId)));
             if (stub is not null)
             {
                 _claimed.Add(stub.Id);
@@ -1116,16 +1190,31 @@ public static class StubPlanner
     /// </summary>
     private sealed class PathAllocator
     {
-        private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
+        // " [" + 8 characters of the id + "]".
+        private const int IdSuffixLength = 11;
 
-        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series)
+        private readonly HashSet<string> _taken = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _authors = new(StringComparer.OrdinalIgnoreCase);
+        private readonly IServerIgnoreRules _rules;
+
+        public PathAllocator(IEnumerable<StubEntry> stubs, IEnumerable<SeriesStub> series, IServerIgnoreRules rules)
         {
+            _rules = rules;
             foreach (var stub in stubs)
             {
-                _taken.Add(stub.Kind == StubKind.Movie ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
+                var hasFolder = stub.Kind is StubKind.Movie or StubKind.MusicVideo or StubKind.Book;
+                _taken.Add(hasFolder ? Path.GetDirectoryName(stub.RelativePath)! : stub.RelativePath);
                 if (stub.Kind == StubKind.Episode)
                 {
                     _taken.Add(SeriesFolderOf(stub));
+                }
+                else if (stub.Kind is StubKind.AudioBook or StubKind.Track)
+                {
+                    // An author or artist folder answers to its whole name first, then to the name it has without an id.
+                    var author = Path.GetDirectoryName(Path.GetDirectoryName(stub.RelativePath))!;
+                    _taken.Add(author);
+                    _authors[author] = author;
+                    _authors.TryAdd(WithoutId(author), author);
                 }
             }
 
@@ -1135,13 +1224,22 @@ public static class StubPlanner
             }
         }
 
-        // The folder name of a film, unique in its type folder.
-        public string MovieFolderName(string typeFolder, string? title, int? year, string id)
-            => Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id);
+        // The folder name of a film, unique in its type folder, with the id when Jellyfin would read its stub as an extra or skip it.
+        public string MovieFolderName(string typeFolder, string? title, int? year, string id, string? label = null)
+        {
+            var name = FederatedPaths.TitleFolder(title, year);
+            var folder = Path.Combine(typeFolder, name);
+            var stub = label is null ? Path.Combine(folder, name + ".strm") : FederatedPaths.MovieStubIn(typeFolder, name, label);
+            var hidden = IsReadAsExtra(stub) || _rules.Ignores(typeFolder, name, true) || _rules.Ignores(folder, Path.GetFileName(stub), false);
+            return Unique(typeFolder, name, id, hidden);
+        }
 
-        // The relative folder of a series, unique in its type folder.
+        // The relative folder of a series, unique in its type folder, with the id when the server would skip it.
         public string SeriesFolder(string typeFolder, string? title, int? year, string id)
-            => Path.Combine(typeFolder, Unique(typeFolder, FederatedPaths.TitleFolder(title, year), id));
+        {
+            var name = FederatedPaths.TitleFolder(title, year);
+            return Path.Combine(typeFolder, Unique(typeFolder, name, id, _rules.Ignores(typeFolder, name, true)));
+        }
 
         // The path of an episode stub, unique in its series folder.
         public string EpisodeStub(SeriesPlan series, int season, int number, int? last, string? label, string id)
@@ -1157,9 +1255,33 @@ public static class StubPlanner
             return unique;
         }
 
-        private string Unique(string typeFolder, string name, string id)
+        // The relative folder of an author or artist, one for all the albums or audiobooks of that name and never the folder of
+        // a book, with the id when the server would skip a new one (row 568).
+        public string ArtistFolder(string typeFolder, string name, string id)
         {
-            if (_taken.Add(Path.Combine(typeFolder, name)))
+            var key = Path.Combine(typeFolder, name);
+            if (!_authors.TryGetValue(key, out var folder))
+            {
+                folder = Path.Combine(typeFolder, Unique(typeFolder, name, id, IsSkippedFolder(_rules, typeFolder, name)));
+                _authors[key] = folder;
+            }
+
+            return folder;
+        }
+
+        // A folder without the id Unique put after its name.
+        // Only 8 lowercase hex characters count as an id, as the planner writes them, so "Band [Explicit]" keeps its whole name.
+        private static string WithoutId(string folder)
+            => folder.Length > IdSuffixLength
+                && folder.EndsWith(']')
+                && folder.AsSpan(folder.Length - IdSuffixLength).StartsWith(" [")
+                && folder[^(IdSuffixLength - 2)..^1].All(char.IsAsciiHexDigitLower)
+                ? folder[..^IdSuffixLength]
+                : folder;
+
+        private string Unique(string typeFolder, string name, string id, bool hidden = false)
+        {
+            if (!hidden && _taken.Add(Path.Combine(typeFolder, name)))
             {
                 return name;
             }

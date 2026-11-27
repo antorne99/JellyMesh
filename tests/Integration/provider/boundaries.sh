@@ -155,7 +155,7 @@ done
 as_peer a "$token" GET "/JellyMesh/Provider/Items?ids=$real&includeItemTypes=Movie" >/dev/null
 check "a real item is found by a peer" 1 "$(jq '.Items | length' "$WORK/body")"
 check "its versions come with quality" true "$(jq --arg m "$(jq -r '.Items[0].MediaSources[0].Id' "$WORK/body")" '.Quality[$m].Height > 0' "$WORK/body")"
-check "no file path is sent to a peer" 0 "$(jq '[.Items[].MediaSources[] | (.Path // empty), (.MediaStreams[]? | .Path // empty)] | length' "$WORK/body")"
+check "no file path is sent to a peer, only the extension (row 569)" 0 "$(jq '[.Items[].MediaSources[] | (.Path // empty | select(test("^\\.[A-Za-z0-9]+$") | not)), (.MediaStreams[]? | .Path // empty)] | length' "$WORK/body")"
 
 stubs_a=$(docker exec "$PREFIX-a" sh -c 'find /federata -name "*.strm"')
 stubs_b=$(docker exec "$PREFIX-b" sh -c 'find /federata -name "*.strm"')

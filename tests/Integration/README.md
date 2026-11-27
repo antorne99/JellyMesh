@@ -17,7 +17,7 @@ Accounts, for testing only:
 
 ## Usage
 
-Run from this folder. It needs Docker, `curl` and `jq`, plus about 1.2 GB of disk. Encoding uses the ffmpeg inside the Jellyfin image, so no host ffmpeg is needed.
+Run from this folder. It needs Docker, `curl` and `jq`, plus about 1.6 GB of disk. Encoding uses the ffmpeg inside the Jellyfin image, so no host ffmpeg is needed.
 
 ```sh
 ./scripts/prepare-media.sh     # download sources and encode clips, takes several minutes
@@ -44,7 +44,7 @@ Copy `.env.example` to `.env` to set `BIND_ADDRESS`. Ports bind to loopback by d
 
 ## Folders
 
-- `media/<instance>/film` and `media/<instance>/serie` are mounted read-only at `/media`.
+- `media/<instance>` is mounted read-only at `/media`: `film` and `serie`, and for 0.7 `musica`, `videomusicali`, `videodomestici`, `libri` and `mista` (see "0.7 types").
 - `federata/` is mounted writable at `/federata` on `locale` only. It stands in for the federated folder and is empty until something writes to it.
 - On `locale`, the `Film` library has the paths `/media/film` and `/federata/Film`, and `Serie` has `/media/serie` and `/federata/Serie`. These are the two-path libraries the Phase 0 spikes need. The plugin writes stubs only into `/federata/<server id>/Film` and `/Serie`, made when a server is added, so run `provision.sh` again after adding servers: it adds those folders to the libraries.
 
@@ -120,6 +120,52 @@ These have no IDs and their invented titles match nothing on TMDb, so `report.sh
 | E07-E08 | E07, 720p | Double, 720p | | E07 local, E08 standard on a plain stub that plays the double |
 | E09-E10 | | Double, 720p | E10, 1080p | E09 standard on a plain stub, E10 JellyMesh with the double as backup |
 
+### 0.7 types
+
+Added for the 0.7 phases (integration test 11 of the spec). They are small and fully generated, so `prepare-media.sh` builds them in a few minutes: audio is a two-tone sine from ffmpeg, pictures are single frames of the films with a burned-in label, and `scripts/media-types.py` writes EXIF, EPUB, PDF and CBZ with the Python standard library, in the Playwright image the proof scripts already use. Every file comes out byte-identical on every run: ffmpeg runs bitexact, and single-threaded for video, ZIPs have fixed times and the PDF no dates. The films above are not reproducible this way. The clips carry none of the source film tags.
+
+Each server plays its own tone, a little higher per track: `locale` 659 Hz, `remoto-standard` 440 Hz, `remoto-jellymesh` 554 Hz. The pitch tells which copy is really served, as the label does on video.
+
+Photos carry EXIF numbers as rationals: 12.4 drops the whole EXIF block of a photo whose values are written as doubles, as Pillow does (F48 probes).
+
+Invented MusicBrainz IDs have the form `99000000-0000-4000-8000-0000000NNNNN` and are written below by their last four digits. Track files carry them under the tag names Picard writes: Vorbis keys such as `MUSICBRAINZ_TRACKID` in FLAC, ID3 `TXXX` descriptions such as `MusicBrainz Track Id` in MP3. The artist is `JM Artista` (`…0001`) everywhere.
+
+**Music** (`musica/JM Artista/`, library `Musica`, type `music`):
+
+| Album | locale | remoto-standard | remoto-jellymesh | Case |
+|---|---|---|---|---|
+| JM Album Federato (2026), 3 tracks of 20 s, album `…0101`, release group `…0201`, recordings `…0301`-`…0303`, tracks `…0401`-`…0403` | MP3 128k | FLAC 16/44.1, `.lrc` on track 1 | MP3 320k | The same IDs on three servers |
+| JM Album Doppio (2025), 2 discs of 2 tracks of 15 s in `Disc 1` and `Disc 2`, album `…0102` | | FLAC 24/96 | FLAC 16/44.1 | Multi-disc; the copies differ in bit depth and sample rate only |
+| JM Album Senza ID (2024), 2 tracks | | MP3 320k, track 1 `L'Ultima Nota`, track 2 25 s | MP3 128k, track 1 `Ultima Nota`, track 2 26 s | No IDs; the first titles differ by an article, the second durations by a second |
+
+Every album folder has a `folder.jpg`.
+
+**Music videos** (`videomusicali/`, library `Video musicali`, type `musicvideos`): `JM Video Musicale (2026)`, 30 s, with a `<musicvideo>` .nfo naming the artist and the first album above, and no provider IDs. 720p 2 Mbit/s on `remoto-standard`, 1080p 4 Mbit/s on `remoto-jellymesh`.
+
+**Home videos and photos** (`videodomestici/`, only on `remoto-standard`, library `Video domestici`, type `homevideos`, which shows photos by default). Jellyfin 12 has no `photos` library type to create, so photos live here.
+
+| Path | What | EXIF |
+|---|---|---|
+| `2025/Estate/Spiaggia.mp4`, `2025/Inverno/Neve.mkv`, `2026/Compleanno.mp4` | 20 s clips in nested folders | None; `creation_time` 2025-07-14, 2025-12-20, 2026-03-02 |
+| `2025/Estate/Tramonto.jpg` | A photo beside a video, 1600x900 | Camera, date, GPS 44.4056, 8.9463, 12 m |
+| `Album Vacanze 2025/IMG_0001.jpg` | A photo album, 1600x1200 | Camera, date, exposure, GPS 43.7731, 11.2560, 50 m |
+| `Album Vacanze 2025/IMG_0002.jpg` | Portrait, 900x1200 | Camera, date, exposure, no GPS |
+| `Album Vacanze 2025/IMG_0003.jpg`, `IMG_0004.png` | JPEG and PNG | None |
+
+**Books** (`libri/`, library `Libri`, type `books`). Each book and audiobook is alone in its folder, as Jellyfin's book resolver wants; a loose audiobook at the library root would be named after the library folder (F48 probes).
+
+| Book | remoto-standard | remoto-jellymesh | Notes |
+|---|---|---|---|
+| JM Libro Epub | EPUB 3, 44 KB | The same file | ISBN 9790000000014 in the package document, a cover, 3 chapters |
+| JM Libro Pdf | PDF, 8 pages, 430 KB | | Over 128 KiB, so pdf.js reads it by Range; `JM Libro Pdf.opf` beside it carries ISBN 9790000000021 |
+| JM Fumetto | CBZ, 6 pages, with `ComicInfo.xml` | | Series `JM Serie a Fumetti`, number 1 |
+| JM Audiolibro Capitoli | M4B, AAC, 90 s, 3 chapters | The same, with its own tone | One file with chapters |
+| JM Audiolibro Parti | 3 MP3 of 40 s, with 2 chapters each | | One book in several files |
+
+**Mixed library** (`mista/`, only on `remoto-standard`, library `Mista`, created without a collection type): `JM Film Misto (2026)` (TMDb 999000301, IMDb tt99000301) and `JM Serie Mista (2026)` with two episodes (TMDb 999000401, TVDB 999000402), 720p.
+
+`provision.sh` adds each of these libraries only where the server has the folder, so a media folder from before 0.7 provisions as before. On `locale` it adds only `Musica`, for the local copy, and links no federated folder for these types.
+
 ## What 12.4 showed
 
 Observed while building this environment, on Jellyfin 12.4.0.
@@ -138,6 +184,49 @@ Observed while building this environment, on Jellyfin 12.4.0.
 
 These observations led to the three decisions recorded in §10 of the plan: a 5% bitrate tolerance, removing the year from `Name`, and using Jellyfin's video bitrate uncorrected.
 
+Seen on the 0.7 types, with the stock `remoto-standard` and the non-admin user:
+
+- **Views:** the mixed library is a `CollectionFolder` in `/UserViews` with no `CollectionType`. Home videos answer `homevideos`, and photo folders under them become `PhotoAlbum`.
+- **Music IDs:** both tag styles fill the same keys. A track gets `MusicBrainzRecording` from the track ID, `MusicBrainzTrack` from the release track ID, and the album, album artist, artist and release group; the album gets album, album artist and release group. `ParentIndexNumber` is the disc. FLAC reports `BitDepth` and `SampleRate`, MP3 no bit depth.
+- **Audiobooks:** an audiobook in several files becomes one `AudioBook` per file, named after its title tag (`Parte 1`…), with `IndexNumber` from the track number. Chapters come from the M4B and from ID3 `CHAP` frames.
+- **Books:** the EPUB and the `.opf` beside the PDF give an `ISBN` provider ID; the CBZ gets none, and `IndexNumber` 1 from `ComicInfo.xml`.
+- **Music videos:** artists come from the .nfo and also from the file's own artist tag, so the clips are written without the source's tags.
+- **Photos:** `Latitude`, `Longitude` and `Altitude` appear only on the photos with GPS, with `CameraMake`, `CameraModel` and the size. The EXIF date is read as the server's local time (`TZ` is Europe/Rome here), so `PremiereDate` is two hours earlier in UTC. A home video's `PremiereDate` is its `creation_time`.
+- **Original files on image routes:** `/Items/{id}/Images/Primary` of a photo with no size, as the web slideshow asks for it, returns the original file byte for byte, EXIF and GPS included, like `/Items/{id}/Download`. With a size it is re-encoded.
+- **Ranges:** `/Audio/{id}/universal`, `/Items/{id}/File`, `/Items/{id}/Download` and `/Audio/{id}/stream?static=true` answer `Accept-Ranges: bytes`, and `206` to a `Range`, also to `bytes=0-`. The unauthenticated HEAD of `universal` with `ApiKey` in the query answers `200` with the type and length.
+- **Audio transcoding:** `universal` under a 64 kbit/s cap answers an HLS master playlist (`application/vnd.apple.mpegurl`) whose segments are MPEG-TS; Finamp's `main.m3u8` with `segmentContainer=mp4` gives an fMP4 init segment and fMP4 segments.
+- **Lyrics:** an `.lrc` beside the track makes `/Audio/{id}/Lyrics` answer `200` with the lines.
+
+## Client routes
+
+`play/clients.sh` calls the audio, book and photo routes the way the main clients do, against any server URL, so the 0.7 phases can compare a stock server with the federated copy of the same item. It makes no containers and asserts nothing: it prints one tab-separated line per request with the status, content type, length, content range, accept ranges, bytes received and their SHA-256, and with `--file` whether the body matches that file, or the slice of it a `206` names. `OUT=<dir>` keeps every header and body. Each client logs in with its own `Authorization` identity, and the item is an id or an exact name. It exits non-zero only when a request got no answer. Client names and versions in the `Authorization` header are plausible placeholders.
+
+```sh
+play/clients.sh <base URL> <user> <password> <command> <item id or name> [--file <path>]
+play/clients.sh http://127.0.0.1:8097 jellymesh jellymesh-test web-audio "Prima Traccia" \
+  --file "media/remoto-standard/musica/JM Artista/JM Album Federato (2026)/01 - Prima Traccia.flac"
+```
+
+| Command | Client | Requests |
+|---|---|---|
+| `web-audio` | jellyfin-web `<audio>` (`playbackmanager.js`, `browserDeviceProfile.js`) | HEAD of `/Audio/{id}/universal` with the browser's direct-play containers, `ApiKey` in the query and no auth header; then GET with `Range: bytes=0-` and a seek from the middle, or, when the HEAD says HLS, the playlists and the first segment |
+| `web-audio-hls` | the same | the same with `MaxStreamingBitrate=64000`, so the server transcodes |
+| `finamp-file` | Finamp direct play | `/Items/{id}/File?ApiKey`, then a `Range` from the middle |
+| `finamp-hls` | Finamp transcoding, default AAC in fMP4 | `/Audio/{id}/main.m3u8?audioCodec=aac&segmentContainer=mp4&…`, its init segment and first segment; `TRANSCODE_BITRATE` sets `audioBitRate` (default 320000) |
+| `stream` | older clients | `/Audio/{id}/stream?static=true` with the auth header, then a `Range` |
+| `playbackinfo` | jellyfin-web | POST `/Items/{id}/PlaybackInfo` with the browser's audio profile; the media sources go to stderr, with the token hidden |
+| `lyrics` | jellyfin-web | `/Audio/{id}/Lyrics` |
+| `download` | the web Download button (SDK `getDownloadUrl`) | `/Items/{id}/Download?ApiKey` |
+| `epub`, `comic` | the web readers (epub.js, the comics reader) | one GET of the download URL |
+| `pdf` | the web reader (pdf.js 3.11) | a GET dropped after the headers, then 64 KiB ranges from the start and the end when the server answers `Accept-Ranges: bytes` and a length over 128 KiB, else the whole file |
+| `jellybook` | JellyBook | `/Items/{id}/Download` with the auth header |
+| `photo-web` | the web grid and slideshow | an anonymous `Images/Primary` with `fillWidth`, `fillHeight`, `quality=96` and the tag; then `Download?ApiKey` (users with downloads) and `Images/Primary?quality=100` with no size (users without) |
+| `photo-tv` | Android TV | an anonymous `Images/Primary` with the tag and `maxWidth=1920&maxHeight=1080` |
+
+The stock answers are in "What 12.4 showed" above. Against stock `remoto-standard`, every direct body matches its file.
+
+Run on a stub, the same commands show what the plugin must guard (F48 probes, for F56 and F61): on a stock server, `File` and `Download` of an audio or book `.strm` return the stub URL as text, which the file column shows as `url-body`; `universal` on an audio stub answers 400, and on a video stub the server opens the stub URL. Any item id works with every command, so `web-audio` also runs on a video stub.
+
 ## Spikes
 
 Phase 0 tests live in `spikes/`. `stub_server.py` stands in for a `.strm` target and logs every request. Spikes write fixtures to `federata/`, so remove them afterwards. Jellyfin skips a completely empty library path and keeps its items, so leave a hidden file there until a scan has removed them.
@@ -146,28 +235,28 @@ The spikes for points 2 to 7 run on private throwaway containers, never on this 
 
 ## Proof scripts
 
-Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. `dedup/` and `merge/` need clips that a media folder prepared earlier may lack, so run `prepare-media.sh` first; to keep new clips out of the shared stack's libraries, run it on a copy of the folder and point `MEDIA` there. Logins are fixed test values.
+Each folder proves a phase end to end with real Jellyfin servers, on private containers and with the current build. Run them from this folder. The media comes from `MEDIA`, by default this folder's `media/`, which is gitignored, so in a worktree point it at the main checkout. `dedup/` and `merge/` need clips that a media folder prepared earlier may lack, so run `prepare-media.sh` first; to keep new clips out of the shared stack's libraries, run it on a copy of the folder and point `MEDIA` there. Logins are fixed test values. To install a plugin built beforehand, for example from a `git archive` copy, set `JM_PLUGIN_DLL` to its DLL: `install-plugin.sh`, `play/permissions.sh` and `play/provider-types.sh` then build nothing.
 
 | Folder | Proves | Containers | Ports | Also needs |
 |---|---|---|---|---|
 | `materializer/` | Phase 4: stubs, metadata protection, watch state | `jm-mat` | 18310 | `remoto-standard` and `remoto-jellymesh` of this stack |
 | `playback/` | Phase 5: the proxy, seek, audio and subtitle changes, in real jellyfin-web | `jm-play` | 18320, gates on 18321-18322 | `remoto-standard` and `remoto-jellymesh` of this stack, `python3` |
 | `provider/` | Phase 7: two JellyMesh servers federated to each other | `$PREFIX-a`, `$PREFIX-b` (default `jm-prov`), `$PREFIX-s` with `STOCK=own` | `PORT_A` and the next one (default 18410-18411), gates on the next three | `remoto-standard` of this stack unless `STOCK=own`, `python3`, `WORK` |
-| `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424 | Nothing from this stack |
-| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15) | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
+| `dedup/` | Decisions 13 and 13a | `jm-dedup-*` | 18421-18424, see below | Nothing from this stack |
+| `play/` | Decisions 11, 15 and 17: signed stubs, an upgrade, the local fallback, a local copy. `watchstate.sh`: decision 41. `keyfile.sh`: decision 42. `last-served.sh`: test 16 of the folders per server (D15). `permissions.sh`: integration 13 of the 0.6-0.7 spec. `provider-types.sh`: integration 16 of the 0.6-0.7 spec (row 460), on its own `jm-f62` set | `$PREFIX-local`, `$PREFIX-remote`, `$PREFIX-peer` (default `jm-play`) | `PORT` and the next two (default 18430-18432) | A checkout in `OLD`, from before signing |
 | `ui/` | The configuration page in Chromium, at 1280 and 390 px | `$UI_PREFIX-*` | `UI_PORT` and the next three | Nothing from this stack |
 
 ### `materializer/`
 
-Every scenario needs a fresh instance. `all.sh` does that for `s1` to `s5`, and writes `up-*.log` and `final-*.out` next to the scripts. Those hold what each scenario printed, so read them: the scripts print state and mostly do not judge it. To run one scenario:
+Every scenario needs a fresh instance. `all.sh` does that for `s1` to `s5`, and writes `up-*.log` and `final-*.out` next to the scripts. Those hold what each scenario printed, so read them: the scripts print state and judge only what the plan says, on `PASS` and `FAIL` lines. Each server gets the library mode "None", so the plugin makes no library: after each sync the scenario adds the folders the page lists to the Film and Serie libraries by hand, as an admin does, and takes those of a removed server out again. `s3` edits a film on the Standard remote and puts it back on exit, so it does that only when `STANDARD_URL` is given, and needs `STANDARD_HOST_URL` when the address it gives is not reachable from this machine with `127.0.0.1` in place of `host.docker.internal`, and `REMOTE_ADMIN_PASSWORD` when the remote's admin has another password than `jellymesh-test`. To run one scenario:
 
 ```sh
-bash materializer/up.sh           # a fresh jm-mat with the two-path libraries and the plugin
+bash materializer/up.sh           # a fresh jm-mat with Film and Serie over the local media, and the plugin
 bash materializer/s1.sh           # s1 to s5, see the comment at the top of each
-bash materializer/check.sh        # after s5: no remote password in the logs, no remote address in the index or the folder
+bash materializer/check.sh        # after a scenario: no remote password in the logs, no remote address in the plugin data or the folder
 ```
 
-Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`.
+Remove it by hand, with `docker rm -f jm-mat` and `docker volume rm jm-mat-config jm-mat-cache jm-mat-fed jm-mat-extra`. To run beside another stack, give every script the same `NAME` and `PORT` in place of `jm-mat` and 18310, and `STANDARD_URL` and `JELLYMESH_URL` for remotes other than those of this stack. The `stock` and `peer` servers of `dedup/` serve the same media and do too.
 
 ### `playback/`
 
@@ -180,7 +269,7 @@ bash playback/direct1.sh          # the direct-play fixture, then direct3.sh
 bash playback/final.sh            # the whole proof in order, then final2.sh, final3.sh and final4.sh
 ```
 
-`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. Remove it by hand, with `pkill -f httpgate.py`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
+`final.sh` and `final3.sh` name the fixture by the item ID of the recorded run, and `leak.py` an item of its own, so check those IDs on a new run. Browser steps use real jellyfin-web in the Playwright image. `NAME` and `PORT` (default `jm-play` on 18320) name the container and its port; give every script the same ones. `gates.sh` takes `GATE_STANDARD` and `GATE_JELLYMESH` (default 18321 and 18322) for its ports, and `STANDARD_PORT` and `JELLYMESH_PORT` (default 8097 and 8098) for the remotes behind them; give `up.sh` the same gate ports. Remove it by hand, with `pkill -f "httpgate.py $GATE_STANDARD "` and the same for `$GATE_JELLYMESH`, `docker rm -f jm-play` and `docker volume rm jm-play-config jm-play-cache jm-play-fed jm-play-pw`, with your `NAME` in place of `jm-play`.
 
 ### `provider/`
 
@@ -199,17 +288,18 @@ bash provider/boundaries.sh       # what a peer can reach, no cycles, shared lib
 bash provider/feed.sh             # the change feed, and polling on a stock remote
 bash provider/limits.sh           # the stream limit, about 15 minutes because it waits for real timeouts
 bash provider/network.sh          # a slow and an offline provider, after limits.sh
+STOCK=own bash provider/admin-strm.sh  # an admin's .strm plays on a direct-capable client of b, only transcoded (row 570)
 bash provider/leaks.sh            # no remote token in a client answer or a log, no remote address in a client answer
 bash provider/down.sh             # removes containers and volumes, and the recorded tokens
 ```
 
 ### `dedup/`
 
-Scratch files go in `WORK`.
+The consumer gives both remotes the library mode "None", and `up.sh` adds the folders the page lists to its Film and Serie libraries by hand, as an admin does; `upgrade.sh` keeps the flat layout of the old build. Scratch files go in `WORK`. `PREFIX` (default `jm-dedup`) names the containers, volumes and network, and `PORT` (default 18421) is the port of the consumer, with the other servers on the next three; give every script the same ones.
 
 ```sh
 bash dedup/up.sh                  # the two remotes and a consumer with the current build
-bash dedup/run.sh                 # what merges, what stays apart, doubles, playback, NextUp, local copies arriving
+bash dedup/run.sh                 # what merges, what stays apart, a stub per copy of a double, playback, NextUp, local copies arriving
 OLD=<old checkout> bash dedup/upgrade.sh   # an index and stubs from the old build, then the current one
 bash dedup/down.sh                # removes containers, volumes and network
 ```
@@ -349,6 +439,7 @@ The zip of v0.5.0.1, built from its tag, fails: it asks for `Microsoft.Data.Sqli
 ## Not covered here
 
 - **QSV (Phase 0, point 5):** this environment runs on an arm64 Mac with no Intel GPU, so it cannot test QSV. Antonio verified it on the OPS pc: it works.
+- **0.7 types through JellyMesh:** the media, libraries and `play/clients.sh` cover the stock side. The federated side, stubs of these types and the plugin's routes, comes with the phases that build it, from F50.
 - **Slow network, offline server, stream limit (§8):** belong to the Phase 6 task. To simulate an offline server, stop its service with `docker compose stop remoto-standard`.
 
 ## Licences
@@ -368,6 +459,11 @@ Source films are from the Blender Foundation under Creative Commons: Elephants D
 SCALE_IMAGES=0 WORK=/tmp/off ./scale/run.sh   # no image tags, so no downloads: the difference is their cost
 SCALE_FILMS=100 SCALE_SERIES=10 ./scale/run.sh  # a quick check of the harness
 SCALE_SCAN=1 ./scale/run.sh             # also links the folder to two libraries, scans, and syncs again
+SCALE_REMOTES=3 SCALE_TRACKS=100000 SCALE_FILMS=0 SCALE_SERIES=0 ./scale/run.sh   # F65: three remotes of 100,000 tracks
 ```
 
 `SCALE_IMAGE_BYTES` and `SCALE_IMAGE_DELAY_MS` make the images heavier or slower, to stand for real posters over a real link. The fake answers in under a millisecond, so every time measured is the consumer's; a real 12.4 remote is slower to page through 50,000 episodes. `scale/results-before-846.txt` holds the run of 2026-11-09 at 248abe4, before phase 846. In short, for 55,000 stubs: the read takes 13-16 s and is not the problem; the first materialization takes 98 s without images and 442 s with 61,000 of them; an incremental sync with nothing to do takes 3-6.5 minutes, and nearly 10 once the stubs are in a library; the process peaks at 2.0-2.4 GB; the index file is 182 MiB and is rewritten on every incremental sync. Stack samples taken with `scale/stacks.sh` (`dotnet-stack` from a container sharing the consumer's PID namespace) put 13 of 16 samples of the incremental in the per-stub list rebuild of `LibraryMaterializer.WriteStubAsync`. The scan of the linked folder is Jellyfin's own work, with no plugin frame in its samples, and was stopped at 92% after 58 minutes. `scale/results.txt` holds the runs after phase 846, which updates stub entries in place, looks up a stub's library item only when something has to reach it, reads remote images four at a time for each server and leaves the index file alone when an incremental sync brings no change. For the same 55,000 stubs the first sync takes 43 s with images, an incremental sync with nothing to do 6 s and a full read with no changes 12 s; the process peaks at 1.4-2.0 GB. A second run with 5,500 stubs, images that take 20 ms each and the folder scanned into libraries reads 6,100 images in 42 s instead of about 156 s one at a time, and its incremental sync on scanned stubs takes 0.5 s.
+
+`SCALE_TRACKS` above 0 adds a `music` library to each fake, with that many tracks, their albums and their artists, built from numbers like the films: `/Items` pages of `Audio`, `MusicAlbum` and `MusicArtist` by library, album or artist, by IDs and by `minDateLastSaved`, and paged `/Artists` and `/Artists/AlbumArtists`, where `/Artists` also lists the guest artists of some tracks. The fields are those 12.4 sends for music (F48 probes and the music research): `Album`, `AlbumId`, `AlbumArtist(s)`, `Artists`/`ArtistItems`, the disc in `ParentIndexNumber`, `HasLyrics` with a `Lyric` stream, the album image through `AlbumPrimaryImageTag` only, and one audio stream with codec, bitrate, sample rate and, on lossless codecs, bit depth. About one album in four spans two or three discs. Albums are numbered once for all the fakes, and `SCALE_SERVER_INDEX` (set by `run.sh` to 1-3) picks which ones a fake holds: in each block of eight, two albums are on all three remotes, three on two, three on one only. On one of the shared albums the copy of one remote has no MusicBrainz IDs, a lower-case title and a duration 1 s longer, or 3 s on every sixth track, beyond the 2 s of row 453; the copy of a pair on remote 3 has the release track ID and not the recording ID. The copies of an album differ in format (FLAC 16/44.1 and 24/96, MP3 320k and 310k, AAC and ALAC in `m4a`, PCM in `wav`). This overlap is the harness's own choice: `SCALE_MUSIC_SHARING=all` puts every album on every remote and `none` shares none. `fake_remote.py --expect <remotes>` prints how many tracks the federation lists and how many row 453 should keep distinct; `run.sh` saves it as `music-expected.txt`, and `results.txt` starts with it, adds the read calls by kind, any call the fake did not know, and after a scan the `Audio`, `MusicAlbum` and `MusicArtist` counts of the Music library made from the music paths of the status page. `scale/test_fake_remote.py` checks the fake itself (`python3 -m unittest test_fake_remote` in `scale`).
+
+The Music library of the scan has every online fetcher off, and the container sends `musicbrainz.org` and `www.theaudiodb.com` to itself, since stock also looks artists up after the scan; their lookups fail at once and log an error each. `SCALE_SCAN_WAIT_S` caps the wait for the scan (4 h by default), and `scan-state.txt` says whether it ended. A scanned run of 300,000 tracks or more starts only with 18 GiB free on the disk of the home folder (`SCALE_MIN_FREE_GIB` sets another number, 0 for none). `scale/watch_container.py` looks at the container every 5 s (`SCALE_WATCH_S`) and ends the run with status 3 when it stopped, was restarted or Docker did not answer three times: `stopped.txt` says why, and `jellyfin.log` and `results-partial.txt` hold what was measured. `scale/test_run.py` checks both with stand-ins for `docker`, `curl` and `df` (`python3 -m unittest test_run` in `scale`). Each phase reports the store tables it wrote, from a copy of the store taken again while it changes, and says so when a copy is torn; `library-read.txt` times the library read of the provider guard with one library and with eleven.

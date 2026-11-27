@@ -132,6 +132,34 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Empty(_registry.State.Renames);
     }
 
+    [Fact]
+    public async Task ATrackCarriesNoLabelAndKeepsItsPathWhateverItsTitle()
+    {
+        var track = Path.Combine(_server.ToString("D"), "0123456789abcdef0123456789abcdef", "Musica", "Artist", "Album", "01 - Casa.strm");
+        await SeedAsync(Film("f", FilmPath("Casa")), Film("t", track) with { Kind = StubKind.Track });
+        Write(FilmPath("Casa"), "url-f");
+        Write(track, "url-t");
+
+        Assert.Equal(1, await _renamer.RelabelAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal([FilmPath("Mare"), track], _registry.State.Stubs.Select(stub => stub.RelativePath));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+    }
+
+    [Fact]
+    public async Task AnAudiobookCarriesNoLabelAndKeepsItsPathWhateverItsTitle()
+    {
+        var part = Path.Combine(_server.ToString("D"), "0123456789abcdef0123456789abcdef", "Libri", "Author", "Book", "01 - Casa.strm");
+        await SeedAsync(Film("f", FilmPath("Casa")), Film("b", part) with { Kind = StubKind.AudioBook });
+        Write(FilmPath("Casa"), "url-f");
+        Write(part, "url-b");
+
+        Assert.Equal(1, await _renamer.RelabelAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal([FilmPath("Mare"), part], _registry.State.Stubs.Select(stub => stub.RelativePath));
+        Assert.Equal([new StubRename("f", FilmPath("Casa"))], _registry.State.Renames);
+    }
+
     // Q316: with the server folder in no library there is no item, so the files are renamed at once and nothing waits.
     [Fact]
     public async Task InNoLibrary_TheStubFilesAreRenamedInPlace_AndNothingWaits()
@@ -209,6 +237,19 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.True(File.Exists(Full(FilmPath(name))));
         Assert.Equal(FilmPath(name), _registry.State.Renames.Single().OldPath);
         Assert.Empty(_renamer.LongLabels());
+    }
+
+    [Fact]
+    public async Task AHomeVideoWhoseNameEndsWithTheLabelKeepsItsFiles()
+    {
+        var home = Path.Combine(_server.ToString("D"), TestLibraries.HomeVideos, "Video domestici", "Trip - Casa.strm");
+        await SeedAsync(Film("h", home) with { Kind = StubKind.HomeVideo });
+        Write(home, "url-h");
+
+        Assert.Equal(0, await _renamer.RelabelInPlaceAsync(_server, "Mare", CancellationToken.None));
+
+        Assert.Equal("url-h", Read(home));
+        Assert.Equal(home, _registry.State.Stubs.Single().RelativePath);
     }
 
     [Fact]
@@ -349,6 +390,27 @@ public sealed class ServerStubRenamerTests : IDisposable
         Assert.Equal(
             ["S S01E01 - Mare-thumb.jpg", "S S01E01 - Mare.nfo", "S S01E01 - Mare.strm"],
             Directory.EnumerateFiles(folder).Select(Path.GetFileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task AMusicVideoLosesItsOldStrmAndNfo()
+    {
+        var folder = Path.Combine(_server.ToString("D"), TestLibraries.MusicVideos, "Video musicali", "Song (2019)");
+        string Clip(string label) => Path.Combine(folder, "Song (2019) - " + label + ".strm");
+        await SeedAsync(Film("m", Clip("Casa")) with { Kind = StubKind.MusicVideo });
+        Write(Clip("Casa"), "url");
+        Write(Path.ChangeExtension(Clip("Casa"), ".nfo"), "nfo");
+        Write(Path.Combine(folder, "poster.jpg"), "poster");
+        await _renamer.RelabelAsync(_server, "Mare", CancellationToken.None);
+        Scanned(Clip("Casa"), new MusicVideo());
+        Scanned(Clip("Mare"), new MusicVideo());
+
+        await _renamer.FinishAsync(CancellationToken.None);
+
+        Assert.Equal("nfo", Read(Path.ChangeExtension(Clip("Mare"), ".nfo")));
+        Assert.Equal(
+            ["Song (2019) - Mare.nfo", "Song (2019) - Mare.strm", "poster.jpg"],
+            Directory.EnumerateFiles(Full(folder)).Select(Path.GetFileName).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -841,7 +903,7 @@ public sealed class ServerStubRenamerTests : IDisposable
         where T : Video
     {
         item.Path = Full(relative);
-        item.Id = IdOf(item.Path, item is Episode ? typeof(Episode) : typeof(Movie));
+        item.Id = IdOf(item.Path, item.GetType());
         _items[item.Id] = item;
         return item;
     }

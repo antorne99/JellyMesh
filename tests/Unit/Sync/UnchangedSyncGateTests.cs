@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.JellyMesh.Configuration;
 using Jellyfin.Plugin.JellyMesh.Dedup;
 using Jellyfin.Plugin.JellyMesh.Index;
@@ -71,6 +72,7 @@ public sealed class UnchangedSyncGateTests : IDisposable
         "a merge is made",
         "the stub registry is saved",
         "an item is added",
+        "a book is made again",
         "a stub is removed",
         "a local film is updated",
         "the administrator splits the versions of a stub"
@@ -133,8 +135,37 @@ public sealed class UnchangedSyncGateTests : IDisposable
         RaiseUpdated(new Movie { Path = Root + "/a/Film/A/A.strm" }, ItemUpdateType.MetadataImport);
         RaiseUpdated(new Movie { Path = Root + "/a/Film/A/A.strm" }, ItemUpdateType.ImageUpdate);
         RaiseAdded(new Person { Name = "Someone" });
+        RaiseUpdated(new Book { Path = Root + "/a/Libri/A/A.epub" }, ItemUpdateType.MetadataImport);
 
         Assert.True(_gate.IsUnchanged(_gate.Capture()));
+    }
+
+    // A book placeholder takes its metadata only once its item exists, so the item appearing must let the next sync run.
+    [Fact]
+    public void TheLocalIdsReadIncludeBooks()
+    {
+        InternalItemsQuery? query = null;
+        _library.Setup(library => library.GetItemIds(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(read => query = read)
+            .Returns(() => [.. _localIds]);
+
+        _gate.Capture();
+
+        Assert.Contains(BaseItemKind.Book, query!.IncludeItemTypes);
+    }
+
+    // Row 454: a local music video suppresses the remote copies, so its item appearing must let the next sync run.
+    [Fact]
+    public void TheLocalIdsReadIncludeMusicVideos()
+    {
+        InternalItemsQuery? query = null;
+        _library.Setup(library => library.GetItemIds(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(read => query = read)
+            .Returns(() => [.. _localIds]);
+
+        _gate.Capture();
+
+        Assert.Contains(BaseItemKind.MusicVideo, query!.IncludeItemTypes);
     }
 
     [Fact]
@@ -198,6 +229,9 @@ public sealed class UnchangedSyncGateTests : IDisposable
                 break;
             case "an item is added":
                 RaiseAdded(new Movie { Path = "/media/film/B.mkv" });
+                break;
+            case "a book is made again":
+                RaiseAdded(new Book { Path = Root + "/a/Libri/A/A.epub" });
                 break;
             case "a stub is removed":
                 RaiseRemoved(new Movie { Path = Root + "/a/Film/A/A.strm" });

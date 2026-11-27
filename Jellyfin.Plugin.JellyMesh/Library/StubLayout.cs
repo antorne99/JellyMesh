@@ -48,7 +48,7 @@ public static class StubLayout
                 .Where(folder => Guid.TryParseExact(Path.GetFileName(folder), "D", out _))
                 .Prepend(root);
             return parents
-                .SelectMany(parent => TypeFolder.Written.Select(type => Path.Combine(parent, type.Name)))
+                .SelectMany(parent => TypeFolder.Older.Select(type => Path.Combine(parent, type.Name)))
                 .Any(folder => Directory.Exists(folder) && Directory.EnumerateFiles(folder, "*.strm", SearchOption.AllDirectories).Any());
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)

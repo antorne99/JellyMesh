@@ -10,6 +10,7 @@ using Jellyfin.Plugin.JellyMesh.Storage;
 using Jellyfin.Plugin.JellyMesh.Tests.Playback;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
@@ -32,6 +33,10 @@ internal sealed class ProviderFixture
     public static readonly Guid SharedItem = Guid.Parse("30000000-0000-0000-0000-000000000000");
     public static readonly Guid PrivateItem = Guid.Parse("40000000-0000-0000-0000-000000000000");
     public static readonly Guid StubItem = Guid.Parse("50000000-0000-0000-0000-000000000000");
+    public static readonly Guid SharedTrack = Guid.Parse("60000000-0000-0000-0000-000000000000");
+    public static readonly Guid PrivateTrack = Guid.Parse("70000000-0000-0000-0000-000000000000");
+    public static readonly Guid SharedMusic = Guid.Parse("11000000-0000-0000-0000-000000000000");
+    public static readonly Guid SharedBooks = Guid.Parse("12000000-0000-0000-0000-000000000000");
 
     public ProviderFixture()
     {
@@ -45,11 +50,13 @@ internal sealed class ProviderFixture
             .ReturnsAsync(() => new AuthorizationInfo { User = Caller, DeviceId = CallerDevice });
 
         Directory = new PeerDirectory(Store, Authorization.Object);
-        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store, CatalogLogger);
+        Catalog = new ProviderCatalog(Library.Object, Dto.Object, Store, CatalogLogger, Clock);
 
         AddItem(SharedItem, new Movie { Path = "/media/film/a.mkv" }, SharedLibrary);
         AddItem(PrivateItem, new Movie { Path = "/other/film/b.mkv" }, PrivateLibrary);
         AddItem(StubItem, new Movie { Path = "/federata/Film/c/c.strm", ShortcutPath = "http://127.0.0.1:8096/JellyMesh/Play/stub" }, SharedLibrary);
+        AddItem(SharedTrack, new Audio { Path = "/media/music/a.flac" }, SharedLibrary);
+        AddItem(PrivateTrack, new Audio { Path = "/other/music/b.flac" }, PrivateLibrary);
         WithLibrary(SharedLibrary, "/media/film");
         Connect();
     }
@@ -92,11 +99,11 @@ internal sealed class ProviderFixture
     public PeerCaller PeerCaller => new(Directory.Find(Peer.Id)!, Peer);
 
     /// <summary>Makes a play session the peer's, as its own <c>PlaybackInfo</c> does, with no slot left behind.</summary>
-    public void Own(string playSession, Guid? peer = null)
+    public void Own(string playSession, Guid? peer = null, Guid item = default)
     {
         var id = peer ?? Peer.Id;
         var reservation = Slots.TryReserve(id, int.MaxValue, null)!;
-        Slots.Confirm(id, reservation, playSession);
+        Slots.Confirm(id, reservation, playSession, item);
         Slots.Release(id, playSession);
     }
 
@@ -110,12 +117,30 @@ internal sealed class ProviderFixture
     }
 
     /// <summary>Makes a film library with these paths the only one on the server.</summary>
-    public void WithLibrary(Guid id, params string[] locations)
+    public void WithLibrary(Guid id, params string[] locations) => WithTypedLibrary(id, CollectionTypeOptions.movies, locations);
+
+    /// <summary>Makes a library of a type, null for none, with these paths the only one on the server.</summary>
+    public void WithTypedLibrary(Guid id, CollectionTypeOptions? type, params string[] locations)
     {
         Library.Setup(manager => manager.GetVirtualFolders()).Returns(
         [
-            new VirtualFolderInfo { Name = "Film", ItemId = id.ToString(), CollectionType = CollectionTypeOptions.movies, Locations = locations }
+            new VirtualFolderInfo { Name = "Library", ItemId = id.ToString(), CollectionType = type, Locations = locations }
         ]);
+    }
+
+    /// <summary>Shares a music and a book library next to the film library, with the shared track in the music one.</summary>
+    public void WithAudioLibraries()
+    {
+        Library.Setup(manager => manager.GetVirtualFolders()).Returns(
+        [
+            new VirtualFolderInfo { Name = "Library", ItemId = SharedLibrary.ToString(), CollectionType = CollectionTypeOptions.movies, Locations = ["/media/film"] },
+            new VirtualFolderInfo { Name = "Music", ItemId = SharedMusic.ToString(), CollectionType = CollectionTypeOptions.music, Locations = ["/media/music"] },
+            new VirtualFolderInfo { Name = "Books", ItemId = SharedBooks.ToString(), CollectionType = CollectionTypeOptions.books, Locations = ["/media/books"] }
+        ]);
+        var peer = Store.Configuration.Peers.Single(entry => entry.UserId == Peer.Id);
+        peer.SharedLibraryIds.Add(SharedMusic.ToString("N"));
+        peer.SharedLibraryIds.Add(SharedBooks.ToString("N"));
+        AddItem(SharedTrack, new Audio { Path = "/media/music/a.flac" }, SharedMusic);
     }
 
     /// <summary>Makes a path a folder Jellyfin has indexed.</summary>

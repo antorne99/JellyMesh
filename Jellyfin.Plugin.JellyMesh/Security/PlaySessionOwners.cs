@@ -121,6 +121,33 @@ public sealed class PlaySessionOwners
     }
 
     /// <summary>
+    /// Tells whether a play session of a user has only ever played the item it was recorded with. Naming another item ends
+    /// that for good.
+    /// </summary>
+    /// <param name="owner">The user.</param>
+    /// <param name="playSessionId">The play session.</param>
+    /// <param name="itemId">The item it is to play now.</param>
+    /// <returns>Whether it keeps to its item.</returns>
+    public bool KeepsTo(Guid owner, string playSessionId, Guid itemId)
+    {
+        lock (_lock)
+        {
+            if (!_owners.TryGetValue(owner, out var sessions) || !sessions.TryGetValue(playSessionId, out var entry) || entry.Item is not { } item)
+            {
+                return false;
+            }
+
+            if (item.Equals(itemId) && !item.Equals(Guid.Empty))
+            {
+                return true;
+            }
+
+            sessions[playSessionId] = entry with { Item = null };
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Takes out a play session its owner ended.
     /// </summary>
     /// <param name="owner">The user who ended it.</param>

@@ -53,6 +53,13 @@ public interface IStubRegistry
     VersionGroup? FindGroupOfLocal(Guid itemId);
 
     /// <summary>
+    /// Finds the track stubs with a dedup key: the copies of one track, read from memory (row 457, D65).
+    /// </summary>
+    /// <param name="identityKey">The dedup key of the track.</param>
+    /// <returns>The track stubs, empty for a key no track has.</returns>
+    IReadOnlyList<StubEntry> FindCopies(string identityKey);
+
+    /// <summary>
     /// Tells whether a stub or a stub series of a server may still be in the registry. True while the registry cannot tell:
     /// not read, read before the database was opened again, or emptied by rows that did not read until a full materialization.
     /// </summary>
