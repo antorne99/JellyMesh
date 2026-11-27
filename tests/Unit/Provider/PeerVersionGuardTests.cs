@@ -73,7 +73,7 @@ public class PeerVersionGuardTests
 
     private static string Legacy(string version, int field = 2) => "params=" + Uri.EscapeDataString(new string(';', field) + version);
 
-    private async Task<(int? Status, bool Ran)> RunAsync(string method, string controller, string action, string query, string? routeName = null, string? routeVersion = null, Dictionary<string, StringValues>? decoded = null)
+    private async Task<(int? Status, bool Ran)> RunAsync(string method, string controller, string action, string query, string? routeName = null, string? routeVersion = null, Dictionary<string, StringValues>? decoded = null, Guid? item = null)
     {
         var http = new DefaultHttpContext();
         http.Request.Method = method;
@@ -84,7 +84,7 @@ public class PeerVersionGuardTests
         }
 
         var route = new RouteData();
-        route.Values[controller == "Subtitle" ? "routeItemId" : "itemId"] = ProviderFixture.SharedItem.ToString("N");
+        route.Values[controller == "Subtitle" ? "routeItemId" : "itemId"] = (item ?? ProviderFixture.SharedItem).ToString("N");
         if (routeName is not null)
         {
             route.Values[routeName] = routeVersion;
@@ -156,6 +156,26 @@ public class PeerVersionGuardTests
         Assert.Equal((StatusCodes.Status404NotFound, false), await StreamAsync("?" + allowed + "&" + hidden));
         Assert.Equal((StatusCodes.Status404NotFound, false), await StreamAsync("?" + hidden + "&" + allowed));
         Assert.Equal((StatusCodes.Status404NotFound, false), await StreamAsync("?mediaSourceId=&" + hidden));
+    }
+
+    [Theory]
+    [InlineData("Audio", "GetAudioStream")]
+    [InlineData("Audio", "GetAudioStreamByContainer")]
+    [InlineData("DynamicHls", "GetMasterHlsAudioPlaylist")]
+    [InlineData("Library", "GetFile")]
+    [InlineData("Library", "GetDownload")]
+    public async Task A_track_is_served_as_its_own_version_and_never_as_one_a_peer_may_not_see(string controller, string action)
+    {
+        _fixture.WithAudioLibraries();
+        _fixture.Own("track", item: ProviderFixture.SharedTrack);
+
+        Assert.True((await RunAsync("GET", controller, action, "?PlaySessionId=track&mediaSourceId=" + ProviderFixture.SharedTrack.ToString("N"), item: ProviderFixture.SharedTrack)).Ran);
+        foreach (var version in _hidden.Select(Uri.EscapeDataString))
+        {
+            Assert.Equal(
+                (StatusCodes.Status404NotFound, false),
+                await RunAsync("GET", controller, action, "?PlaySessionId=track&mediaSourceId=" + version, item: ProviderFixture.SharedTrack));
+        }
     }
 
     [Fact]
